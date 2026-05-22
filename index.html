@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Data Platform Deep-Dives</title>
+<style>
+  :root {
+    --bg: #eceef1;
+    --surface: #ffffff;
+    --surface2: #f6f7f9;
+    --ink: #1a1d24;
+    --ink-soft: #444b59;
+    --ink-faint: #6b7280;
+    --rule: #e3e6eb;
+    --rule-strong: #d5d9e0;
+    --accent: #2f6fb8;
+    --accent-soft: #eef4fb;
+    --accent-dark: #1a4d8f;
+    --l-storage-bg: #E8EBF0; --l-storage: #8A94A6;
+    --l-table-bg: #DCE8FB;   --l-table: #3B73C4;
+    --l-catalog-bg: #EADDF7; --l-catalog: #7E4FB5;
+    --l-compute-bg: #D6F0EE; --l-compute: #1F9E8F;
+    --l-semantic-bg: #FBF0CF;--l-semantic: #C99A1E;
+    --l-gov-bg: #DEEFD9;     --l-gov: #4A9A3C;
+    --l-identity-bg: #FAD9DC;--l-identity: #C8425A;
+    --l-consume-bg: #DEE0FA; --l-consume: #5256C8;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── HERO ── */
+  .hero {
+    background: linear-gradient(135deg, #1a2a3f 0%, #0f1e35 60%, #162642 100%);
+    color: #fff;
+    padding: 72px 24px 64px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: "";
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 60%, rgba(47,111,184,0.18) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 40% at 80% 30%, rgba(31,158,143,0.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-eyebrow {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: #7db3e8; margin-bottom: 16px;
+  }
+  .hero h1 {
+    font-size: clamp(28px, 5vw, 44px); font-weight: 800;
+    letter-spacing: -0.02em; line-height: 1.15;
+    margin: 0 0 18px; color: #fff;
+  }
+  .hero h1 span { color: #5bb8e8; }
+  .hero-sub {
+    font-size: 17px; color: rgba(255,255,255,0.72);
+    max-width: 520px; margin: 0 auto 32px;
+    line-height: 1.6;
+  }
+  .hero-stats {
+    display: inline-flex; gap: 32px; flex-wrap: wrap; justify-content: center;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px; padding: 16px 28px;
+    font-size: 13.5px; color: rgba(255,255,255,0.65);
+  }
+  .hero-stats strong { display: block; font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 2px; }
+
+  /* ── SEARCH + FILTERS ── */
+  .controls {
+    max-width: 900px; margin: -24px auto 0; padding: 0 20px;
+    position: relative; z-index: 10;
+  }
+  .search-wrap {
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 12px;
+    padding: 6px 6px 6px 18px;
+    display: flex; align-items: center; gap: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+  }
+  .search-wrap svg { color: var(--ink-faint); flex-shrink: 0; }
+  .search-wrap input {
+    flex: 1; border: none; outline: none;
+    font-size: 15px; color: var(--ink); background: transparent;
+    font-family: inherit;
+  }
+  .search-wrap input::placeholder { color: var(--ink-faint); }
+  .search-btn {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 9px 18px; font-size: 13.5px;
+    font-weight: 600; cursor: pointer; font-family: inherit;
+    transition: background 0.15s;
+  }
+  .search-btn:hover { background: var(--accent-dark); }
+
+  .filter-row {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
+    padding: 0 2px;
+  }
+  .filter-label { font-size: 12px; color: var(--ink-faint); align-self: center; margin-right: 2px; }
+  .tag-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 12px; border-radius: 20px; font-size: 12.5px; font-weight: 600;
+    border: 1.5px solid; cursor: pointer; transition: all 0.15s;
+    background: var(--surface); font-family: inherit;
+  }
+  .tag-btn.active, .tag-btn:hover { color: #fff !important; }
+  .tag-btn[data-layer="compute"]  { border-color: var(--l-compute);  color: var(--l-compute); }
+  .tag-btn[data-layer="compute"].active, .tag-btn[data-layer="compute"]:hover { background: var(--l-compute); }
+  .tag-btn[data-layer="catalog"]  { border-color: var(--l-catalog);  color: var(--l-catalog); }
+  .tag-btn[data-layer="catalog"].active, .tag-btn[data-layer="catalog"]:hover { background: var(--l-catalog); }
+  .tag-btn[data-layer="table"]    { border-color: var(--l-table);    color: var(--l-table); }
+  .tag-btn[data-layer="table"].active, .tag-btn[data-layer="table"]:hover { background: var(--l-table); }
+  .tag-btn[data-layer="storage"]  { border-color: var(--l-storage);  color: var(--l-storage); }
+  .tag-btn[data-layer="storage"].active, .tag-btn[data-layer="storage"]:hover { background: var(--l-storage); }
+  .tag-btn[data-layer="identity"] { border-color: var(--l-identity); color: var(--l-identity); }
+  .tag-btn[data-layer="identity"].active, .tag-btn[data-layer="identity"]:hover { background: var(--l-identity); }
+  .tag-btn[data-layer="all"]      { border-color: var(--rule-strong); color: var(--ink-soft); }
+  .tag-btn[data-layer="all"].active, .tag-btn[data-layer="all"]:hover { background: var(--ink-soft); }
+
+  /* ── MAIN CONTENT ── */
+  .main { max-width: 900px; margin: 40px auto 80px; padding: 0 20px; }
+
+  /* ── SECTION HEADER ── */
+  .section-header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .section-header h2 {
+    font-size: 13px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-faint); margin: 0;
+  }
+  .count-badge {
+    font-size: 12.5px; color: var(--ink-faint);
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 20px; padding: 2px 10px;
+  }
+
+  /* ── ARTICLE CARDS ── */
+  .cards { display: grid; gap: 20px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    padding: 28px 30px 24px;
+    display: flex; flex-direction: column; gap: 0;
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+  .card:hover {
+    border-color: var(--rule-strong);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.09);
+    transform: translateY(-2px);
+  }
+  .card::before {
+    content: "";
+    position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    border-radius: 14px 0 0 14px;
+  }
+  .card[data-layer="compute"]::before  { background: var(--l-compute); }
+  .card[data-layer="catalog"]::before  { background: var(--l-catalog); }
+  .card[data-layer="table"]::before    { background: var(--l-table); }
+  .card[data-layer="storage"]::before  { background: var(--l-storage); }
+  .card[data-layer="identity"]::before { background: var(--l-identity); }
+
+  .card-meta {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 12px;
+  }
+  .layer-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 3px 10px; border-radius: 20px;
+    border: 1px solid;
+  }
+  .layer-chip[data-layer="compute"]  { background: var(--l-compute-bg);  color: #0C4A43; border-color: var(--l-compute); }
+  .layer-chip[data-layer="catalog"]  { background: var(--l-catalog-bg);  color: #432068; border-color: var(--l-catalog); }
+  .layer-chip[data-layer="table"]    { background: var(--l-table-bg);    color: #1E3A6B; border-color: var(--l-table); }
+  .layer-chip[data-layer="storage"]  { background: var(--l-storage-bg);  color: #3A4252; border-color: var(--l-storage); }
+  .layer-chip[data-layer="identity"] { background: var(--l-identity-bg); color: #6E1626; border-color: var(--l-identity); }
+
+  .card-date { font-size: 12px; color: var(--ink-faint); margin-left: auto; }
+
+  .card h3 {
+    font-size: 20px; font-weight: 740; letter-spacing: -0.01em;
+    margin: 0 0 8px; line-height: 1.25; color: var(--ink);
+  }
+  .card h3 a { color: var(--ink); }
+  .card h3 a:hover { color: var(--accent); text-decoration: none; }
+
+  .card-definition {
+    font-size: 14.5px; color: var(--ink-soft);
+    line-height: 1.6; margin: 0 0 16px; max-width: 72ch;
+  }
+
+  .card-tldr {
+    background: var(--surface2); border: 1px solid var(--rule);
+    border-radius: 8px; padding: 12px 16px;
+    font-size: 13.5px; color: var(--ink-soft); line-height: 1.6;
+    margin-bottom: 18px;
+  }
+  .card-tldr strong { color: var(--ink); }
+
+  .card-footer {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px;
+    margin-top: auto; padding-top: 4px;
+  }
+  .card-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mini-tag {
+    font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 5px;
+    background: var(--surface2); color: var(--ink-soft); border: 1px solid var(--rule);
+  }
+  .card-reading {
+    font-size: 12.5px; color: var(--ink-faint);
+    display: flex; align-items: center; gap: 5px; margin-left: auto;
+  }
+  .read-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--accent); color: #fff;
+    font-size: 13px; font-weight: 600; padding: 7px 16px; border-radius: 8px;
+    transition: background 0.15s;
+  }
+  .read-link:hover { background: var(--accent-dark); text-decoration: none; }
+
+  /* ── LAYER MAP ── */
+  .layer-map {
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 14px; padding: 28px 28px 22px; margin-bottom: 36px;
+  }
+  .layer-map h3 {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-faint); margin: 0 0 18px;
+  }
+  .stack {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .stack-row {
+    display: flex; align-items: center; gap: 10px;
+    border-radius: 8px; padding: 8px 12px;
+    font-size: 13px; border: 1px solid transparent;
+    cursor: default; transition: border-color 0.15s;
+  }
+  .stack-row.has-article {
+    cursor: pointer;
+    border-color: var(--rule);
+  }
+  .stack-row.has-article:hover { border-color: var(--rule-strong); }
+  .stack-label {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; width: 30px; text-align: right;
+    flex-shrink: 0; color: var(--ink-faint);
+  }
+  .stack-name { font-weight: 600; color: var(--ink-soft); min-width: 140px; }
+  .stack-items { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; }
+  .stack-item {
+    font-size: 12px; padding: 2px 9px; border-radius: 5px;
+    border: 1px solid; font-weight: 500;
+  }
+  .stack-item.covered {
+    font-weight: 700;
+  }
+  .stack-item.covered a { text-decoration: none; }
+
+  /* ── EMPTY STATE ── */
+  .empty-state {
+    text-align: center; padding: 60px 20px; color: var(--ink-faint);
+    display: none;
+  }
+  .empty-state svg { opacity: 0.3; margin-bottom: 12px; }
+  .empty-state p { font-size: 15px; margin: 0; }
+
+  /* ── FOOTER ── */
+  footer {
+    text-align: center; padding: 32px 20px;
+    font-size: 12.5px; color: var(--ink-faint);
+    border-top: 1px solid var(--rule); background: var(--surface);
+  }
+  footer a { color: var(--ink-faint); }
+  footer a:hover { color: var(--accent); }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 640px) {
+    .hero { padding: 52px 20px 48px; }
+    .card { padding: 22px 18px 18px; }
+    .card-date { display: none; }
+    .hero-stats { gap: 20px; padding: 14px 20px; }
+  }
+
+  /* ── HIDDEN ── */
+  .card.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<!-- ── HERO ── -->
+<header class="hero">
+  <div class="hero-eyebrow">Senior / Principal Engineering · Personal Knowledge Base</div>
+  <h1>Data Platform <span>Deep-Dives</span></h1>
+  <p class="hero-sub">Architecture-first research on the modern data + AI stack. Accurate, high-signal, no marketing fluff.</p>
+  <div class="hero-stats">
+    <div><strong id="article-count">2</strong>Articles</div>
+    <div><strong id="word-count">~10k</strong>Words</div>
+    <div><strong>7</strong>Sections each</div>
+    <div><strong>5+</strong>Diagrams each</div>
+  </div>
+</header>
+
+<!-- ── SEARCH + FILTERS ── -->
+<div class="controls">
+  <div class="search-wrap">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input type="text" id="search" placeholder="Search articles, topics, technologies…" autocomplete="off"/>
+    <button class="search-btn" onclick="document.getElementById('search').value=''; filterCards();">Clear</button>
+  </div>
+  <div class="filter-row">
+    <span class="filter-label">Layer:</span>
+    <button class="tag-btn active" data-layer="all" onclick="setFilter(this)">All</button>
+    <button class="tag-btn" data-layer="compute" onclick="setFilter(this)">L4 · Compute</button>
+    <button class="tag-btn" data-layer="catalog" onclick="setFilter(this)">L3 · Catalog</button>
+    <button class="tag-btn" data-layer="table" onclick="setFilter(this)">L2 · Table format</button>
+    <button class="tag-btn" data-layer="identity" onclick="setFilter(this)">L8 · Identity</button>
+  </div>
+</div>
+
+<!-- ── MAIN ── -->
+<main class="main">
+
+  <!-- Layer stack map -->
+  <div class="layer-map">
+    <h3>Platform stack — covered articles highlighted</h3>
+    <div class="stack">
+      <div class="stack-row">
+        <span class="stack-label">L9</span>
+        <span class="stack-name">Consumption / Agents</span>
+        <div class="stack-items">
+          <span class="stack-item" style="background:#DEE0FA;color:#23266E;border-color:#5256C8">BI tools</span>
+          <span class="stack-item" style="background:#DEE0FA;color:#23266E;border-color:#5256C8">AI Agents</span>
+          <span class="stack-item" style="background:#DEE0FA;color:#23266E;border-color:#5256C8">Evals</span>
+        </div>
+      </div>
+      <div class="stack-row">
+        <span class="stack-label">L7</span>
+        <span class="stack-name">Governance / Knowledge</span>
+        <div class="stack-items">
+          <span class="stack-item" style="background:#DEEFD9;color:#234D1A;border-color:#4A9A3C">Knowledge catalog</span>
+          <span class="stack-item" style="background:#DEEFD9;color:#234D1A;border-color:#4A9A3C">Knowledge graph</span>
+          <span class="stack-item" style="background:#DEEFD9;color:#234D1A;border-color:#4A9A3C">Lineage</span>
+        </div>
+      </div>
+      <div class="stack-row">
+        <span class="stack-label">L6</span>
+        <span class="stack-name">Semantic layer</span>
+        <div class="stack-items">
+          <span class="stack-item" style="background:#FBF0CF;color:#6B4E06;border-color:#C99A1E">dbt Semantic Layer</span>
+          <span class="stack-item" style="background:#FBF0CF;color:#6B4E06;border-color:#C99A1E">Cube</span>
+          <span class="stack-item" style="background:#FBF0CF;color:#6B4E06;border-color:#C99A1E">AtScale</span>
+        </div>
+      </div>
+      <div class="stack-row has-article" onclick="document.getElementById('article-trino').scrollIntoView({behavior:'smooth'})">
+        <span class="stack-label">L4</span>
+        <span class="stack-name">Query / Compute</span>
+        <div class="stack-items">
+          <span class="stack-item covered" style="background:#D6F0EE;color:#0C4A43;border-color:#111418"><a href="2026-05-22-trino-deep-dive.html">Trino ✦</a></span>
+          <span class="stack-item" style="background:#D6F0EE;color:#0C4A43;border-color:#1F9E8F">Spark</span>
+          <span class="stack-item" style="background:#D6F0EE;color:#0C4A43;border-color:#1F9E8F">Flink</span>
+          <span class="stack-item" style="background:#D6F0EE;color:#0C4A43;border-color:#1F9E8F">DuckDB</span>
+        </div>
+      </div>
+      <div class="stack-row has-article" onclick="document.getElementById('article-irc').scrollIntoView({behavior:'smooth'})">
+        <span class="stack-label">L3</span>
+        <span class="stack-name">Catalogs</span>
+        <div class="stack-items">
+          <span class="stack-item covered" style="background:#EADDF7;color:#432068;border-color:#111418"><a href="2026-05-21-iceberg-rest-catalog-deep-dive.html">Iceberg REST Catalog ✦</a></span>
+          <span class="stack-item" style="background:#EADDF7;color:#432068;border-color:#7E4FB5">Polaris</span>
+          <span class="stack-item" style="background:#EADDF7;color:#432068;border-color:#7E4FB5">Unity Catalog</span>
+          <span class="stack-item" style="background:#EADDF7;color:#432068;border-color:#7E4FB5">Nessie</span>
+        </div>
+      </div>
+      <div class="stack-row">
+        <span class="stack-label">L2</span>
+        <span class="stack-name">Table formats</span>
+        <div class="stack-items">
+          <span class="stack-item" style="background:#DCE8FB;color:#1E3A6B;border-color:#3B73C4">Apache Iceberg</span>
+          <span class="stack-item" style="background:#DCE8FB;color:#1E3A6B;border-color:#3B73C4">Delta Lake</span>
+          <span class="stack-item" style="background:#DCE8FB;color:#1E3A6B;border-color:#3B73C4">Apache Hudi</span>
+        </div>
+      </div>
+      <div class="stack-row">
+        <span class="stack-label">L0</span>
+        <span class="stack-name">Object storage</span>
+        <div class="stack-items">
+          <span class="stack-item" style="background:#E8EBF0;color:#3A4252;border-color:#8A94A6">S3</span>
+          <span class="stack-item" style="background:#E8EBF0;color:#3A4252;border-color:#8A94A6">GCS</span>
+          <span class="stack-item" style="background:#E8EBF0;color:#3A4252;border-color:#8A94A6">ADLS</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cards header -->
+  <div class="section-header">
+    <h2>All articles</h2>
+    <span class="count-badge" id="visible-count">2 articles</span>
+  </div>
+
+  <!-- ── ARTICLE CARDS ── -->
+  <div class="cards" id="card-list">
+
+    <!-- Trino -->
+    <article class="card" id="article-trino" data-layer="compute"
+             data-search="trino distributed sql query engine mpp coordinator worker connector spi iceberg cbo optimizer fault tolerant auth oauth oidc jwt">
+      <div class="card-meta">
+        <span class="layer-chip" data-layer="compute">L4 · Compute</span>
+        <span class="mini-tag">Query Engine</span>
+        <span class="mini-tag">Federation</span>
+        <span class="mini-tag">Iceberg</span>
+        <span class="card-date">2026-05-22</span>
+      </div>
+      <h3><a href="2026-05-22-trino-deep-dive.html">Trino: Distributed SQL Query Engine</a></h3>
+      <p class="card-definition">A disaggregated MPP SQL engine that federates queries across disparate data sources — object storage, relational databases, key-value stores — without moving data, exposing every source as a typed catalog through a plugin-based connector SPI.</p>
+      <div class="card-tldr">
+        <strong>The short version:</strong> Trino (born at Facebook as Presto, 2012) runs a single coordinator that plans queries and distributes work to N workers via HTTP REST. Every data source is a plugin implementing the Connector SPI. It is the canonical query engine for open lakehouses: Iceberg connector + IRC catalog + S3 = no proprietary lock-in at any layer. Not a replacement for OLTP or streaming.
+      </div>
+      <div class="card-footer">
+        <div class="card-tags">
+          <span class="mini-tag">MPP</span>
+          <span class="mini-tag">Connector SPI</span>
+          <span class="mini-tag">CBO</span>
+          <span class="mini-tag">Fault-Tolerant Execution</span>
+          <span class="mini-tag">OAuth2 / OPA</span>
+        </div>
+        <span class="card-reading">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          ~23 min
+        </span>
+        <a class="read-link" href="2026-05-22-trino-deep-dive.html">
+          Read deep-dive
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </div>
+    </article>
+
+    <!-- Iceberg REST Catalog -->
+    <article class="card" id="article-irc" data-layer="catalog"
+             data-search="iceberg rest catalog irc credential vending oauth oidc polaris unity nessie glue gravitino rbac abac token exchange commit protocol">
+      <div class="card-meta">
+        <span class="layer-chip" data-layer="catalog">L3 · Catalog</span>
+        <span class="mini-tag">Open Standard</span>
+        <span class="mini-tag">Credential Vending</span>
+        <span class="mini-tag">Auth</span>
+        <span class="card-date">2026-05-21</span>
+      </div>
+      <h3><a href="2026-05-21-iceberg-rest-catalog-deep-dive.html">The Iceberg REST Catalog (IRC)</a></h3>
+      <p class="card-definition">An open HTTP/JSON API specification that decouples query engines from catalog implementations — and, in doing so, makes the catalog the natural home for authentication, authorization, and short-lived storage credential vending in the open lakehouse.</p>
+      <div class="card-tldr">
+        <strong>The short version:</strong> IRC is a protocol, not a product — the OpenAPI contract in <code>apache/iceberg</code> that any engine can speak and any catalog can implement. Its credential-vending endpoint is what lets Trino, Spark, and others read S3 without holding long-lived keys. Implementations include Polaris, Unity Catalog, Nessie, Gravitino, Lakekeeper, and AWS Glue.
+      </div>
+      <div class="card-footer">
+        <div class="card-tags">
+          <span class="mini-tag">REST / OpenAPI</span>
+          <span class="mini-tag">Vended Credentials</span>
+          <span class="mini-tag">RBAC / ABAC</span>
+          <span class="mini-tag">OAuth2 / RFC 8693</span>
+          <span class="mini-tag">Polaris · Nessie</span>
+        </div>
+        <span class="card-reading">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          ~24 min
+        </span>
+        <a class="read-link" href="2026-05-21-iceberg-rest-catalog-deep-dive.html">
+          Read deep-dive
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </div>
+    </article>
+
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty-state" id="empty-state">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6M11 8v6"/></svg>
+    <p>No articles match your search. Try a different term.</p>
+  </div>
+
+</main>
+
+<footer>
+  Data Platform Deep-Dives · accuracy-first, no marketing fluff · Built for Puneet's second brain
+  <br>
+  <span style="margin-top:6px;display:inline-block">
+    <a href="https://trino.io/docs/current/" target="_blank">Trino docs</a> ·
+    <a href="https://iceberg.apache.org/docs/latest/rest/" target="_blank">Iceberg REST spec</a> ·
+    <a href="https://github.com/trinodb/trino" target="_blank">Trino GitHub</a>
+  </span>
+</footer>
+
+<script>
+  var activeLayer = 'all';
+
+  function setFilter(btn) {
+    document.querySelectorAll('.tag-btn').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    activeLayer = btn.getAttribute('data-layer');
+    filterCards();
+  }
+
+  function filterCards() {
+    var query = document.getElementById('search').value.toLowerCase().trim();
+    var cards = document.querySelectorAll('.card');
+    var visible = 0;
+    cards.forEach(function(card) {
+      var layerMatch = activeLayer === 'all' || card.getAttribute('data-layer') === activeLayer;
+      var searchStr = (card.getAttribute('data-search') || '') + ' ' + card.textContent.toLowerCase();
+      var searchMatch = !query || searchStr.indexOf(query) !== -1;
+      if (layerMatch && searchMatch) {
+        card.classList.remove('hidden');
+        visible++;
+      } else {
+        card.classList.add('hidden');
+      }
+    });
+    document.getElementById('visible-count').textContent = visible + (visible === 1 ? ' article' : ' articles');
+    document.getElementById('empty-state').style.display = visible === 0 ? 'block' : 'none';
+  }
+
+  document.getElementById('search').addEventListener('input', filterCards);
+</script>
+</body>
+</html>
