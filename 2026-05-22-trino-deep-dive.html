@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Trino — Deep Dive</title>
+<style>
+  :root{
+    --bg:#eceef1; --surface:#ffffff;
+    --ink:#1a1d24; --ink-soft:#444b59; --ink-faint:#6b7280;
+    --rule:#e3e6eb; --rule-strong:#d5d9e0;
+    --accent:#2f6fb8; --accent-soft:#eef4fb;
+    --code-bg:#f4f5f7;
+    --l-storage:#8A94A6;  --l-storage-bg:#E8EBF0;
+    --l-table:#3B73C4;    --l-table-bg:#DCE8FB;
+    --l-catalog:#7E4FB5;  --l-catalog-bg:#EADDF7;
+    --l-compute:#1F9E8F;  --l-compute-bg:#D6F0EE;
+    --l-oper:#D9772E;     --l-oper-bg:#FCE4D4;
+    --l-semantic:#C99A1E; --l-semantic-bg:#FBF0CF;
+    --l-gov:#4A9A3C;      --l-gov-bg:#DEEFD9;
+    --l-identity:#C8425A; --l-identity-bg:#FAD9DC;
+    --l-consume:#5256C8;  --l-consume-bg:#DEE0FA;
+    --warn:#C8425A; --warn-bg:#FBE9EC;
+    --amber:#b8860b; --amber-bg:#FBF4DC;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16.5px; line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  code{
+    font-family:"SF Mono",SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;
+    font-size:0.86em; background:var(--code-bg); padding:0.12em 0.38em;
+    border-radius:4px; color:#9a3b66;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:0 24px;
+        display:flex; gap:36px; align-items:flex-start;}
+  .toc{
+    position:sticky; top:0; width:248px; flex:0 0 248px;
+    max-height:100vh; overflow-y:auto; padding:28px 0 40px;
+  }
+  .doc{
+    flex:1 1 auto; min-width:0; background:var(--surface);
+    margin:24px 0 64px; padding:52px 60px 64px;
+    border:1px solid var(--rule); border-radius:10px;
+  }
+  .toc-title{font-size:11px; font-weight:700; letter-spacing:0.09em;
+             text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px 12px;}
+  .toc ol{list-style:none; margin:0; padding:0; counter-reset:toc;}
+  .toc li{margin:0;}
+  .toc a{
+    display:block; padding:5px 12px; border-left:2px solid var(--rule);
+    color:var(--ink-soft); font-size:13.5px; line-height:1.4;
+  }
+  .toc a:hover{color:var(--ink); border-left-color:var(--rule-strong); text-decoration:none;}
+  .toc a.active{color:var(--accent); border-left-color:var(--accent); font-weight:600;}
+  .toc a .n{color:var(--ink-faint); font-variant-numeric:tabular-nums; margin-right:7px;}
+  .toc a.active .n{color:var(--accent);}
+  .eyebrow{font-size:12px; font-weight:700; letter-spacing:0.1em;
+           text-transform:uppercase; color:var(--accent);}
+  h1{font-size:33px; line-height:1.22; margin:10px 0 6px; letter-spacing:-0.01em;}
+  .definition{font-size:18px; color:var(--ink-soft); margin:0 0 18px; max-width:62ch;}
+  .meta{display:flex; flex-wrap:wrap; gap:8px 18px; font-size:13px;
+        color:var(--ink-faint); border-top:1px solid var(--rule);
+        border-bottom:1px solid var(--rule); padding:11px 0; margin-bottom:34px;}
+  .meta b{color:var(--ink-soft); font-weight:600;}
+  section{margin:0 0 14px; padding-top:14px;}
+  h2{font-size:22px; margin:38px 0 14px; padding-bottom:7px;
+     border-bottom:2px solid var(--rule); letter-spacing:-0.01em;}
+  h2 .num{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:10px;}
+  h3{font-size:16.5px; margin:26px 0 8px; color:var(--ink);}
+  p{margin:0 0 14px;}
+  ul,ol{margin:0 0 14px; padding-left:22px;}
+  li{margin:4px 0;}
+  strong{font-weight:660;}
+  .tldr{
+    background:var(--accent-soft); border:1px solid #cfe0f1;
+    border-radius:9px; padding:20px 24px; margin:6px 0 10px;
+  }
+  .tldr h2{border:0; margin:0 0 8px; font-size:16px; color:var(--accent);
+           text-transform:uppercase; letter-spacing:0.06em;}
+  .tldr p{margin:0 0 10px;}
+  .tldr .takeaways{margin:0; padding-left:20px;}
+  .tldr .takeaways li{margin:6px 0;}
+  .callout{border-radius:8px; padding:13px 17px; margin:18px 0;
+           font-size:15px; border:1px solid;}
+  .callout .tag{display:block; font-size:11px; font-weight:700;
+                letter-spacing:0.07em; text-transform:uppercase; margin-bottom:3px;}
+  .callout p:last-child{margin-bottom:0;}
+  .callout.key{background:var(--accent-soft); border-color:#cfe0f1;}
+  .callout.key .tag{color:var(--accent);}
+  .callout.note{background:#f6f7f9; border-color:var(--rule-strong);}
+  .callout.note .tag{color:var(--ink-faint);}
+  .callout.warn{background:var(--warn-bg); border-color:#f0c6ce;}
+  .callout.warn .tag{color:var(--warn);}
+  .callout.amber{background:var(--amber-bg); border-color:#e0d09a;}
+  .callout.amber .tag{color:var(--amber);}
+  .tbl-wrap{overflow-x:auto; margin:18px 0;}
+  table{border-collapse:collapse; width:100%; font-size:14px;}
+  th,td{text-align:left; padding:9px 13px; border-bottom:1px solid var(--rule);
+        vertical-align:top;}
+  thead th{background:#f6f7f9; color:var(--ink-soft); font-weight:660;
+           font-size:12px; letter-spacing:0.03em; text-transform:uppercase;
+           border-bottom:2px solid var(--rule-strong);}
+  tbody tr:last-child td{border-bottom:0;}
+  tbody tr:hover{background:#fafbfc;}
+  figure{margin:24px 0; padding:0;}
+  .diagram{
+    background:#fcfcfd; border:1px solid var(--rule);
+    border-radius:9px; padding:22px 20px 8px; text-align:center;
+  }
+  .diagram svg, .diagram .mermaid{max-width:100%; height:auto;}
+  figcaption{font-size:13px; color:var(--ink-faint); margin-top:12px;
+             padding:0 8px 6px; text-align:left;}
+  figcaption b{color:var(--ink-soft); font-weight:660;}
+  .legend{display:flex; flex-wrap:wrap; gap:6px 16px; justify-content:center;
+          margin-top:14px; padding-top:12px; border-top:1px solid var(--rule);
+          font-size:11.5px; color:var(--ink-soft);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .legend i{width:13px; height:13px; border-radius:3px; display:inline-block;
+            border:1px solid rgba(0,0,0,0.18);}
+  .sources{font-size:14px;}
+  .sources li{margin:9px 0;}
+  .tier{display:inline-block; font-size:10.5px; font-weight:700;
+        letter-spacing:0.04em; text-transform:uppercase; padding:1.5px 7px;
+        border-radius:4px; margin-right:8px; vertical-align:1.5px;}
+  .tier.spec{background:#e6e0f5; color:#5a3a93;}
+  .tier.docs{background:#dce8fb; color:#1E3A6B;}
+  .tier.code{background:#d6f0ee; color:#0C4A43;}
+  .tier.paper{background:#deefd9; color:#234D1A;}
+  .tier.practitioner{background:#fbf0cf; color:#6B4E06;}
+  .tier.book{background:#FCE4D4; color:#7A3D0E;}
+  .glossary dt{font-weight:660; margin-top:10px;}
+  .glossary dd{margin:2px 0 0; color:var(--ink-soft);}
+  .footer{margin-top:42px; padding-top:16px; border-top:1px solid var(--rule);
+          font-size:12.5px; color:var(--ink-faint);}
+  .toc-toggle{display:none;}
+  @media(max-width:980px){
+    .wrap{flex-direction:column; gap:0; padding:0 14px;}
+    .toc{position:static; width:100%; flex:none; max-height:none; padding:18px 0 0;}
+    .toc ol{display:none;} .toc ol.open{display:block;}
+    .toc-toggle{display:block; cursor:pointer; background:var(--surface);
+      border:1px solid var(--rule); border-radius:8px; padding:10px 14px;
+      font-weight:600; font-size:14px; color:var(--ink-soft); width:100%; text-align:left;}
+    .doc{padding:32px 22px 44px; margin:14px 0 40px;}
+    h1{font-size:26px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="toc">
+    <button class="toc-toggle" onclick="document.getElementById('tocList').classList.toggle('open')">Contents ▾</button>
+    <div class="toc-title">Contents</div>
+    <ol id="tocList">
+      <li><a href="#tldr"><span class="n">—</span>TL;DR</a></li>
+      <li><a href="#architecture"><span class="n">1</span>What it is &amp; architecture</a></li>
+      <li><a href="#placement"><span class="n">2</span>Placement in the landscape</a></li>
+      <li><a href="#mechanism"><span class="n">3</span>How it works</a></li>
+      <li><a href="#auth"><span class="n">4</span>Authentication &amp; identity</a></li>
+      <li><a href="#connections"><span class="n">5</span>How it connects</a></li>
+      <li><a href="#tradeoffs"><span class="n">6</span>Trade-offs &amp; failure modes</a></li>
+      <li><a href="#take"><span class="n">7</span>Architect's take</a></li>
+      <li><a href="#glossary"><span class="n">—</span>Glossary</a></li>
+      <li><a href="#sources"><span class="n">—</span>Sources</a></li>
+    </ol>
+  </nav>
+
+  <main class="doc">
+
+    <header>
+      <div class="eyebrow">Data Platform Deep-Dive · Compute Layer (L4)</div>
+      <h1>Trino: Distributed SQL Query Engine</h1>
+      <p class="definition">A disaggregated MPP SQL engine that federates queries across disparate data sources — object storage, relational databases, key-value stores — without moving data, exposing every source as a typed catalog through a plugin-based connector SPI.</p>
+      <div class="meta">
+        <span><b>Prepared</b> 2026-05-22</span>
+        <span><b>Reading time</b> ~23 min</span>
+        <span><b>Primary source</b> Trino: The Definitive Guide, 2nd Ed. (Fuller, Moser, Traverso · O'Reilly 2022)</span>
+        <span><b>Focus</b> Architecture · Landscape · Auth · Iceberg · Connections</span>
+      </div>
+    </header>
+
+    <!-- TL;DR -->
+    <section id="tldr" class="tldr">
+      <h2>TL;DR</h2>
+      <p>Trino (formerly PrestoSQL, born at Facebook in 2012 as Presto) is an open-source distributed SQL query engine built for interactive, cross-source analytics at petabyte scale. Its core insight: separate compute from storage completely, express every data source as a typed table through a connector plugin, and execute queries as a distributed directed acyclic graph of stages across a coordinator/worker cluster — all over REST/HTTP with no shared disk. In the modern lakehouse stack Trino occupies L4 (query/compute); it reads Iceberg/Delta/Hudi table formats from object storage via L3 catalogs, and serves as the standard SQL surface for BI tools, notebooks, and increasingly for AI agents.</p>
+      <ol class="takeaways">
+        <li><strong>Coordinator/worker MPP:</strong> A single coordinator parses, plans, and schedules; N workers execute tasks and exchange data. All communication is HTTP/HTTPS REST — no dedicated messaging bus. The discovery service runs on the coordinator and workers heartbeat to it.</li>
+        <li><strong>Connector SPI is the abstraction:</strong> Every data source is a plugin implementing three SPI facets — metadata (schema/stats), data location (splits), and data streaming (pages). Predicate, aggregate, and join pushdown happen per-connector. This is what makes "SQL on Anything" real rather than a marketing claim.</li>
+        <li><strong>Query plan → stages → tasks → splits:</strong> SQL compiles to a logical plan, then a distributed plan decomposed into pipeline stages. Each stage executes as parallel tasks across workers; tasks consume splits (the physical unit of I/O parallelism). A CBO handles join reordering (up to 9 tables) and join distribution selection; adaptive re-ordering fires at runtime when fault-tolerant execution is enabled.</li>
+        <li><strong>Iceberg + IRC is the canonical lakehouse path:</strong> The Iceberg connector speaks the Iceberg REST Catalog protocol, resolves table metadata (manifest list → data files), prunes partitions and files using statistics, and — when <code>vended-credentials-enabled=true</code> — receives short-lived scoped object-storage credentials from the catalog instead of holding long-lived keys. Credential-vending support is functional but still maturing as of 2025–2026.</li>
+        <li><strong>Security requires TLS everywhere:</strong> All authentication modes (OAuth2/OIDC, JWT, LDAP, Kerberos, certificate/mTLS) require TLS on the coordinator HTTPS port. Authorization is enforced via file-based JSON rules, Apache Ranger (column masking, row filtering, audit), or OPA (Rego policies). Workers authenticate to the coordinator via a shared secret over an encrypted channel.</li>
+        <li><strong>Not a replacement for high-concurrency OLTP or heavy ETL:</strong> Trino is optimized for interactive and batch OLAP. High-concurrency point lookups, sub-millisecond latency, or streaming ingestion are not its design targets — Lakebase/operational stores handle those.</li>
+      </ol>
+    </section>
+
+    <!-- 1. ARCHITECTURE -->
+    <section id="architecture">
+      <h2><span class="num">1</span>What it is &amp; core architecture</h2>
+
+      <p>Trino is a <strong>massively parallel processing (MPP) SQL query engine</strong> with a strict separation of compute from storage. It does not store data — it reads from external systems through connectors and pipelines the results back to the client. A Trino cluster has exactly one <strong>coordinator</strong> and one or more <strong>workers</strong>. Each runs as a single JVM process (Java 17+); a minimal single-node setup collapses both roles into one process.</p>
+
+      <h3>Coordinator</h3>
+      <p>The coordinator owns the entire control path. It receives SQL from clients (Trino CLI, JDBC, Python/Go clients, ODBC), parses it, builds a logical plan, runs the cost-based optimizer, generates a distributed query plan, and then decomposes that plan into <strong>stages</strong>. It assigns each stage's tasks to workers by consulting the discovery service for current worker availability. As results accumulate, the coordinator aggregates the final output and returns it to the client. Coordinator state is in-memory; it is a single point of failure in the default configuration (Trino Gateway adds HA routing in front).</p>
+
+      <h3>Workers and Discovery</h3>
+      <p>Workers execute <strong>tasks</strong> — the unit of work within a stage. Each task processes a set of <strong>splits</strong> (logical partitions of a data source: an Iceberg data file range, a Hive partition, a Kafka topic-partition, etc.). Workers pull data from sources via connectors, produce output pages (columnar in-memory buffers), and exchange pages with other workers over HTTP. The discovery service runs on the coordinator; workers register on startup and send periodic heartbeats. A worker that misses heartbeats is removed from scheduling.</p>
+
+      <h3>Connector SPI</h3>
+      <p>Every data source is a plugin exposing three SPI facets to the coordinator and workers: <strong>metadata</strong> (list schemas, list tables, column types, table statistics), <strong>data location</strong> (enumerate splits the coordinator can distribute to workers), and <strong>data streaming</strong> (workers read and write pages via ConnectorPageSource / ConnectorPageSink). The SPI decouples the core engine from source-specific details entirely. Connectors also declare pushdown capabilities: a connector that implements <code>ConnectorMetadata.applyFilter()</code> will receive the predicate from the planner and can push it to the source, reducing data transfer.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 880 520" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Trino internal architecture: coordinator, workers, SPI, and connectors">
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- CLIENT BAND -->
+            <rect x="20" y="14" width="840" height="62" rx="8" fill="#F5F6F8" stroke="#D5D9E0"/>
+            <text x="36" y="32" font-size="10.5" font-weight="700" fill="#5A6273" letter-spacing="0.5">CLIENTS</text>
+            <rect x="80" y="26" width="110" height="38" rx="6" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.3"/>
+            <text x="135" y="50" text-anchor="middle" font-size="12.5" font-weight="600" fill="#23266E">JDBC / ODBC</text>
+            <rect x="210" y="26" width="110" height="38" rx="6" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.3"/>
+            <text x="265" y="50" text-anchor="middle" font-size="12.5" font-weight="600" fill="#23266E">Trino CLI</text>
+            <rect x="340" y="26" width="120" height="38" rx="6" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.3"/>
+            <text x="400" y="50" text-anchor="middle" font-size="12.5" font-weight="600" fill="#23266E">Python/Go client</text>
+            <rect x="480" y="26" width="130" height="38" rx="6" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.3"/>
+            <text x="545" y="50" text-anchor="middle" font-size="12.5" font-weight="600" fill="#23266E">BI tools (Tableau…)</text>
+
+            <!-- COORDINATOR BAND -->
+            <rect x="20" y="96" width="840" height="132" rx="8" fill="#F5F6F8" stroke="#D5D9E0"/>
+            <text x="36" y="115" font-size="10.5" font-weight="700" fill="#5A6273" letter-spacing="0.5">COORDINATOR (focus)</text>
+
+            <rect x="52" y="120" width="148" height="90" rx="7" fill="#D6F0EE" stroke="#111418" stroke-width="2.5"/>
+            <text x="126" y="142" text-anchor="middle" font-size="12" font-weight="700" fill="#0C4A43">Parser /</text>
+            <text x="126" y="158" text-anchor="middle" font-size="12" font-weight="700" fill="#0C4A43">Analyzer</text>
+            <text x="126" y="176" text-anchor="middle" font-size="11" fill="#0C4A43">SQL → AST → IR</text>
+            <text x="126" y="202" text-anchor="middle" font-size="10" fill="#5A6273">← FOCUS</text>
+
+            <rect x="222" y="120" width="148" height="90" rx="7" fill="#D6F0EE" stroke="#111418" stroke-width="2.5"/>
+            <text x="296" y="142" text-anchor="middle" font-size="12" font-weight="700" fill="#0C4A43">Query Planner</text>
+            <text x="296" y="160" text-anchor="middle" font-size="11" fill="#0C4A43">Logical → Distributed</text>
+            <text x="296" y="176" text-anchor="middle" font-size="11" fill="#0C4A43">plan + CBO</text>
+
+            <rect x="392" y="120" width="148" height="90" rx="7" fill="#D6F0EE" stroke="#111418" stroke-width="2.5"/>
+            <text x="466" y="142" text-anchor="middle" font-size="12" font-weight="700" fill="#0C4A43">Scheduler</text>
+            <text x="466" y="160" text-anchor="middle" font-size="11" fill="#0C4A43">Stage → Tasks</text>
+            <text x="466" y="176" text-anchor="middle" font-size="11" fill="#0C4A43">→ Workers</text>
+
+            <rect x="562" y="120" width="148" height="90" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="636" y="147" text-anchor="middle" font-size="12" font-weight="600" fill="#432068">Discovery</text>
+            <text x="636" y="163" text-anchor="middle" font-size="11" fill="#432068">Service</text>
+            <text x="636" y="179" text-anchor="middle" font-size="10.5" fill="#432068">Worker registry</text>
+            <text x="636" y="195" text-anchor="middle" font-size="10.5" fill="#432068">+ heartbeat</text>
+
+            <rect x="724" y="120" width="116" height="90" rx="7" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.4"/>
+            <text x="782" y="147" text-anchor="middle" font-size="12" font-weight="600" fill="#6E1626">Resource</text>
+            <text x="782" y="163" text-anchor="middle" font-size="12" font-weight="600" fill="#6E1626">Groups</text>
+            <text x="782" y="179" text-anchor="middle" font-size="10.5" fill="#6E1626">QoS / queuing</text>
+            <text x="782" y="195" text-anchor="middle" font-size="10.5" fill="#6E1626">policies</text>
+
+            <!-- arrows inside coordinator -->
+            <line x1="200" y1="165" x2="220" y2="165" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <line x1="370" y1="165" x2="390" y2="165" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <line x1="540" y1="165" x2="560" y2="165" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+
+            <!-- WORKER BAND -->
+            <rect x="20" y="250" width="840" height="120" rx="8" fill="#F5F6F8" stroke="#D5D9E0"/>
+            <text x="36" y="268" font-size="10.5" font-weight="700" fill="#5A6273" letter-spacing="0.5">WORKERS (N nodes)</text>
+
+            <rect x="52" y="278" width="186" height="76" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="145" y="298" text-anchor="middle" font-size="12" font-weight="600" fill="#0C4A43">Worker Node</text>
+            <text x="145" y="315" text-anchor="middle" font-size="10.5" fill="#0C4A43">Tasks → Drivers → Operators</text>
+            <text x="145" y="330" text-anchor="middle" font-size="10.5" fill="#0C4A43">Splits consumed in parallel</text>
+            <text x="145" y="345" text-anchor="middle" font-size="10.5" fill="#0C4A43">Pages exchanged over HTTP</text>
+
+            <rect x="258" y="278" width="186" height="76" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="351" y="298" text-anchor="middle" font-size="12" font-weight="600" fill="#0C4A43">Worker Node</text>
+            <text x="351" y="315" text-anchor="middle" font-size="10.5" fill="#0C4A43">Tasks → Drivers → Operators</text>
+            <text x="351" y="330" text-anchor="middle" font-size="10.5" fill="#0C4A43">Splits consumed in parallel</text>
+            <text x="351" y="345" text-anchor="middle" font-size="10.5" fill="#0C4A43">Pages exchanged over HTTP</text>
+
+            <rect x="464" y="278" width="186" height="76" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="557" y="298" text-anchor="middle" font-size="12" font-weight="600" fill="#0C4A43">Worker Node</text>
+            <text x="557" y="315" text-anchor="middle" font-size="10.5" fill="#0C4A43">Tasks → Drivers → Operators</text>
+            <text x="557" y="330" text-anchor="middle" font-size="10.5" fill="#0C4A43">Splits consumed in parallel</text>
+            <text x="557" y="345" text-anchor="middle" font-size="10.5" fill="#0C4A43">Pages exchanged over HTTP</text>
+
+            <text x="690" y="325" text-anchor="middle" font-size="20" fill="#5A6273">…</text>
+
+            <!-- CONNECTOR SPI BAND -->
+            <rect x="20" y="392" width="840" height="112" rx="8" fill="#F5F6F8" stroke="#D5D9E0"/>
+            <text x="36" y="410" font-size="10.5" font-weight="700" fill="#5A6273" letter-spacing="0.5">CONNECTOR SPI (plugin layer)</text>
+
+            <rect x="52" y="418" width="148" height="70" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="126" y="440" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A6B">Iceberg</text>
+            <text x="126" y="456" text-anchor="middle" font-size="10.5" fill="#1E3A6B">connector</text>
+            <text x="126" y="472" text-anchor="middle" font-size="10" fill="#1E3A6B">IRC · vended creds</text>
+
+            <rect x="220" y="418" width="148" height="70" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="294" y="440" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A6B">Delta Lake</text>
+            <text x="294" y="456" text-anchor="middle" font-size="10.5" fill="#1E3A6B">connector</text>
+            <text x="294" y="472" text-anchor="middle" font-size="10" fill="#1E3A6B">Delta log reader</text>
+
+            <rect x="388" y="418" width="148" height="70" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="462" y="440" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">JDBC</text>
+            <text x="462" y="456" text-anchor="middle" font-size="10.5" fill="#3A4252">connector</text>
+            <text x="462" y="472" text-anchor="middle" font-size="10" fill="#3A4252">PostgreSQL · MySQL…</text>
+
+            <rect x="556" y="418" width="148" height="70" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="630" y="440" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">Kafka / HTTP /</text>
+            <text x="630" y="456" text-anchor="middle" font-size="10.5" fill="#3A4252">Redis / Cassandra</text>
+            <text x="630" y="472" text-anchor="middle" font-size="10" fill="#3A4252">streaming + KV</text>
+
+            <text x="750" y="460" text-anchor="middle" font-size="20" fill="#5A6273">…</text>
+
+            <!-- vertical arrows: clients → coord -->
+            <line x1="440" y1="76" x2="440" y2="94" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <!-- coord → workers -->
+            <line x1="440" y1="230" x2="440" y2="248" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <!-- workers → connectors -->
+            <line x1="440" y1="372" x2="440" y2="390" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+
+            <!-- HTTP label on coord→workers -->
+            <rect x="406" y="234" width="68" height="16" rx="8" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="440" y="246" text-anchor="middle" font-size="10.5" fill="#3A4252">HTTP/REST</text>
+          </svg>
+          <div class="legend">
+            <span><i style="background:#D6F0EE;border-color:#1F9E8F"></i>Compute (Trino)</span>
+            <span><i style="background:#EADDF7;border-color:#7E4FB5"></i>Catalog/Discovery</span>
+            <span><i style="background:#DCE8FB;border-color:#3B73C4"></i>Table-format connectors</span>
+            <span><i style="background:#E8EBF0;border-color:#8A94A6"></i>Other source connectors</span>
+            <span><i style="background:#DEE0FA;border-color:#5256C8"></i>Clients</span>
+            <span><i style="background:#FAD9DC;border-color:#C8425A"></i>Auth/QoS</span>
+          </div>
+        </div>
+        <figcaption><b>Figure 1.</b> Trino internal architecture. The coordinator owns all planning; workers execute tasks concurrently and exchange data pages over HTTP. Every data source plugs in through the Connector SPI — the line between the engine and any source.</figcaption>
+      </figure>
+
+      <h3>Query execution hierarchy</h3>
+      <p>A SQL statement maps to a <strong>query → stages → tasks → splits → operators</strong> hierarchy. A stage is a pipeline fragment that can execute in parallel; task parallelism across workers is set by the number of splits the connector generates. Within a task, the engine runs an operator pipeline (TableScan → Filter → Project → HashAggregation, etc.) in a tight loop over columnar pages (the in-memory format). The coordinator's root stage collects final results and streams them back to the client on an output buffer; if the client reads slowly, back-pressure causes the pipeline to block.</p>
+
+      <div class="callout key">
+        <span class="tag">Key takeaway</span>
+        <p>Trino is pure compute: no persistent storage, no catalog of its own. Every byte it touches belongs to an external system. The Connector SPI is what makes that work at scale — it's the architectural contract that separates the query engine from the data world.</p>
+      </div>
+    </section>
+
+    <!-- 2. PLACEMENT -->
+    <section id="placement">
+      <h2><span class="num">2</span>Placement in the data platform &amp; AI landscape</h2>
+
+      <p>Trino occupies <strong>Layer 4 (Query/Compute)</strong> in the platform stack. It depends on L0–L3 for data and metadata, and it is consumed by L6 (semantic layer compiles metric queries to Trino SQL), L7 (governance catalogs harvest query lineage), and L9 (BI tools, notebooks, and AI agents). It does <em>not</em> implement a table format (L2), does not own a catalog (L3), and has no OLTP capability (L5).</p>
+
+      <p><strong>Competes with:</strong> Apache Spark (heavier, batch-first; Trino wins on sub-minute interactive latency), Snowflake/BigQuery/Redshift (warehouse, proprietary storage, higher cost/lock-in), DuckDB (single-node, embedded; Trino wins on cluster-scale federation), Presto/PrestoDB (same lineage, different governance). <strong>Complements:</strong> Spark (Trino for interactive + federation; Spark for heavy batch ML), Flink (streaming ingestion; Trino for query after), dbt (Trino is the execution engine dbt compiles to).</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 860 540" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Data platform landscape showing Trino at L4 compute layer with cross-cutting identity and governance planes">
+            <defs>
+              <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- Identity plane (left) -->
+            <rect x="10" y="10" width="46" height="520" rx="6" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.3"/>
+            <text x="33" y="290" text-anchor="middle" font-size="11" font-weight="700" fill="#6E1626"
+                  transform="rotate(-90,33,290)" letter-spacing="0.5">IDENTITY &amp; AUTH (L8)</text>
+
+            <!-- Governance plane (right) -->
+            <rect x="804" y="10" width="46" height="520" rx="6" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.3"/>
+            <text x="827" y="290" text-anchor="middle" font-size="11" font-weight="700" fill="#234D1A"
+                  transform="rotate(90,827,290)" letter-spacing="0.5">GOVERNANCE / KNOWLEDGE (L7)</text>
+
+            <!-- L9 Consumption -->
+            <rect x="66" y="10" width="728" height="52" rx="6" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.3"/>
+            <text x="82" y="26" font-size="10" font-weight="700" fill="#23266E" letter-spacing="0.4">L9 · CONSUMPTION / AI AGENTS</text>
+            <text x="430" y="46" text-anchor="middle" font-size="12" fill="#23266E">BI tools · Notebooks · AI Agents · Evals</text>
+
+            <!-- L6 Semantic -->
+            <rect x="66" y="72" width="728" height="52" rx="6" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.3"/>
+            <text x="82" y="88" font-size="10" font-weight="700" fill="#6B4E06" letter-spacing="0.4">L6 · SEMANTIC LAYER</text>
+            <text x="430" y="108" text-anchor="middle" font-size="12" fill="#6B4E06">dbt Semantic Layer · Cube · AtScale  (compiles to Trino SQL)</text>
+
+            <!-- L4 Compute — FOCUS -->
+            <rect x="66" y="134" width="728" height="66" rx="6" fill="#D6F0EE" stroke="#111418" stroke-width="2.8"/>
+            <text x="82" y="151" font-size="10" font-weight="700" fill="#0C4A43" letter-spacing="0.4">L4 · QUERY / COMPUTE  ← FOCUS</text>
+            <rect x="150" y="158" width="120" height="34" rx="5" fill="#FFFFFF" stroke="#111418" stroke-width="2"/>
+            <text x="210" y="180" text-anchor="middle" font-size="13" font-weight="700" fill="#0C4A43">Trino</text>
+            <rect x="290" y="158" width="100" height="34" rx="5" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="340" y="180" text-anchor="middle" font-size="12" fill="#0C4A43">Spark</text>
+            <rect x="410" y="158" width="100" height="34" rx="5" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="460" y="180" text-anchor="middle" font-size="12" fill="#0C4A43">Flink</text>
+            <rect x="530" y="158" width="100" height="34" rx="5" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="580" y="180" text-anchor="middle" font-size="12" fill="#0C4A43">DuckDB</text>
+            <rect x="648" y="158" width="120" height="34" rx="5" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="708" y="180" text-anchor="middle" font-size="12" fill="#0C4A43">Warehouse engines</text>
+
+            <!-- L3 Catalog -->
+            <rect x="66" y="210" width="728" height="52" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.3"/>
+            <text x="82" y="226" font-size="10" font-weight="700" fill="#432068" letter-spacing="0.4">L3 · CATALOGS (IRC)</text>
+            <text x="430" y="246" text-anchor="middle" font-size="12" fill="#432068">Polaris · Unity Catalog · Gravitino · Nessie · Glue  (table metadata + credential vending)</text>
+
+            <!-- L2 Table format -->
+            <rect x="66" y="272" width="728" height="52" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.3"/>
+            <text x="82" y="288" font-size="10" font-weight="700" fill="#1E3A6B" letter-spacing="0.4">L2 · TABLE FORMAT</text>
+            <text x="430" y="308" text-anchor="middle" font-size="12" fill="#1E3A6B">Apache Iceberg · Delta Lake · Apache Hudi  (ACID, snapshots, partition evolution)</text>
+
+            <!-- L1 File format -->
+            <rect x="66" y="334" width="728" height="46" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.3"/>
+            <text x="82" y="350" font-size="10" font-weight="700" fill="#3A4252" letter-spacing="0.4">L1 · FILE FORMAT</text>
+            <text x="430" y="368" text-anchor="middle" font-size="12" fill="#3A4252">Parquet · ORC · Avro</text>
+
+            <!-- L0 Object storage -->
+            <rect x="66" y="390" width="728" height="46" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.3"/>
+            <text x="82" y="406" font-size="10" font-weight="700" fill="#3A4252" letter-spacing="0.4">L0 · OBJECT STORAGE</text>
+            <text x="430" y="424" text-anchor="middle" font-size="12" fill="#3A4252">S3 · GCS · ADLS · MinIO</text>
+
+            <!-- L5 Operational -->
+            <rect x="66" y="446" width="728" height="46" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.3"/>
+            <text x="82" y="462" font-size="10" font-weight="700" fill="#7A3D0E" letter-spacing="0.4">L5 · OPERATIONAL (LAKEBASE)</text>
+            <text x="430" y="480" text-anchor="middle" font-size="12" fill="#7A3D0E">Lakebase · PostgreSQL · MySQL  (OLTP — Trino can federate but does not own this tier)</text>
+          </svg>
+          <div class="legend">
+            <span><i style="background:#D6F0EE;border-color:#111418"></i>Trino (focus L4)</span>
+            <span><i style="background:#EADDF7;border-color:#7E4FB5"></i>Catalog L3</span>
+            <span><i style="background:#DCE8FB;border-color:#3B73C4"></i>Table format L2</span>
+            <span><i style="background:#E8EBF0;border-color:#8A94A6"></i>Storage L0/L1</span>
+            <span><i style="background:#FBF0CF;border-color:#C99A1E"></i>Semantic L6</span>
+            <span><i style="background:#DEE0FA;border-color:#5256C8"></i>Consumption L9</span>
+          </div>
+        </div>
+        <figcaption><b>Figure 2.</b> Trino's position in the data platform stack. It sits squarely at L4, consuming metadata from L3 catalogs and data from L0–L2, and is consumed by L6 (semantic layer) and L9 (BI/agents). The two vertical planes — identity (left) and governance (right) — cut through every layer.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Axis</th><th>Trino</th><th>Spark</th><th>DuckDB</th><th>Snowflake</th></tr></thead>
+          <tbody>
+            <tr><td>Primary workload</td><td>Interactive &amp; federated OLAP</td><td>Batch, ML, streaming</td><td>Single-node OLAP</td><td>Warehouse OLAP</td></tr>
+            <tr><td>Scale model</td><td>Horizontal (add workers)</td><td>Horizontal (add executors)</td><td>Vertical (one process)</td><td>Proprietary auto-scale</td></tr>
+            <tr><td>Storage</td><td>Open (any connector)</td><td>Open (any source)</td><td>Local + S3 via extensions</td><td>Proprietary (FDN)</td></tr>
+            <tr><td>Latency target</td><td>Seconds–minutes</td><td>Minutes–hours</td><td>Milliseconds–seconds</td><td>Seconds–minutes</td></tr>
+            <tr><td>Federation</td><td>First-class (multi-catalog join)</td><td>Moderate (datasource API)</td><td>Limited</td><td>External tables only</td></tr>
+            <tr><td>Iceberg native</td><td>Yes (Iceberg connector + IRC)</td><td>Yes (Iceberg API)</td><td>Limited (read-only via extension)</td><td>Via external Iceberg</td></tr>
+            <tr><td>OLTP</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3. HOW IT WORKS -->
+    <section id="mechanism">
+      <h2><span class="num">3</span>How it works</h2>
+
+      <p>The lifecycle of a query in Trino has four phases: <strong>parse &amp; analyze → plan &amp; optimize → schedule &amp; execute → return results</strong>. The interesting engineering is in the middle two.</p>
+
+      <h3>Planning: logical → distributed plan</h3>
+      <p>The coordinator parses SQL into an AST, resolves names against connector metadata (schema, column types, statistics), and builds a <strong>logical plan</strong> — a tree of relational operators (TableScan, Filter, Project, Join, Aggregation, Sort, etc.). The <strong>cost-based optimizer (CBO)</strong> then rewrites this plan: it re-orders joins using connector-provided table statistics to minimize estimated cost (Trino defaults to reordering up to 9 tables; factorial search space is bounded). It selects join distribution strategy — <em>broadcast</em> (small table replicated to all workers) or <em>partitioned</em> (both sides hash-partitioned on the join key). Predicate and aggregate pushdown rewrites the plan to move <code>Filter</code> and partial <code>Aggregation</code> operators into connector scan nodes, so connectors can push predicates to the source.</p>
+
+      <p>The logical plan is then converted to a <strong>distributed plan</strong> by inserting explicit <code>ExchangeNode</code> operators that represent cross-worker data movement. An Exchange node creates a <strong>stage boundary</strong>. Each stage runs as a set of parallel tasks on workers; tasks produce output pages that are pulled by downstream tasks via HTTP.</p>
+
+      <h3>Execution: splits → pages → results</h3>
+      <p>The scheduler asks connectors for <strong>splits</strong> — logical data partitions — and assigns them to worker tasks. For the Iceberg connector, a split is typically one Parquet data file (or a range within it). For a JDBC connector, a split may be a predicate range over a numeric key. Workers execute tasks as <strong>drivers</strong> — pipelines of operators consuming pages. Each operator (TableScan, Filter, HashBuild, HashProbe, etc.) processes one page at a time and emits pages downstream. Pages are the columnar in-memory format; they never touch disk unless spill is configured.</p>
+
+      <p>Worker-to-worker data exchange is done via HTTP polling: the downstream task polls the upstream task's output buffer. When the output buffer is full, the upstream task blocks (<em>back-pressure</em>). The coordinator accumulates the final output on its own output buffer and returns it to the client page-by-page.</p>
+
+      <h3>Fault-tolerant execution (FTE)</h3>
+      <p>By default, any task failure aborts the entire query. With <strong>fault-tolerant execution</strong> enabled, Trino uses an external <code>ExchangeManager</code> that spills stage outputs to object storage (e.g., S3). If a task fails, only that task is re-run from the spilled input, not the whole query. FTE also enables <strong>adaptive plan optimizations</strong> — the coordinator can re-order join sides based on actual row counts observed at runtime, not just pre-query statistics.</p>
+
+      <h3>Iceberg connector mechanics</h3>
+      <p>With the Iceberg connector pointed at an IRC-compliant catalog, the sequence is: (1) coordinator calls <code>GET /v1/namespaces/{ns}/tables/{table}</code> (loadTable) on the catalog; (2) the catalog returns the table metadata location and, if credential vending is enabled, short-lived S3/ADLS/GCS credentials scoped to the table's data paths; (3) the coordinator reads manifest list and manifest files to build the full split list, applying partition and file-level predicates to prune aggressively; (4) workers receive splits and read Parquet pages directly from object storage using the vended credentials. Dynamic filtering further tightens the scan: discovered join-key values are propagated back to the probe-side scan, causing the connector to skip additional files.</p>
+
+      <div class="callout amber">
+        <span class="tag">2025 status: Credential vending</span>
+        <p>As of mid-2025, Trino's Iceberg connector supports <code>iceberg.rest-catalog.vended-credentials-enabled=true</code>, but there are known issues: the client does not always invoke the <code>/credentials</code> refresh endpoint, falling back to re-fetching via <code>oauth/tokens</code>. Spark's Iceberg implementation honors <code>LoadTableResponse</code> vended credentials more reliably. Track GitHub issues #25827 and #27416 before relying on this in production.</p>
+      </div>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#D6F0EE','primaryBorderColor':'#1F9E8F','primaryTextColor':'#0C4A43','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant CL as Client (JDBC)
+    participant CO as Coordinator
+    participant CAT as Iceberg Catalog (IRC)
+    participant W1 as Worker 1..N
+    participant OS as Object Storage (S3)
+
+    CL->>CO: SQL query (HTTP POST /v1/statement)
+    CO->>CO: Parse → Logical plan → CBO optimize
+    CO->>CAT: loadTable (GET /v1/namespaces/db/tables/sales)
+    CAT-->>CO: Table metadata + vended S3 credentials (scoped, TTL ~1h)
+    CO->>CO: Read manifest list → manifest files → prune splits
+    CO->>W1: Assign tasks + splits (HTTP PUT /v1/task/{taskId})
+    W1->>OS: Read Parquet files (vended credentials)
+    OS-->>W1: Parquet pages
+    W1->>W1: Filter / Project / Partial Aggregate
+    W1->>W1: Exchange pages between workers (HTTP)
+    W1-->>CO: Final stage output pages
+    CO-->>CL: Result pages (paged HTTP response)
+          </div>
+        </div>
+        <figcaption><b>Figure 3.</b> Trino query lifecycle with the Iceberg/IRC connector. The coordinator plans and schedules; workers read object storage directly using catalog-vended credentials. Workers exchange intermediate data over HTTP — no shared disk, no external message broker.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 4. AUTH -->
+    <section id="auth">
+      <h2><span class="num">4</span>Authentication &amp; identity</h2>
+
+      <p>Trino's security model has two distinct perimeters: <strong>client-to-coordinator</strong> (user-facing) and <strong>coordinator-to-worker / worker-to-worker</strong> (internal). Both require TLS to be configured before any non-trivial authentication mode is enabled.</p>
+
+      <h3>Client-to-coordinator authentication</h3>
+      <p>Trino supports multiple authentication types, configured in <code>config.properties</code> via <code>http-server.authentication.type</code>. They can be stacked (comma-separated) so a single endpoint accepts, say, both JWT and OAuth2:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>Mechanism</th><th>When to use</th></tr></thead>
+          <tbody>
+            <tr><td><code>PASSWORD</code></td><td>File-based (bcrypt/PBKDF2 hashes) or LDAP bind</td><td>Simple deployments; LDAP for enterprise directory integration</td></tr>
+            <tr><td><code>OAUTH2</code></td><td>OAuth 2.0 Authorization Code flow or JWT Bearer; OIDC discovery from <code>/.well-known/openid-configuration</code>; token validated via JWKS endpoint or <code>userinfo_endpoint</code></td><td>SSO with an identity provider (Okta, Azure AD, Keycloak, etc.)</td></tr>
+            <tr><td><code>JWT</code></td><td>Bearer JWT signed with RSA/ECDSA key; public key loaded from JWKS URL or local file on coordinator</td><td>Machine-to-machine (service accounts, agents)</td></tr>
+            <tr><td><code>KERBEROS</code></td><td>SPNEGO/Kerberos ticket exchange over HTTPS</td><td>On-prem Hadoop ecosystem with existing KDC</td></tr>
+            <tr><td><code>CERTIFICATE</code></td><td>Mutual TLS (mTLS); client presents X.509 certificate; coordinator validates against trust store</td><td>Workload identity, service mesh (SPIFFE/SVID)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Internal cluster authentication</h3>
+      <p>Coordinator-to-worker and worker-to-worker communication is secured via a <strong>shared secret</strong> (<code>internal-communication.shared-secret</code>). Each request carries an HMAC-signed header; workers reject requests without a valid signature. TLS is independently configurable for internal channels and is recommended (encrypt the data-plane exchanges between workers).</p>
+
+      <h3>Authorization</h3>
+      <p>Once a principal is authenticated, access control is enforced by one of three pluggable authorization backends:</p>
+      <ul>
+        <li><strong>File-based system access control</strong>: JSON rules files on the coordinator define allow/deny at catalog, schema, table, and column level. Simple and audit-friendly, but static — changes require a coordinator config reload. Supports <code>principal_rules</code> for matching authenticated identities to allowed usernames.</li>
+        <li><strong>Apache Ranger</strong>: The Ranger plugin sends authorization requests to a running Ranger Policy Server over REST. Supports column masking (return a masked value for a column), row-level filtering (append a WHERE clause), and audit logging. Ranger policies are managed centrally and apply to multiple engines.</li>
+        <li><strong>Open Policy Agent (OPA)</strong>: The OPA plugin sends a structured JSON input document (query subject, resource, action, environment) to an OPA server at each access decision point. Policies are Rego and can express ABAC rules that combine user attributes with resource metadata — fine-grained and externalized, but adds a latency hop per access check.</li>
+      </ul>
+
+      <p>Trino also supports <strong>catalog-level roles</strong> via SQL (<code>CREATE ROLE</code>, <code>GRANT role TO user</code>) where the underlying connector supports it (Iceberg, Hive). These are RBAC at the connector level, separate from the system-level access control.</p>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#FAD9DC','primaryBorderColor':'#C8425A','primaryTextColor':'#6E1626','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant U as User / Service
+    participant IdP as Identity Provider (OIDC)
+    participant TR as Trino Coordinator (HTTPS)
+    participant AC as Access Control (OPA/Ranger/File)
+    participant CAT as IRC Catalog (L3)
+    participant OS as Object Storage
+
+    U->>IdP: OAuth2 client-credentials or auth-code grant
+    IdP-->>U: JWT access token (scoped, short-lived)
+    U->>TR: SQL query + Bearer JWT (HTTPS 443)
+    TR->>TR: Validate JWT signature (JWKS endpoint)
+    TR->>AC: Check access(subject=user, resource=table, action=SELECT)
+    AC-->>TR: Allow + column mask rules (if any)
+    TR->>CAT: loadTable + credentials request (OAuth token to catalog)
+    CAT->>CAT: Validate token, evaluate catalog RBAC
+    CAT-->>TR: Table metadata + vended storage credentials
+    TR->>TR: Plan query, assign tasks to workers
+    TR->>OS: Workers read data (vended creds, path-scoped)
+    OS-->>TR: Parquet pages
+    TR-->>U: Query results
+          </div>
+        </div>
+        <figcaption><b>Figure 4.</b> Full auth flow for a user querying an Iceberg table via Trino. Identity flows from IdP → JWT → Trino; authorization is checked at both the Trino system level (OPA/Ranger/file) and the catalog level (IRC RBAC). Vended credentials prevent Trino from holding long-lived object-storage keys.</figcaption>
+      </figure>
+
+      <div class="callout warn">
+        <span class="tag">Critical: TLS is a prerequisite, not an option</span>
+        <p>Every authentication mode except <code>PASSWORD</code> (with process forwarding) requires TLS on the Trino coordinator HTTPS port. Deploying without TLS means credentials traverse the network in plaintext. Additionally, the internal shared secret is only as strong as the network isolation — operators often overlook encrypting the worker-to-worker channel, which carries query data including join keys and partial result sets.</p>
+      </div>
+    </section>
+
+    <!-- 5. CONNECTIONS -->
+    <section id="connections">
+      <h2><span class="num">5</span>How it connects to the rest of the stack</h2>
+
+      <p>Trino's edges in the platform graph are its most architecturally significant feature — the whole point is federation across those edges. Each connection has a specific protocol and carries specific content.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 880 500" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Trino component relationship map: Trino at center, connected to catalogs, storage, semantic layer, governance, identity, and consumers">
+            <defs>
+              <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- TRINO CENTER -->
+            <rect x="340" y="200" width="200" height="80" rx="9"
+                  fill="#D6F0EE" stroke="#111418" stroke-width="2.8"/>
+            <text x="440" y="234" text-anchor="middle" font-size="16" font-weight="700" fill="#0C4A43">Trino</text>
+            <text x="440" y="252" text-anchor="middle" font-size="11.5" fill="#0C4A43">Distributed SQL engine</text>
+            <text x="440" y="268" text-anchor="middle" font-size="10.5" fill="#5A6273">← focus</text>
+
+            <!-- IRC Catalog (top-left) -->
+            <rect x="60" y="100" width="178" height="62" rx="7"
+                  fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="149" y="126" text-anchor="middle" font-size="13" font-weight="600" fill="#432068">IRC Catalog (L3)</text>
+            <text x="149" y="144" text-anchor="middle" font-size="11" fill="#432068">Polaris · Unity · Nessie · Glue</text>
+
+            <!-- Object Storage (bottom-left) -->
+            <rect x="60" y="340" width="178" height="62" rx="7"
+                  fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="149" y="366" text-anchor="middle" font-size="13" font-weight="600" fill="#3A4252">Object Storage (L0)</text>
+            <text x="149" y="384" text-anchor="middle" font-size="11" fill="#3A4252">S3 · GCS · ADLS</text>
+
+            <!-- RDBMS (left) -->
+            <rect x="60" y="220" width="178" height="62" rx="7"
+                  fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="149" y="246" text-anchor="middle" font-size="13" font-weight="600" fill="#3A4252">RDBMS / JDBC (L5)</text>
+            <text x="149" y="264" text-anchor="middle" font-size="11" fill="#3A4252">PostgreSQL · MySQL · etc.</text>
+
+            <!-- Semantic Layer (top-right) -->
+            <rect x="642" y="100" width="178" height="62" rx="7"
+                  fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.4"/>
+            <text x="731" y="126" text-anchor="middle" font-size="13" font-weight="600" fill="#6B4E06">Semantic Layer (L6)</text>
+            <text x="731" y="144" text-anchor="middle" font-size="11" fill="#6B4E06">dbt · Cube · AtScale</text>
+
+            <!-- Consumers / Agents (top-center) -->
+            <rect x="341" y="20" width="198" height="62" rx="7"
+                  fill="#DEE0FA" stroke="#5256C8" stroke-width="1.4"/>
+            <text x="440" y="46" text-anchor="middle" font-size="13" font-weight="600" fill="#23266E">BI / AI Agents (L9)</text>
+            <text x="440" y="64" text-anchor="middle" font-size="11" fill="#23266E">Tableau · Superset · LLM agents</text>
+
+            <!-- Knowledge Catalog (right) -->
+            <rect x="642" y="220" width="178" height="62" rx="7"
+                  fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.4"/>
+            <text x="731" y="246" text-anchor="middle" font-size="13" font-weight="600" fill="#234D1A">Knowledge Catalog (L7)</text>
+            <text x="731" y="264" text-anchor="middle" font-size="11" fill="#234D1A">DataHub · Atlan · Purview</text>
+
+            <!-- Identity (bottom-right) -->
+            <rect x="642" y="340" width="178" height="62" rx="7"
+                  fill="#FAD9DC" stroke="#C8425A" stroke-width="1.4"/>
+            <text x="731" y="366" text-anchor="middle" font-size="13" font-weight="600" fill="#6E1626">Identity (L8)</text>
+            <text x="731" y="384" text-anchor="middle" font-size="11" fill="#6E1626">Okta · Azure AD · OPA · Ranger</text>
+
+            <!-- EDGES — Trino ↔ IRC Catalog -->
+            <line x1="340" y1="222" x2="238" y2="152" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="255" y="170" width="88" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="299" y="183" text-anchor="middle" font-size="10" fill="#3A4252">IRC / HTTPS</text>
+
+            <!-- Trino → Object Storage -->
+            <line x1="340" y1="262" x2="238" y2="360" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="238" y="296" width="90" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="283" y="309" text-anchor="middle" font-size="10" fill="#3A4252">vended creds</text>
+
+            <!-- Trino ↔ RDBMS -->
+            <line x1="340" y1="240" x2="238" y2="248" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)" marker-start="url(#arr3)"/>
+            <rect x="242" y="230" width="92" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="288" y="243" text-anchor="middle" font-size="10" fill="#3A4252">JDBC / pushdown</text>
+
+            <!-- Clients → Trino -->
+            <line x1="440" y1="82" x2="440" y2="198" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="393" y="126" width="94" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="440" y="139" text-anchor="middle" font-size="10" fill="#3A4252">JDBC / HTTP SQL</text>
+
+            <!-- Semantic Layer → Trino -->
+            <line x1="642" y1="148" x2="540" y2="222" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="563" y="166" width="86" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="606" y="179" text-anchor="middle" font-size="10" fill="#3A4252">compiled SQL</text>
+
+            <!-- Knowledge Catalog ↔ Trino -->
+            <line x1="642" y1="240" x2="540" y2="240" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)" marker-start="url(#arr3)"/>
+            <rect x="544" y="224" width="94" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="591" y="237" text-anchor="middle" font-size="10" fill="#3A4252">lineage harvest</text>
+
+            <!-- Identity → Trino -->
+            <line x1="642" y1="358" x2="540" y2="272" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="555" y="306" width="88" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="599" y="319" text-anchor="middle" font-size="10" fill="#3A4252">JWT / OPA call</text>
+          </svg>
+          <div class="legend">
+            <span><i style="background:#D6F0EE;border-color:#111418"></i>Trino (focus)</span>
+            <span><i style="background:#EADDF7;border-color:#7E4FB5"></i>Catalog L3</span>
+            <span><i style="background:#E8EBF0;border-color:#8A94A6"></i>Storage / RDBMS</span>
+            <span><i style="background:#FBF0CF;border-color:#C99A1E"></i>Semantic L6</span>
+            <span><i style="background:#DEEFD9;border-color:#4A9A3C"></i>Governance L7</span>
+            <span><i style="background:#FAD9DC;border-color:#C8425A"></i>Identity L8</span>
+            <span><i style="background:#DEE0FA;border-color:#5256C8"></i>Consumers L9</span>
+          </div>
+        </div>
+        <figcaption><b>Figure 5.</b> Trino's component-relationship map. Each edge is labelled with its actual protocol or mechanism. The catalog edge (IRC/HTTPS) and the storage edge (vended credentials) are the most architecturally important — they define where the security control point lives.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Component</th><th>Connection mechanism</th><th>What crosses</th><th>Direction</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>IRC Catalog (L3)<br><small>Polaris, Unity, Nessie, Glue</small></td>
+              <td>Iceberg REST Catalog API over HTTPS; OAuth2 Bearer token from IdP</td>
+              <td>Table metadata (snapshot, manifest list, schema), vended short-lived object-storage credentials</td>
+              <td>Trino → Catalog</td>
+            </tr>
+            <tr>
+              <td>Object Storage (L0)<br><small>S3, GCS, ADLS</small></td>
+              <td>Native storage SDK (S3 API, GCS API); credentials either static config or vended by catalog</td>
+              <td>Parquet/ORC data file pages (read); new data files (write for INSERT/CTAS)</td>
+              <td>Workers ↔ Storage</td>
+            </tr>
+            <tr>
+              <td>Iceberg table format (L2)</td>
+              <td>File I/O via Iceberg Java library embedded in connector; reads metadata tree (catalog pointer → metadata JSON → manifests → data files)</td>
+              <td>Manifest files, data file statistics used for partition/file pruning</td>
+              <td>Coordinator reads metadata; Workers read data</td>
+            </tr>
+            <tr>
+              <td>RDBMS / JDBC sources (L5)</td>
+              <td>JDBC driver per database; Trino PostgreSQL/MySQL connectors generate pushdown SQL</td>
+              <td>Query results + predicate-pushed SQL fragment to source; metadata (schema, stats) on catalog resolve</td>
+              <td>Trino → Source (pulls data)</td>
+            </tr>
+            <tr>
+              <td>Semantic Layer (L6)<br><small>dbt, Cube, AtScale</small></td>
+              <td>Semantic layer compiles metric queries to SQL targeted at Trino; connects via JDBC or Trino Python client</td>
+              <td>Compiled SQL query sent to Trino; result set returned</td>
+              <td>Semantic layer → Trino</td>
+            </tr>
+            <tr>
+              <td>Knowledge/Governance Catalog (L7)<br><small>DataHub, Atlan, Purview</small></td>
+              <td>Lineage harvested via Trino event listener plugin (OpenLineage) or polling the system catalog; policy tags pushed back via Ranger/OPA</td>
+              <td>Query lineage events (table inputs/outputs, column-level); classification tags for column masking</td>
+              <td>Trino → Catalog (lineage); Catalog → Trino (policy)</td>
+            </tr>
+            <tr>
+              <td>Identity Provider (L8)<br><small>Okta, Azure AD, Keycloak</small></td>
+              <td>OIDC/OAuth2; Trino validates JWT via JWKS endpoint on every request</td>
+              <td>JWT access tokens (inbound); JWKS public keys (fetched at startup and cached)</td>
+              <td>IdP → Trino</td>
+            </tr>
+            <tr>
+              <td>OPA / Ranger (L8)</td>
+              <td>HTTP POST to OPA server (Rego eval) or Ranger REST API on each access check</td>
+              <td>Authorization request (subject, resource, action, environment); decision (allow/deny + column masks)</td>
+              <td>Trino → Policy engine (per query)</td>
+            </tr>
+            <tr>
+              <td>BI tools / AI agents (L9)</td>
+              <td>JDBC (Type 4 driver: <code>jdbc:trino://host:port/catalog/schema</code>), ODBC (commercial), HTTP REST (<code>/v1/statement</code>), Python/Go client libraries</td>
+              <td>SQL queries inbound; result sets (columnar pages) outbound</td>
+              <td>Client → Trino</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout note">
+        <span class="tag">Cross-catalog federation</span>
+        <p>A single Trino query can join across multiple catalogs in a single SQL statement: <code>SELECT * FROM iceberg_catalog.db.orders JOIN mysql_catalog.app.customers ON …</code>. Trino resolves each side through its respective connector, pulls data to workers, and performs the join in memory. Predicate pushdown reduces transfer from each source independently. This is Trino's unique architectural position — no other lakehouse-native engine does cross-source federation this cleanly at this scale.</p>
+      </div>
+    </section>
+
+    <!-- 6. TRADE-OFFS -->
+    <section id="tradeoffs">
+      <h2><span class="num">6</span>Trade-offs, failure modes &amp; when (not) to use it</h2>
+
+      <h3>What Trino does well</h3>
+      <ul>
+        <li><strong>Interactive OLAP at petabyte scale:</strong> The MPP architecture, in-memory pipelining, and connector pushdown deliver sub-minute latency on scans that would take hours in a MapReduce system. At Pinterest, Twitter/X, Meta, Lyft, and many others, Trino runs billions of queries per day.</li>
+        <li><strong>Genuine federation:</strong> Joining a Postgres OLTP table to an Iceberg data lake table in a single SQL query is production-grade, not a demo feature. Predicate pushdown minimizes data transferred from each source.</li>
+        <li><strong>Open architecture:</strong> No proprietary storage, no vendor lock-in on compute. Any Iceberg-compatible table can be queried without vendor permission. The connector SPI means you can extend it to any data source.</li>
+        <li><strong>Cost-based optimizer:</strong> The CBO with table statistics from connectors produces good join orders automatically. Adaptive re-ordering at runtime (FTE mode) handles the common case where statistics are stale or unavailable.</li>
+        <li><strong>Lakehouse-native:</strong> Deep Iceberg integration — partition evolution awareness, hidden partitioning, time travel, metadata exploration, DML (INSERT, UPDATE, DELETE, MERGE) support, materialized views on Iceberg.</li>
+      </ul>
+
+      <h3>Where Trino breaks or struggles</h3>
+      <ul>
+        <li><strong>Single coordinator is a bottleneck and SPOF:</strong> The coordinator holds all query state in memory. A large cluster (hundreds of workers) with high concurrency (hundreds of simultaneous queries) can saturate the coordinator's CPU and heap. Trino Gateway provides routing and basic HA, but there is no native coordinator clustering as of 2025.</li>
+        <li><strong>High memory per query:</strong> Large hash joins, wide aggregations, and cross-joins can allocate many GBs on individual workers. Memory limits (<code>query.max-memory-per-node</code>, <code>query.max-memory</code>) exist, but queries exceeding them are killed, not spilled by default. Configuring spill-to-disk helps but adds significant latency.</li>
+        <li><strong>Not for high-concurrency OLTP:</strong> Trino is built for analytical queries — it launches entire distributed plans for every query. A point lookup (<code>SELECT * FROM table WHERE pk = 1</code>) goes through full coordinator planning and task setup, which is several hundred milliseconds minimum. PostgreSQL or Lakebase handles this 1000× better.</li>
+        <li><strong>Statistics dependency:</strong> The CBO is only as good as the statistics connectors provide. Without <code>ANALYZE</code> on tables (Iceberg/Hive), the planner degrades to heuristics and can pick catastrophically bad join orders on skewed data.</li>
+        <li><strong>Long-running batch jobs are unstable without FTE:</strong> In default mode, any worker failure kills the entire query. A 3-hour batch ETL query that fails at hour 2.9 is fully re-run. FTE (with external exchange manager) fixes this but adds I/O overhead from spilling stages to object storage.</li>
+        <li><strong>Catalog vended-credential maturity:</strong> The IRC credential-vending path (the preferred security model) has known bugs in Trino's client-side implementation as of 2025. Organizations relying on short-lived credentials must test renewal behavior under load.</li>
+        <li><strong>No streaming:</strong> Trino's execution model is bounded queries. Real-time or continuous queries belong in Flink or Kafka Streams.</li>
+      </ul>
+
+      <h3>When (not) to use Trino</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Use case</th><th>Fit?</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td>Interactive ad-hoc analytics on Iceberg / Delta</td><td>✅ Excellent</td><td>Native connector, deep pushdown, sub-minute typical latency</td></tr>
+            <tr><td>Federated query across RDBMS + data lake</td><td>✅ Excellent</td><td>Core design purpose; no ETL movement required</td></tr>
+            <tr><td>BI tool backend (Tableau, Superset, Metabase)</td><td>✅ Good</td><td>JDBC driver, ANSI SQL compliance, resource groups for multi-user QoS</td></tr>
+            <tr><td>ETL/ELT with CREATE TABLE AS SELECT</td><td>✅ Good (with FTE)</td><td>Fault-tolerant execution makes long ETL viable; dbt + Trino is a common pattern</td></tr>
+            <tr><td>High-concurrency point lookups (&lt;10ms)</td><td>❌ Wrong tool</td><td>Coordinator overhead; use Lakebase/PostgreSQL/Cassandra</td></tr>
+            <tr><td>Streaming / real-time ingestion</td><td>❌ Wrong tool</td><td>Batch execution model; use Flink or Kafka Streams</td></tr>
+            <tr><td>Heavy ML training (multi-hour, shuffle-heavy)</td><td>⚠️ Marginal</td><td>Spark is better for iterative ML; Trino can do feature extraction</td></tr>
+            <tr><td>Tiny data / single-node analytics</td><td>⚠️ Overkill</td><td>DuckDB is simpler and faster for &lt;100 GB on a laptop</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 7. ARCHITECT'S TAKE -->
+    <section id="take">
+      <h2><span class="num">7</span>Architect's take</h2>
+
+      <p><strong>1. The connector SPI is the real moat, not the query engine.</strong> Any competent MPP engine can do parallel SQL. What makes Trino's position durable is the breadth of production-quality connectors and the ecosystem of tools built against its JDBC endpoint. The SPI is a clean interface that lets you add sources without touching the core engine — that design decision from 2012 aged extremely well. When evaluating Trino for your stack, the first question is: "What connectors do I actually need, and are they mature?" Not every connector is at Iceberg/PostgreSQL quality.</p>
+
+      <p><strong>2. Trino + Iceberg REST Catalog is the canonical open lakehouse query path.</strong> The combination of Iceberg's open table format, an IRC-compliant catalog for credential vending, and Trino as the compute tier gives you a fully open, federated, ACID-capable analytics stack with no proprietary lock-in at any layer. The architecture is sound; the friction points are operational (catalog credential-vending bugs, statistics management, memory tuning). Invest time in getting Iceberg table stats right with ANALYZE — they are the single biggest lever on query performance.</p>
+
+      <p><strong>3. The coordinator is the ceiling.</strong> For most teams Trino works beautifully up to ~200 concurrent queries and clusters of ~200 workers. Above that, coordinator CPU and GC pressure become real. Trino Gateway (the open-source routing proxy) buys you HA and cluster isolation, but it does not horizontally scale a single coordinator. Follow coordinator sizing recommendations from Starburst (32 vCPUs, 128 GB heap is a common production baseline for large clusters) and monitor <code>query.planning_time_ms</code> closely — sustained >1s planning is a warning sign.</p>
+
+      <p><strong>4. Watch the AI agent layer over the next 12–18 months.</strong> AI agents querying data platforms through Trino are not hypothetical — several Starburst and Databricks customers are routing LLM-generated SQL through Trino today. The pressure points will be: (a) authorization — an agent should have a bounded, audited set of table permissions, not inherit a human user's full access; (b) query governance — LLM-generated SQL is unpredictable and can generate resource-intensive plans that OOM the cluster; (c) semantic grounding — agents need the semantic layer (dbt Metrics, Cube) in front of Trino to stay consistent. Expect policy-engine integrations (OPA, Ranger) to get more expressive around agent-identity attributes.</p>
+    </section>
+
+    <!-- GLOSSARY -->
+    <section id="glossary">
+      <h2>Glossary</h2>
+      <dl class="glossary">
+        <dt>Split</dt>
+        <dd>The atomic unit of I/O parallelism in Trino. A split is a logical pointer to a portion of data in a source (e.g., one Parquet file path + byte range, one Kafka partition offset range). Workers consume splits; more splits = more parallelism up to the worker count.</dd>
+        <dt>Stage</dt>
+        <dd>A pipeline fragment of the distributed query plan that can execute independently, separated from adjacent stages by an ExchangeNode (cross-worker data movement). All tasks in a stage share the same operator pipeline; they differ only in which splits they process.</dd>
+        <dt>Task</dt>
+        <dd>The unit of scheduling: one instance of a stage running on one worker, assigned a set of splits. Tasks exchange result pages with downstream tasks via HTTP.</dd>
+        <dt>Connector SPI</dt>
+        <dd>Service Provider Interface — the Java API a connector implements to integrate a data source with Trino. Three facets: ConnectorMetadata (schema, stats), ConnectorSplitManager (enumerate splits), and ConnectorPageSource/Sink (read/write data pages).</dd>
+        <dt>IRC (Iceberg REST Catalog)</dt>
+        <dd>An HTTP API specification in the Iceberg project that decouples engines from catalog implementations. Defines endpoints for namespace/table CRUD, commits, and credential vending. Any engine speaking IRC works with any compliant catalog (Polaris, Unity, Nessie, Glue, etc.).</dd>
+        <dt>Vended credentials</dt>
+        <dd>Short-lived, path-scoped object-storage credentials (e.g., STS temporary AWS credentials) that the catalog returns alongside table metadata. Engines use these to read/write storage without holding long-lived keys. The catalog becomes the central security control point.</dd>
+        <dt>CBO (Cost-Based Optimizer)</dt>
+        <dd>Trino's query planner component that uses table statistics (row counts, column cardinalities, NDVs, histograms from connectors) to estimate query costs and pick an optimal plan — primarily join ordering and join distribution strategy (broadcast vs. partitioned).</dd>
+        <dt>FTE (Fault-Tolerant Execution)</dt>
+        <dd>An execution mode that spills stage outputs to an external exchange manager (e.g., S3 bucket) so individual task failures trigger task-level retry rather than full query abort. Also enables adaptive plan re-optimization at runtime.</dd>
+        <dt>Pushdown</dt>
+        <dd>Moving computation from Trino's engine into the data source connector. Predicate pushdown sends WHERE clause filters to the source; aggregate pushdown sends GROUP BY / COUNT / SUM; join pushdown (for RDBMS connectors) sends an entire join subtree. Reduces data transferred to Trino.</dd>
+      </dl>
+    </section>
+
+    <!-- SOURCES -->
+    <section id="sources">
+      <h2>Sources</h2>
+      <ul class="sources">
+        <li><span class="tier book">Book</span><a href="https://www.oreilly.com/library/view/trino-the-definitive/9781098137236/">Trino: The Definitive Guide, 2nd Ed.</a> — Fuller, Moser, Traverso (O'Reilly 2022). Primary source: architecture, connector SPI, query execution model, CBO, fault-tolerant execution, memory management. ISBN 978-1-098-13723-6.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/overview/concepts.html">Trino 481 — Concepts</a> — Official documentation on coordinator, worker, catalog, schema, split, stage, task hierarchy.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/security/authentication-types.html">Trino 481 — Authentication types</a> — All supported auth mechanisms (PASSWORD, OAUTH2, JWT, KERBEROS, CERTIFICATE) with configuration details.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/security/oauth2.html">Trino 481 — OAuth 2.0 authentication</a> — OIDC discovery, JWT validation via JWKS, userinfo endpoint behavior.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/security/opa-access-control.html">Trino 481 — OPA access control</a> — Open Policy Agent integration for fine-grained ABAC.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/security/ranger-access-control.html">Trino — Apache Ranger access control</a> — Ranger plugin, column masking, row filtering, audit.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/connector/iceberg.html">Trino 481 — Iceberg connector</a> — IRC configuration, vended credentials (<code>vended-credentials-enabled</code>), DML support, materialized views.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/optimizer/cost-based-optimizations.html">Trino 480 — Cost-based optimizations</a> — CBO join reordering, join distribution selection, table statistics.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/admin/fault-tolerant-execution.html">Trino 481 — Fault-tolerant execution</a> — Exchange manager, task retry, adaptive plan optimizations.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/optimizer/adaptive-plan-optimizations.html">Trino 480 — Adaptive plan optimizations</a> — Runtime join re-ordering based on actual data sizes (FTE only).</li>
+        <li><span class="tier paper">Paper</span><a href="https://trino.io/Presto_SQL_on_Everything.pdf">Presto: SQL on Everything (SIGMOD 2019)</a> — The foundational paper on the Presto/Trino architecture: distributed execution model, connector SPI design rationale, production deployment at Facebook.</li>
+        <li><span class="tier code">Code</span><a href="https://github.com/trinodb/trino/blob/master/core/trino-spi/src/main/java/io/trino/spi/connector/ConnectorMetadata.java">ConnectorMetadata.java — trinodb/trino</a> — The SPI interface for metadata including <code>applyFilter()</code> (predicate pushdown) and statistics methods.</li>
+        <li><span class="tier code">Code</span><a href="https://github.com/trinodb/trino/issues/25827">GitHub #25827 — Vended credential renewal issue</a> — Known issue: Trino does not always invoke the <code>/credentials</code> refresh endpoint for IRC vended credentials.</li>
+        <li><span class="tier code">Code</span><a href="https://github.com/trinodb/trino/issues/27416">GitHub #27416 — Trino does not honour vended credentials from REST Iceberg catalog</a> — Related production bug on vended credential usage in metadata reads.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://trino.io/blog/2019/07/04/cbo-introduction.html">Introduction to Trino Cost-Based Optimizer (trino.io blog, 2019)</a> — Design rationale for the CBO, statistics model, join enumeration strategy. Tier 2 practitioner from core team.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://projectnessie.org/nessie-0-95-0/trino/">Trino with Iceberg REST — Project Nessie</a> — Practical configuration of Trino's Iceberg connector against a Nessie IRC catalog, covering catalog properties and vended credentials setup.</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      Data Platform Deep-Dive · Trino: Distributed SQL Query Engine · Prepared 2026-05-22 · accuracy-first, no marketing fluff.
+      Primary source: <em>Trino: The Definitive Guide, 2nd Ed.</em> (O'Reilly 2022) supplemented with official docs and GitHub issues.
+      Verify time-sensitive claims (credential vending, FTE adaptive optimizer) against current GitHub issues and release notes.
+    </div>
+
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad:true, securityLevel:'loose', theme:'base' });
+  }
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var map = {};
+    links.forEach(function(a){
+      var id = a.getAttribute('href').slice(1);
+      var el = document.getElementById(id);
+      if (el) map[id] = a;
+    });
+    var obs = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting){
+          links.forEach(function(l){ l.classList.remove('active'); });
+          if (map[e.target.id]) map[e.target.id].classList.add('active');
+        }
+      });
+    }, { rootMargin:'-15% 0px -75% 0px' });
+    Object.keys(map).forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) obs.observe(el);
+    });
+  })();
+</script>
+</body>
+</html>

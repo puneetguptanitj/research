@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Iceberg REST Catalog (IRC) — Deep Dive</title>
+<style>
+  :root{
+    --bg:#eceef1; --surface:#ffffff;
+    --ink:#1a1d24; --ink-soft:#444b59; --ink-faint:#6b7280;
+    --rule:#e3e6eb; --rule-strong:#d5d9e0;
+    --accent:#2f6fb8; --accent-soft:#eef4fb;
+    --code-bg:#f4f5f7;
+    --l-storage:#8A94A6;  --l-storage-bg:#E8EBF0;
+    --l-table:#3B73C4;    --l-table-bg:#DCE8FB;
+    --l-catalog:#7E4FB5;  --l-catalog-bg:#EADDF7;
+    --l-compute:#1F9E8F;  --l-compute-bg:#D6F0EE;
+    --l-oper:#D9772E;     --l-oper-bg:#FCE4D4;
+    --l-semantic:#C99A1E; --l-semantic-bg:#FBF0CF;
+    --l-gov:#4A9A3C;      --l-gov-bg:#DEEFD9;
+    --l-identity:#C8425A; --l-identity-bg:#FAD9DC;
+    --l-consume:#5256C8;  --l-consume-bg:#DEE0FA;
+    --warn:#C8425A; --warn-bg:#FBE9EC;
+    --amber:#b8860b; --amber-bg:#FBF4DC;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16.5px; line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  code{
+    font-family:"SF Mono",SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;
+    font-size:0.86em; background:var(--code-bg); padding:0.12em 0.38em;
+    border-radius:4px; color:#9a3b66;
+  }
+
+  /* ---------- layout ---------- */
+  .wrap{max-width:1180px; margin:0 auto; padding:0 24px;
+        display:flex; gap:36px; align-items:flex-start;}
+  .toc{
+    position:sticky; top:0; width:248px; flex:0 0 248px;
+    max-height:100vh; overflow-y:auto; padding:28px 0 40px;
+  }
+  .doc{
+    flex:1 1 auto; min-width:0; background:var(--surface);
+    margin:24px 0 64px; padding:52px 60px 64px;
+    border:1px solid var(--rule); border-radius:10px;
+  }
+
+  /* ---------- table of contents ---------- */
+  .toc-title{font-size:11px; font-weight:700; letter-spacing:0.09em;
+             text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px 12px;}
+  .toc ol{list-style:none; margin:0; padding:0; counter-reset:toc;}
+  .toc li{margin:0;}
+  .toc a{
+    display:block; padding:5px 12px; border-left:2px solid var(--rule);
+    color:var(--ink-soft); font-size:13.5px; line-height:1.4;
+  }
+  .toc a:hover{color:var(--ink); border-left-color:var(--rule-strong); text-decoration:none;}
+  .toc a.active{color:var(--accent); border-left-color:var(--accent); font-weight:600;}
+  .toc a .n{color:var(--ink-faint); font-variant-numeric:tabular-nums; margin-right:7px;}
+  .toc a.active .n{color:var(--accent);}
+
+  /* ---------- header ---------- */
+  .eyebrow{font-size:12px; font-weight:700; letter-spacing:0.1em;
+           text-transform:uppercase; color:var(--accent);}
+  h1{font-size:33px; line-height:1.22; margin:10px 0 6px; letter-spacing:-0.01em;}
+  .definition{font-size:18px; color:var(--ink-soft); margin:0 0 18px; max-width:62ch;}
+  .meta{display:flex; flex-wrap:wrap; gap:8px 18px; font-size:13px;
+        color:var(--ink-faint); border-top:1px solid var(--rule);
+        border-bottom:1px solid var(--rule); padding:11px 0; margin-bottom:34px;}
+  .meta b{color:var(--ink-soft); font-weight:600;}
+
+  /* ---------- sections & headings ---------- */
+  section{margin:0 0 14px; padding-top:14px;}
+  h2{font-size:22px; margin:38px 0 14px; padding-bottom:7px;
+     border-bottom:2px solid var(--rule); letter-spacing:-0.01em;}
+  h2 .num{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:10px;}
+  h3{font-size:16.5px; margin:26px 0 8px; color:var(--ink);}
+  p{margin:0 0 14px;}
+  ul,ol{margin:0 0 14px; padding-left:22px;}
+  li{margin:4px 0;}
+  strong{font-weight:660;}
+
+  /* ---------- TL;DR ---------- */
+  .tldr{
+    background:var(--accent-soft); border:1px solid #cfe0f1;
+    border-radius:9px; padding:20px 24px; margin:6px 0 10px;
+  }
+  .tldr h2{border:0; margin:0 0 8px; font-size:16px; color:var(--accent);
+           text-transform:uppercase; letter-spacing:0.06em;}
+  .tldr p{margin:0 0 10px;}
+  .tldr .takeaways{margin:0; padding-left:20px;}
+  .tldr .takeaways li{margin:6px 0;}
+
+  /* ---------- callouts ---------- */
+  .callout{border-radius:8px; padding:13px 17px; margin:18px 0;
+           font-size:15px; border:1px solid;}
+  .callout .tag{display:block; font-size:11px; font-weight:700;
+                letter-spacing:0.07em; text-transform:uppercase; margin-bottom:3px;}
+  .callout p:last-child{margin-bottom:0;}
+  .callout.key{background:var(--accent-soft); border-color:#cfe0f1;}
+  .callout.key .tag{color:var(--accent);}
+  .callout.note{background:#f6f7f9; border-color:var(--rule-strong);}
+  .callout.note .tag{color:var(--ink-faint);}
+  .callout.warn{background:var(--warn-bg); border-color:#f0c6ce;}
+  .callout.warn .tag{color:var(--warn);}
+
+  /* ---------- tables ---------- */
+  .tbl-wrap{overflow-x:auto; margin:18px 0;}
+  table{border-collapse:collapse; width:100%; font-size:14px;}
+  th,td{text-align:left; padding:9px 13px; border-bottom:1px solid var(--rule);
+        vertical-align:top;}
+  thead th{background:#f6f7f9; color:var(--ink-soft); font-weight:660;
+           font-size:12px; letter-spacing:0.03em; text-transform:uppercase;
+           border-bottom:2px solid var(--rule-strong);}
+  tbody tr:last-child td{border-bottom:0;}
+  tbody tr:hover{background:#fafbfc;}
+
+  /* ---------- figures / diagrams ---------- */
+  figure{margin:24px 0; padding:0;}
+  .diagram{
+    background:#fcfcfd; border:1px solid var(--rule);
+    border-radius:9px; padding:22px 20px 8px; text-align:center;
+  }
+  .diagram svg, .diagram .mermaid{max-width:100%; height:auto;}
+  figcaption{font-size:13px; color:var(--ink-faint); margin-top:12px;
+             padding:0 8px 6px; text-align:left;}
+  figcaption b{color:var(--ink-soft); font-weight:660;}
+
+  /* diagram legend */
+  .legend{display:flex; flex-wrap:wrap; gap:6px 16px; justify-content:center;
+          margin-top:14px; padding-top:12px; border-top:1px solid var(--rule);
+          font-size:11.5px; color:var(--ink-soft);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .legend i{width:13px; height:13px; border-radius:3px; display:inline-block;
+            border:1px solid rgba(0,0,0,0.18);}
+
+  /* ---------- sources ---------- */
+  .sources{font-size:14px;}
+  .sources li{margin:9px 0;}
+  .tier{display:inline-block; font-size:10.5px; font-weight:700;
+        letter-spacing:0.04em; text-transform:uppercase; padding:1.5px 7px;
+        border-radius:4px; margin-right:8px; vertical-align:1.5px;}
+  .tier.spec{background:#e6e0f5; color:#5a3a93;}
+  .tier.docs{background:#dce8fb; color:#1E3A6B;}
+  .tier.code{background:#d6f0ee; color:#0C4A43;}
+  .tier.paper{background:#deefd9; color:#234D1A;}
+  .tier.practitioner{background:#fbf0cf; color:#6B4E06;}
+
+  /* glossary */
+  .glossary dt{font-weight:660; margin-top:10px;}
+  .glossary dd{margin:2px 0 0; color:var(--ink-soft);}
+
+  .footer{margin-top:42px; padding-top:16px; border-top:1px solid var(--rule);
+          font-size:12.5px; color:var(--ink-faint);}
+
+  /* ---------- responsive ---------- */
+  .toc-toggle{display:none;}
+  @media(max-width:980px){
+    .wrap{flex-direction:column; gap:0; padding:0 14px;}
+    .toc{position:static; width:100%; flex:none; max-height:none; padding:18px 0 0;}
+    .toc ol{display:none;} .toc ol.open{display:block;}
+    .toc-toggle{display:block; cursor:pointer; background:var(--surface);
+      border:1px solid var(--rule); border-radius:8px; padding:10px 14px;
+      font-weight:600; font-size:14px; color:var(--ink-soft); width:100%; text-align:left;}
+    .doc{padding:32px 22px 44px; margin:14px 0 40px;}
+    h1{font-size:26px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ TABLE OF CONTENTS ============ -->
+  <nav class="toc">
+    <button class="toc-toggle" onclick="document.getElementById('tocList').classList.toggle('open')">Contents ▾</button>
+    <div class="toc-title">Contents</div>
+    <ol id="tocList">
+      <li><a href="#tldr"><span class="n">—</span>TL;DR</a></li>
+      <li><a href="#architecture"><span class="n">1</span>What it is &amp; architecture</a></li>
+      <li><a href="#placement"><span class="n">2</span>Placement in the landscape</a></li>
+      <li><a href="#mechanism"><span class="n">3</span>How it works</a></li>
+      <li><a href="#auth"><span class="n">4</span>Authentication &amp; credential vending</a></li>
+      <li><a href="#connections"><span class="n">5</span>How it connects</a></li>
+      <li><a href="#tradeoffs"><span class="n">6</span>Trade-offs &amp; failure modes</a></li>
+      <li><a href="#take"><span class="n">7</span>Architect's take</a></li>
+      <li><a href="#glossary"><span class="n">—</span>Glossary</a></li>
+      <li><a href="#sources"><span class="n">—</span>Sources</a></li>
+    </ol>
+  </nav>
+
+  <!-- ============ DOCUMENT ============ -->
+  <main class="doc">
+
+    <!-- ---- HEADER ---- -->
+    <header>
+      <div class="eyebrow">Data Platform Deep-Dive</div>
+      <h1>The Iceberg REST Catalog (IRC)</h1>
+      <p class="definition">An open HTTP/JSON API specification that decouples query engines
+        from catalog implementations — and, in doing so, turns the catalog into the lakehouse's
+        authorization decision point and credential broker.</p>
+      <div class="meta">
+        <span><b>Prepared</b> 2026-05-21</span>
+        <span><b>Reading time</b> ~24 min</span>
+        <span><b>Focus</b> Architecture · Landscape · Auth &amp; credential vending · Connections</span>
+        <span><b>Spec baseline</b> Iceberg 1.11.0 (released 2026-05-19)</span>
+      </div>
+    </header>
+
+    <!-- ---- TL;DR ---- -->
+    <section id="tldr" class="tldr">
+      <h2>TL;DR</h2>
+      <p>The Iceberg REST Catalog (IRC) is not a product — it is a <em>protocol</em>. It is the
+        OpenAPI-defined HTTP contract in the <code>apache/iceberg</code> repository that any
+        engine and any catalog can implement, so that Trino, Spark, Flink, DuckDB, Snowflake and
+        PyIceberg all talk to Polaris, Unity Catalog, Gravitino, Lakekeeper or Nessie through one
+        wire format. Before the IRC, the "catalog" was a thick client library (Hive Metastore
+        Thrift, Glue SDK) wired into every engine; the IRC collapses that into a thin HTTP client
+        and moves the intelligence — commit conflict resolution, capability negotiation, and
+        security — server-side. It sits at <strong>L3, the catalog layer</strong> of the
+        lakehouse stack, directly above the Iceberg table format and below the query engines, and
+        it is the point where the technical catalog and the security control plane converge.</p>
+      <ol class="takeaways">
+        <li><strong>The IRC is the contract, not the catalog.</strong> "Polaris" or "Lakekeeper"
+          is an <em>implementation</em>; the IRC is the spec they conform to. Engines depend only
+          on the spec, which is what makes catalogs swappable.</li>
+        <li><strong>Commits became a server-side transaction.</strong> The client sends a list of
+          <em>requirements</em> (optimistic-concurrency assertions) plus <em>updates</em>; the
+          server validates atomically and either commits or returns <code>409</code>. The
+          catalog — not the object store — is now the serialization point for ACID.</li>
+        <li><strong>Credential vending is the headline security feature.</strong> On
+          <code>loadTable</code>, the catalog returns short-lived, path-scoped storage
+          credentials (or pre-signed URLs via remote signing). Engines stop holding long-lived
+          cloud keys; the catalog brokers every storage grant.</li>
+        <li><strong>The catalog is now the Policy Decision Point.</strong> Because every table
+          load and commit flows through the IRC, the catalog can authenticate the caller
+          (OAuth2/OIDC), evaluate RBAC/ABAC, and scope the vended credential — making L3 the
+          natural home for governance that L8 used to bolt on at the edges.</li>
+        <li><strong>Convergence is real but governance is not standardized.</strong> The IRC
+          standardizes the <em>metadata API</em>. It does <em>not</em> standardize the RBAC model,
+          policy language, or credential-vending semantics — each implementation still differs,
+          which is the single biggest portability gap as of 2026.</li>
+        <li><strong>The ecosystem consolidated in early 2026.</strong> Apache Polaris became a
+          Top-Level Project (Feb 2026) and Project Nessie is being merged into it; the IRC is now
+          the de facto universal catalog interface rather than one option among many.</li>
+      </ol>
+    </section>
+
+    <!-- ---- 1. ARCHITECTURE ---- -->
+    <section id="architecture">
+      <h2><span class="num">1</span>What it is &amp; core architecture</h2>
+      <p>The Iceberg REST Catalog is a <strong>vendor-neutral, HTTP/JSON catalog protocol</strong>
+        defined by a formal OpenAPI document — <code>open-api/rest-catalog-open-api.yaml</code> in
+        the <code>apache/iceberg</code> repository — and implemented client-side by the
+        <code>RESTCatalog</code> / <code>RESTSessionCatalog</code> classes. It exists because
+        Iceberg deliberately separates the <em>table</em> (the on-disk format spec) from the
+        <em>catalog</em> (whatever tracks the pointer to a table's current metadata file). For
+        years that "whatever" was a fat client: a Hive Metastore Thrift client, the AWS Glue SDK,
+        a JDBC driver — each one a different dependency, a different security model, a different
+        bug surface, baked into every engine. The IRC replaces all of them with a single thin
+        REST client and a server that any vendor can build behind.</p>
+
+      <p>Architecturally the IRC has three moving parts: a <strong>thin client</strong> embedded
+        in the engine, a <strong>catalog service</strong> that owns the metadata and the policy
+        decisions, and a <strong>metadata/credential boundary</strong> where the service hands the
+        engine just enough to read object storage directly. The deliberate design choice is that
+        the catalog service sits on the <em>control path</em> (resolve, authorize, commit) but
+        not the <em>data path</em> — bulk Parquet bytes never transit the catalog. That split is
+        what lets a single small catalog service front petabytes.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 446" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Internal architecture of the Iceberg REST Catalog: client, catalog service, and storage boundary">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- Band 1: client -->
+            <rect x="20" y="20" width="780" height="96" rx="8" fill="#F5F6F8" stroke="#D5D9E0"/>
+            <text x="36" y="40" font-size="10.5" font-weight="700" fill="#5A6273"
+                  letter-spacing="0.5">ENGINE PROCESS — THIN IRC CLIENT</text>
+            <rect x="48" y="50" width="200" height="50" rx="7"
+                  fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="148" y="71" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0C4A43">RESTCatalog /</text>
+            <text x="148" y="88" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0C4A43">RESTSessionCatalog</text>
+            <rect x="268" y="50" width="166" height="50" rx="7"
+                  fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="351" y="71" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0C4A43">HTTPClient +</text>
+            <text x="351" y="88" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0C4A43">AuthManager</text>
+            <rect x="454" y="50" width="166" height="50" rx="7"
+                  fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="537" y="71" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0C4A43">FileIO</text>
+            <text x="537" y="88" text-anchor="middle" font-size="11" fill="#0C4A43">(reads data files)</text>
+            <rect x="640" y="50" width="138" height="50" rx="7"
+                  fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="709" y="71" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0C4A43">Retry +</text>
+            <text x="709" y="88" text-anchor="middle" font-size="11" fill="#0C4A43">config negotiation</text>
+
+            <!-- Band 2: catalog service (FOCUS) -->
+            <rect x="20" y="146" width="780" height="150" rx="8" fill="#EADDF7" stroke="#111418" stroke-width="2.5"/>
+            <text x="36" y="167" font-size="10.5" font-weight="700" fill="#432068"
+                  letter-spacing="0.5">IRC CATALOG SERVICE — CONTROL PLANE</text>
+            <circle cx="773" cy="160" r="6" fill="#111418"/>
+            <text x="724" y="164" font-size="10.5" font-weight="700" fill="#111418">← focus</text>
+            <rect x="44" y="180" width="172" height="44" rx="7" fill="#FFFFFF" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="130" y="207" text-anchor="middle" font-size="12" font-weight="600" fill="#432068">HTTP API surface</text>
+            <rect x="232" y="180" width="172" height="44" rx="7" fill="#FFFFFF" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="318" y="201" text-anchor="middle" font-size="12" font-weight="600" fill="#432068">AuthN + PDP</text>
+            <text x="318" y="216" text-anchor="middle" font-size="10.5" fill="#432068">RBAC / ABAC</text>
+            <rect x="420" y="180" width="172" height="44" rx="7" fill="#FFFFFF" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="506" y="201" text-anchor="middle" font-size="12" font-weight="600" fill="#432068">Commit validator</text>
+            <text x="506" y="216" text-anchor="middle" font-size="10.5" fill="#432068">requirements / updates</text>
+            <rect x="608" y="180" width="170" height="44" rx="7" fill="#FFFFFF" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="693" y="201" text-anchor="middle" font-size="12" font-weight="600" fill="#432068">Credential vendor</text>
+            <text x="693" y="216" text-anchor="middle" font-size="10.5" fill="#432068">scoped / short-lived</text>
+            <rect x="44" y="236" width="350" height="44" rx="7" fill="#FFFFFF" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="219" y="263" text-anchor="middle" font-size="12" font-weight="600" fill="#432068">Metadata store — pointer to current table metadata</text>
+            <rect x="420" y="236" width="358" height="44" rx="7" fill="#FFFFFF" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="599" y="263" text-anchor="middle" font-size="12" font-weight="600" fill="#432068">Pluggable backend — Postgres · JDBC · cloud KV</text>
+
+            <!-- Band 3: storage -->
+            <rect x="20" y="326" width="780" height="100" rx="8" fill="#E8EBF0" stroke="#8A94A6"/>
+            <text x="36" y="346" font-size="10.5" font-weight="700" fill="#3A4252"
+                  letter-spacing="0.5">OBJECT STORAGE — DATA PLANE (L0)</text>
+            <rect x="120" y="356" width="240" height="50" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="240" y="377" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A6B">Iceberg metadata tree</text>
+            <text x="240" y="393" text-anchor="middle" font-size="10.5" fill="#1E3A6B">metadata.json · manifest lists · manifests</text>
+            <rect x="430" y="356" width="270" height="50" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="565" y="377" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A6B">Parquet / ORC data files</text>
+            <text x="565" y="393" text-anchor="middle" font-size="10.5" fill="#1E3A6B">read directly by the engine</text>
+
+            <!-- edges -->
+            <line x1="280" y1="118" x2="280" y2="144" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <rect x="286" y="120" width="186" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="379" y="133" text-anchor="middle" font-size="10.5" fill="#3A4252">IRC / HTTPS — control path</text>
+            <line x1="540" y1="118" x2="540" y2="324" stroke="#5A6273" stroke-width="1.5"
+                  stroke-dasharray="5 3" marker-end="url(#arrow)"/>
+            <rect x="546" y="210" width="178" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="635" y="223" text-anchor="middle" font-size="10.5" fill="#3A4252">data path — vended creds</text>
+            <line x1="219" y1="296" x2="219" y2="354" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <rect x="128" y="312" width="182" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="219" y="325" text-anchor="middle" font-size="10.5" fill="#3A4252">commit swaps the pointer</text>
+
+            <!-- legend -->
+            <g font-size="11" fill="#5A6273">
+              <rect x="44" y="404" width="13" height="13" rx="3" fill="#D6F0EE" stroke="#1F9E8F"/>
+              <text x="63" y="415">Engine / client</text>
+              <rect x="178" y="404" width="13" height="13" rx="3" fill="#EADDF7" stroke="#7E4FB5"/>
+              <text x="197" y="415">IRC catalog (focus)</text>
+              <rect x="330" y="404" width="13" height="13" rx="3" fill="#DCE8FB" stroke="#3B73C4"/>
+              <text x="349" y="415">Iceberg table format</text>
+              <rect x="492" y="404" width="13" height="13" rx="3" fill="#E8EBF0" stroke="#8A94A6"/>
+              <text x="511" y="415">Object storage</text>
+            </g>
+          </svg>
+        </div>
+        <figcaption><b>Figure 1.</b> The IRC has a thin client, a control-plane catalog service,
+          and a data plane it never touches. The catalog brokers metadata and credentials over
+          HTTPS; the engine then reads Parquet directly from object storage. The dashed line is
+          the data path — note it bypasses the catalog entirely, which is why one modest catalog
+          service can front a multi-petabyte lake.</figcaption>
+      </figure>
+
+      <h3>What the spec actually defines</h3>
+      <p>The OpenAPI document is concrete and worth knowing by its parts. It covers six endpoint
+        families, all under <code>/v1/{prefix}/</code>, and crucially it makes most of them
+        <em>optional and discoverable</em>:</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Endpoint family</th><th>Representative routes</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Config / discovery</td><td><code>GET /v1/config</code></td><td>Returns server <code>defaults</code>, <code>overrides</code>, and the list of supported <code>endpoints</code> — the basis of capability negotiation.</td></tr>
+            <tr><td>Namespace ops</td><td><code>GET/POST /v1/{prefix}/namespaces</code>, <code>HEAD …/{ns}</code></td><td>Create, list, load, drop; <code>HEAD</code> for cheap existence checks.</td></tr>
+            <tr><td>Table ops</td><td><code>…/namespaces/{ns}/tables</code>, <code>POST …/tables/{t}</code></td><td>Create, load, drop, rename, register; <code>POST</code> on a table is the commit.</td></tr>
+            <tr><td>View ops</td><td><code>…/namespaces/{ns}/views/{v}</code></td><td>Same lifecycle for Iceberg views; optional, advertised separately.</td></tr>
+            <tr><td>Transactions &amp; staging</td><td><code>POST …/transactions/commit</code></td><td>Multi-table atomic commit; staged create supports atomic CTAS.</td></tr>
+            <tr><td>Server-side scan planning</td><td><code>POST …/tables/{t}/plan</code>, <code>…/tasks</code></td><td>Optional: the catalog plans the scan and returns file tasks, off-loading manifest reads from the engine.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The discovery mechanism deserves emphasis. A client first calls <code>GET /v1/config</code>;
+        the server replies with the exact set of endpoints it supports (e.g.
+        <code>"POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan"</code>). If the list
+        is absent, the client falls back to a hard-coded default set
+        (<code>RESTSessionCatalog.DEFAULT_ENDPOINTS</code>). This is how the spec evolves without
+        breaking old clients: new capabilities ship as new advertised endpoints, and a client
+        that does not understand them simply never calls them.</p>
+
+      <div class="callout key">
+        <span class="tag">Key takeaway</span>
+        <p>The IRC's design centre is the <em>relocation of intelligence</em>: commit conflict
+          resolution, capability negotiation, and security all move from a fat per-engine client
+          into one server. The engine keeps only a thin HTTP client and direct storage I/O. Every
+          downstream property — swappable catalogs, central governance, credential vending —
+          falls out of that one decision.</p>
+      </div>
+    </section>
+
+    <!-- ---- 2. PLACEMENT ---- -->
+    <section id="placement">
+      <h2><span class="num">2</span>Placement in the data platform &amp; AI landscape</h2>
+      <p>The IRC sits at <strong>L3, the catalog layer</strong>: directly above the Iceberg table
+        format (L2) and the object storage / file formats beneath it (L0–L1), and directly below
+        the query and compute engines (L4). What makes its placement interesting is that it does
+        not stay in its lane. Because every table resolution and every commit passes through it,
+        the IRC has become the place where L3 fuses with the <strong>identity plane (L8)</strong>
+        — it authenticates callers and makes authorization decisions — and increasingly with the
+        <strong>governance plane (L7)</strong>, since policy authored in a knowledge catalog has
+        to be enforced <em>somewhere</em>, and the IRC is the only chokepoint that sees every
+        access.</p>
+
+      <p>In replacement terms: the IRC <em>replaces</em> the Hive Metastore and the per-engine
+        Glue/JDBC catalog clients as the engine-facing interface. It <em>complements</em> the
+        Iceberg table format (the IRC is how you reach Iceberg tables, not a substitute for them)
+        and the knowledge/governance catalog (which authors policy the IRC enforces). It does
+        <em>not</em> compete with object storage, query engines, or the semantic layer — those
+        are different layers. The one genuine competitive tension is with proprietary
+        catalog-plus-engine bundles (a warehouse's built-in catalog): the IRC's whole pitch is
+        that the catalog should be an open, swappable interface rather than a lock-in point.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 532" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Placement of the Iceberg REST Catalog in the layered data platform and AI landscape">
+            <defs>
+              <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- cross-cutting planes -->
+            <rect x="624" y="40" width="78" height="430" rx="7" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.3"/>
+            <text x="663" y="250" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6E1626"
+                  transform="rotate(-90 663 250)">L8 · IDENTITY &amp; ACCESS</text>
+            <rect x="712" y="40" width="78" height="430" rx="7" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.3"/>
+            <text x="751" y="250" text-anchor="middle" font-size="11.5" font-weight="700" fill="#234D1A"
+                  transform="rotate(-90 751 250)">L7 · GOVERNANCE</text>
+
+            <!-- layer bands (top to bottom) -->
+            <rect x="30" y="40" width="580" height="46" rx="7" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.2"/>
+            <text x="46" y="60" font-size="10.5" font-weight="700" fill="#23266E">L9</text>
+            <text x="320" y="68" text-anchor="middle" font-size="12.5" font-weight="600" fill="#23266E">Consumption — BI · notebooks · AI agents &amp; evals</text>
+
+            <rect x="30" y="94" width="580" height="46" rx="7" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.2"/>
+            <text x="46" y="114" font-size="10.5" font-weight="700" fill="#6B4E06">L6</text>
+            <text x="320" y="122" text-anchor="middle" font-size="12.5" font-weight="600" fill="#6B4E06">Semantic layer — metrics · entities · governed vocabulary</text>
+
+            <rect x="30" y="148" width="580" height="46" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="46" y="168" font-size="10.5" font-weight="700" fill="#0C4A43">L4</text>
+            <text x="320" y="176" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0C4A43">Query / compute — Trino · Spark · Flink · DuckDB · PyIceberg</text>
+
+            <!-- FOCUS band: catalog -->
+            <rect x="30" y="202" width="580" height="74" rx="7" fill="#EADDF7" stroke="#111418" stroke-width="2.5"/>
+            <text x="46" y="222" font-size="10.5" font-weight="700" fill="#432068">L3</text>
+            <text x="320" y="230" text-anchor="middle" font-size="13" font-weight="700" fill="#432068">Iceberg REST Catalog (IRC) — the protocol</text>
+            <text x="320" y="251" text-anchor="middle" font-size="11" fill="#432068">Implementations: Polaris · Unity Catalog · Gravitino · Lakekeeper · Nessie</text>
+            <text x="320" y="266" text-anchor="middle" font-size="11" fill="#432068">also: Snowflake Open Catalog · AWS Glue (IRC) · S3 Tables · R2 Data Catalog</text>
+            <circle cx="586" cy="216" r="6" fill="#111418"/>
+            <text x="538" y="220" font-size="10.5" font-weight="700" fill="#111418">← focus</text>
+
+            <rect x="30" y="284" width="580" height="46" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.2"/>
+            <text x="46" y="304" font-size="10.5" font-weight="700" fill="#1E3A6B">L2</text>
+            <text x="320" y="312" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1E3A6B">Table format — Apache Iceberg (ACID, snapshots, evolution)</text>
+
+            <rect x="30" y="338" width="580" height="46" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="46" y="358" font-size="10.5" font-weight="700" fill="#3A4252">L1</text>
+            <text x="320" y="366" text-anchor="middle" font-size="12.5" font-weight="600" fill="#3A4252">File formats — Parquet · ORC · Avro</text>
+
+            <rect x="30" y="392" width="580" height="46" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="46" y="412" font-size="10.5" font-weight="700" fill="#3A4252">L0</text>
+            <text x="320" y="420" text-anchor="middle" font-size="12.5" font-weight="600" fill="#3A4252">Object storage — S3 · GCS · ADLS · MinIO · R2</text>
+
+            <!-- vertical relationship arrows on left edge -->
+            <line x1="20" y1="194" x2="20" y2="204" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow2)"/>
+            <line x1="20" y1="276" x2="20" y2="286" stroke="#5A6273" stroke-width="1.5" marker-start="url(#arrow2)"/>
+
+            <!-- caption strip -->
+            <text x="30" y="462" font-size="11" fill="#5A6273">The IRC is the only L3 chokepoint every L4 engine must pass through to reach an L2 Iceberg table —</text>
+            <text x="30" y="478" font-size="11" fill="#5A6273">which is exactly why the identity (L8) and governance (L7) planes are converging onto it.</text>
+
+            <!-- legend -->
+            <g font-size="11" fill="#5A6273">
+              <rect x="30" y="498" width="13" height="13" rx="3" fill="#EADDF7" stroke="#7E4FB5"/>
+              <text x="49" y="509">Catalog (focus)</text>
+              <rect x="158" y="498" width="13" height="13" rx="3" fill="#D6F0EE" stroke="#1F9E8F"/>
+              <text x="177" y="509">Compute</text>
+              <rect x="258" y="498" width="13" height="13" rx="3" fill="#DCE8FB" stroke="#3B73C4"/>
+              <text x="277" y="509">Table format</text>
+              <rect x="372" y="498" width="13" height="13" rx="3" fill="#E8EBF0" stroke="#8A94A6"/>
+              <text x="391" y="509">Storage</text>
+              <rect x="458" y="498" width="13" height="13" rx="3" fill="#FAD9DC" stroke="#C8425A"/>
+              <text x="477" y="509">Identity</text>
+              <rect x="540" y="498" width="13" height="13" rx="3" fill="#DEEFD9" stroke="#4A9A3C"/>
+              <text x="559" y="509">Governance</text>
+            </g>
+          </svg>
+        </div>
+        <figcaption><b>Figure 2.</b> The IRC occupies L3 and is the mandatory waypoint between
+          every query engine (L4) and the Iceberg table format (L2). The two vertical planes —
+          identity and governance — touch every layer but converge on the catalog, because it is
+          the only place that observes <em>every</em> table access.</figcaption>
+      </figure>
+
+      <div class="callout note">
+        <span class="tag">Naming hazard</span>
+        <p>"Catalog" is overloaded. The IRC is a <em>technical/operational</em> catalog — it
+          tracks tables, mediates commits, vends credentials. A <em>knowledge/governance</em>
+          catalog (Atlan, Collibra, Purview, DataHub) does discovery, glossary, lineage and
+          stewardship. They are converging — Unity Catalog is deliberately both — but a sentence
+          about "the catalog" should always say which one it means.</p>
+      </div>
+    </section>
+
+    <!-- ---- 3. MECHANISM ---- -->
+    <section id="mechanism">
+      <h2><span class="num">3</span>How it works — the lifecycle of a read and a commit</h2>
+      <p>The IRC's mechanism is best understood through two operations: resolving and reading a
+        table, and committing a change to it. The read path shows the control/data split; the
+        commit path shows why moving conflict resolution server-side mattered.</p>
+
+      <h3>3.1 Resolving and reading a table</h3>
+      <p>An engine never guesses a table's storage path. It asks. The sequence below is the
+        canonical Trino-on-IRC read. Note that the catalog appears only at the start — once the
+        engine has metadata and credentials, the heavy scan is engine-to-storage with the catalog
+        out of the loop.</p>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#DCE8FB','primaryBorderColor':'#3B73C4','primaryTextColor':'#1E3A6B','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant E as Engine (Trino)
+    participant C as IRC Catalog
+    participant S as Object Storage
+    E->>C: GET /v1/config (warehouse)
+    C-->>E: defaults + overrides + supported endpoints
+    E->>C: GET /v1/{prefix}/namespaces/{ns}/tables/{t}<br/>+ X-Iceberg-Access-Delegation: vended-credentials
+    C->>C: AuthZ check (RBAC/ABAC), resolve metadata pointer
+    C-->>E: LoadTableResponse: metadata.json + vended storage creds
+    E->>S: Read manifest list + manifests (vended creds)
+    S-->>E: Manifest data (file paths, partition + column stats)
+    E->>E: Plan scan — prune files by predicate + stats
+    E->>S: Read only surviving Parquet data files
+    S-->>E: Column-projected, predicate-filtered rows
+          </div>
+        </div>
+        <figcaption><b>Figure 3.</b> The read lifecycle. Steps 1–5 are the IRC control path;
+          steps 6–10 are the data path with the catalog out of the loop. Scan pruning (step 8)
+          happens engine-side from Iceberg's manifest statistics — the catalog supplies the
+          pointer, not the planning, unless server-side scan planning is enabled.</figcaption>
+      </figure>
+
+      <p>Two refinements are worth naming. First, <strong>config negotiation</strong> (steps 1–2)
+        is not ceremony: the server's <code>overrides</code> can force settings the client cannot
+        countermand, and the advertised <code>endpoints</code> list tells the client which
+        optional features — views, server-side planning — are actually available. Second,
+        <strong>server-side scan planning</strong> (the optional <code>POST …/plan</code>
+        endpoint, matured through the Iceberg 1.10/1.11 line) lets the catalog read the manifests
+        and return ready file-scan tasks. That moves manifest I/O off the engine — useful for
+        thin clients like PyIceberg or a serverless function — at the cost of putting more work,
+        and more trust, on the catalog.</p>
+
+      <h3>3.2 Committing a change — the server-side transaction</h3>
+      <p>This is the part the IRC genuinely re-architected. With the Hive Metastore, conflict
+        resolution was a client-side dance: read current metadata, build a new metadata file,
+        attempt an atomic compare-and-swap of the pointer, and on failure re-read and retry — all
+        logic living in the engine. The IRC turns the commit into a <em>declarative server-side
+        transaction</em>. The client sends a single <code>POST</code> on the table containing two
+        lists:</p>
+      <ul>
+        <li><strong>Requirements</strong> — optimistic-concurrency assertions the server must
+          validate <em>before</em> applying anything: e.g. <code>assert-table-uuid</code>,
+          <code>assert-ref-snapshot-id</code> (the branch still points where the client thinks),
+          <code>assert-current-schema-id</code>, <code>assert-default-spec-id</code>.</li>
+        <li><strong>Updates</strong> — the declarative metadata changes to apply:
+          <code>add-snapshot</code>, <code>set-snapshot-ref</code>, <code>add-schema</code>,
+          <code>set-current-schema</code>, <code>remove-snapshots</code>,
+          <code>set-properties</code>, and so on.</li>
+      </ul>
+      <p>The server validates all requirements atomically. If any fails — because a concurrent
+        writer moved the ref — it returns <code>409 Conflict</code> and nothing is applied. The
+        client can rebuild its updates against the new state and retry. The serialization point
+        is now the catalog, not an object-store conditional write.</p>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#DCE8FB','primaryBorderColor':'#3B73C4','primaryTextColor':'#1E3A6B','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant E as Engine (writer)
+    participant C as IRC Catalog
+    participant S as Object Storage
+    E->>S: Write new data files + manifests + metadata.json
+    E->>C: POST /v1/{prefix}/.../tables/{t}<br/>{requirements[], updates[]}
+    C->>C: Validate requirements atomically
+    alt all requirements hold
+        C->>C: Apply updates, swap metadata pointer
+        C-->>E: 200 OK — new table metadata
+    else a requirement fails (concurrent writer)
+        C-->>E: 409 Conflict
+        E->>C: GET table (refresh to current state)
+        C-->>E: Current metadata
+        E->>E: Rebuild updates against new base, retry POST
+    end
+          </div>
+        </div>
+        <figcaption><b>Figure 4.</b> The commit protocol. Conflict resolution is declarative and
+          server-side: requirements are pre-conditions, updates are the change set, and a lost
+          race is a clean <code>409</code>. <b>Sharp edge:</b> a commit that fails with a
+          <code>5xx</code> is genuinely ambiguous — the mutation may or may not have landed —
+          which is why Iceberg 1.10+ stopped blind-retrying commits after server errors.</figcaption>
+      </figure>
+
+      <div class="callout warn">
+        <span class="tag">Watch out</span>
+        <p>A <code>409</code> is safe to retry; a <code>5xx</code> on a commit is not. After a
+          <code>5xx</code> the client cannot know whether the pointer swap succeeded before the
+          error, and blindly retrying risks committing the same change twice or corrupting state.
+          The Iceberg client (1.10.0 onward) was fixed to <em>not</em> auto-retry commit
+          <code>POST</code>s after <code>5xx</code> — your catalog must therefore make commits
+          idempotent or surface a definitive outcome. Treat this as a design requirement, not an
+          edge case.</p>
+      </div>
+    </section>
+
+    <!-- ---- 4. AUTH ---- -->
+    <section id="auth">
+      <h2><span class="num">4</span>Authentication, authorization &amp; credential vending</h2>
+      <p>This section is the reason the IRC matters beyond plumbing. The IRC turns the catalog
+        into three things at once: an <strong>authentication relying party</strong>, a
+        <strong>Policy Decision Point (PDP)</strong>, and a <strong>credential broker</strong>.
+        Keep the three distinct — authN proves <em>who is calling</em>, authZ decides <em>what
+        they may do</em>, and credential vending issues <em>the storage grant to act on it</em>.</p>
+
+      <h3>4.1 Authentication — how a caller proves identity</h3>
+      <p>The IRC's primary authentication mechanism is <strong>OAuth2 bearer tokens</strong>. The
+        Iceberg client supports three concrete flows, all visible in <code>OAuth2Util</code> /
+        <code>OAuth2Properties</code>:</p>
+      <ul>
+        <li><strong>Client-credentials grant.</strong> The client holds a <code>credential</code>
+          of the form <code>client_id:client_secret</code>, exchanges it at a token endpoint for
+          a short-lived access token, and sends that as <code>Authorization: Bearer</code> on
+          every call. This is the service-to-service path — a Trino cluster authenticating to a
+          catalog.</li>
+        <li><strong>Bearer token (pre-issued).</strong> A <code>token</code> is supplied
+          directly; no exchange happens. Common when an external IdP already minted the token.</li>
+        <li><strong>Token exchange (RFC 8693).</strong> A <em>subject token</em> carrying user
+          context is exchanged — authorized by an <em>actor token</em> (the catalog/service
+          credential) — for a narrower access token. This is how a multi-tenant engine preserves
+          the end-user's identity through to the catalog rather than collapsing everyone into one
+          service principal.</li>
+      </ul>
+      <p>In production, the catalog is almost always wired to a real <strong>OIDC provider</strong>
+        (Okta, Entra ID, Keycloak) via its discovery document, so tokens are standard JWTs the
+        catalog validates against the IdP's JWKS. Lakekeeper, for example, takes a
+        <code>LAKEKEEPER__OPENID_PROVIDER_URI</code> and validates externally issued tokens
+        directly. One important note for new builders: the spec's built-in
+        <code>v1/oauth/tokens</code> endpoint — the catalog acting as its own toy authorization
+        server — is <strong>deprecated</strong> and was always intended for development; real
+        deployments delegate to an external IdP.</p>
+
+      <h3>4.2 Authorization — the catalog as PDP</h3>
+      <p>Once the caller is identified, the catalog evaluates an authorization policy on every
+        namespace, table, and view operation. Here the IRC spec stops and implementations
+        diverge — this is the standardization gap. The dominant patterns:</p>
+      <ul>
+        <li><strong>Two-level RBAC (Polaris).</strong> A principal holds <em>principal roles</em>;
+          principal roles are granted <em>catalog roles</em>; catalog roles carry fine-grained
+          privilege grants on securables (catalog, namespace, table, view, policy). The
+          indirection is what keeps grants manageable across many principals.</li>
+        <li><strong>ReBAC via OpenFGA (Lakekeeper).</strong> Lakekeeper externalizes
+          authorization to OpenFGA — a Google-Zanzibar-style relationship engine — whose
+          bidirectional inheritance maps naturally to nested namespaces. For engine-side checks
+          it ships an OPA bridge that translates OpenFGA relations into Open Policy Agent input,
+          so Trino can ask one consistent authority.</li>
+        <li><strong>Identity-inheriting vending (Unity Catalog).</strong> UC's IRC and Hive
+          endpoints vend credentials that <em>inherit the privileges of the requesting
+          principal</em>, so the same governance applies whether the caller arrives via UC's
+          native API or the IRC.</li>
+      </ul>
+      <p>Beyond coarse RBAC, mature catalogs add ABAC-style controls — row filters, column
+        masking, tag-based policy — evaluated at the catalog and, increasingly, expressed by
+        returning a restricted view or by handing the engine policy it must apply. The reasonable
+        read: RBAC handles the coarse "can you see this table" grant, ABAC handles
+        "which rows/columns", and the IRC is the enforcement seam for both.</p>
+
+      <h3>4.3 Credential vending — the mechanism in detail</h3>
+      <p>Credential vending is what makes the catalog a security control point rather than a
+        directory. The problem it solves: without it, every engine needs standing cloud
+        credentials broad enough to read the lake — long-lived IAM keys sprayed across clusters,
+        a credential-sprawl and blast-radius nightmare. With vending, engines hold <em>no</em>
+        storage credentials. They authenticate to the catalog; the catalog, which holds the real
+        cloud trust, mints a narrow grant per table load.</p>
+      <p>The client signals what it can accept with the <code>X-Iceberg-Access-Delegation</code>
+        request header, whose two standardized values define two distinct trust models:</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Delegation mode</th><th>What the catalog returns</th><th>Trust &amp; scope</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>vended-credentials</code></td>
+              <td>Short-lived cloud credentials in the <code>LoadTableResponse</code> config —
+                STS session tokens (AWS), SAS tokens (Azure), or GCS access tokens — scoped to
+                the table's storage prefix.</td>
+              <td>Engine briefly holds a real, time-bound, path-scoped credential. Fewer
+                round-trips; the engine reads storage directly until the token expires.</td>
+            </tr>
+            <tr>
+              <td><code>remote-signing</code></td>
+              <td>Nothing reusable. For each object request the engine calls the catalog's
+                <em>signing endpoint</em>, which returns a pre-signed request for that one file
+                and operation.</td>
+              <td>The tightest model — the engine <em>never</em> holds a storage credential at
+                all. The cost is a signing round-trip per file, so it favours security over
+                throughput.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The sequence below traces the full chain for the common case: an engine carrying a
+        per-user identity, OIDC for authentication, RBAC/ABAC at the catalog, and
+        <code>vended-credentials</code> back to the engine.</p>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#FAD9DC','primaryBorderColor':'#C8425A','primaryTextColor':'#6E1626','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant U as End user
+    participant E as Engine (Trino)
+    participant IdP as OIDC Provider
+    participant C as IRC Catalog (PDP)
+    participant CL as Cloud IAM / STS
+    participant S as Object Storage
+    U->>E: Submit query (carries user identity)
+    E->>IdP: OAuth2 client-credentials grant
+    IdP-->>E: Service access token (JWT)
+    E->>C: Token exchange (RFC 8693): subject = user, actor = service
+    C->>IdP: Validate tokens against JWKS
+    IdP-->>C: Valid — user identity confirmed
+    C->>C: Evaluate RBAC/ABAC for user on this table
+    C->>CL: AssumeRole / mint scoped storage credential
+    CL-->>C: Short-lived, path-scoped credential
+    C-->>E: LoadTableResponse: metadata + vended credential
+    E->>S: Read data files (vended credential)
+    S-->>E: Parquet data — expires with the token
+          </div>
+        </div>
+        <figcaption><b>Figure 5.</b> The authentication and credential-vending flow. Three trust
+          boundaries: engine→IdP (proving identity), engine→catalog (the PDP decision), and
+          catalog→cloud IAM (the catalog exchanges its standing trust for a narrow, short-lived
+          grant). The engine never holds a long-lived storage key; the user's identity is
+          preserved end-to-end via token exchange rather than collapsed into a service account.</figcaption>
+      </figure>
+
+      <div class="callout warn">
+        <span class="tag">Watch out</span>
+        <p>Vended credentials are <em>scoped and short-lived by design</em> — and engines must
+          actually honour both properties. Real 2025–2026 Trino issues show the failure modes
+          concretely: clients that ignored the vended credential in the <code>LoadTableResponse</code>
+          and fell back to instance credentials; clients that never re-called the credentials
+          endpoint to refresh before expiry, breaking long-running queries; and uneven coverage
+          across S3 vs. Azure SAS. Before standardizing on vended credentials, verify your
+          specific engine version refreshes them and supports your cloud — the spec being correct
+          does not mean every client implements it correctly.</p>
+      </div>
+
+      <div class="callout key">
+        <span class="tag">Key takeaway</span>
+        <p>The IRC collapses three jobs onto the catalog: authenticate the caller (OAuth2/OIDC,
+          token exchange for delegation), authorize the action (RBAC/ABAC as PDP), and vend a
+          narrow storage grant (vended credentials or remote signing). That is the entire
+          security argument for the IRC — and also its entire risk surface: the catalog is now a
+          single point of trust whose availability and correctness gate the whole lake.</p>
+      </div>
+    </section>
+
+    <!-- ---- 5. CONNECTIONS ---- -->
+    <section id="connections">
+      <h2><span class="num">5</span>How it connects to the rest of the stack</h2>
+      <p>The IRC's value is almost entirely in its edges. Below is the component-relationship map
+        with the catalog at the centre; every edge names the protocol or mechanism, not just a
+        line. The pairing to read alongside it is the connection table.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 560" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Component-relationship map: the Iceberg REST Catalog and its neighbours">
+            <defs>
+              <marker id="arrow3" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- centre: IRC -->
+            <rect x="310" y="232" width="200" height="92" rx="9" fill="#EADDF7" stroke="#111418" stroke-width="2.5"/>
+            <text x="410" y="266" text-anchor="middle" font-size="14" font-weight="700" fill="#432068">Iceberg REST</text>
+            <text x="410" y="285" text-anchor="middle" font-size="14" font-weight="700" fill="#432068">Catalog (IRC)</text>
+            <text x="410" y="305" text-anchor="middle" font-size="10.5" fill="#432068">protocol + implementation</text>
+            <circle cx="486" cy="248" r="6" fill="#111418"/>
+
+            <!-- top: query engines -->
+            <rect x="300" y="36" width="220" height="56" rx="8" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="410" y="60" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0C4A43">Query engines</text>
+            <text x="410" y="77" text-anchor="middle" font-size="10.5" fill="#0C4A43">Trino · Spark · Flink · DuckDB · PyIceberg</text>
+
+            <!-- top-left: identity -->
+            <rect x="40" y="60" width="190" height="56" rx="8" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.4"/>
+            <text x="135" y="84" text-anchor="middle" font-size="12.5" font-weight="600" fill="#6E1626">Identity provider</text>
+            <text x="135" y="101" text-anchor="middle" font-size="10.5" fill="#6E1626">OIDC / OAuth2 · token exchange</text>
+
+            <!-- top-right: governance -->
+            <rect x="590" y="60" width="190" height="56" rx="8" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.4"/>
+            <text x="685" y="84" text-anchor="middle" font-size="12.5" font-weight="600" fill="#234D1A">Knowledge catalog</text>
+            <text x="685" y="101" text-anchor="middle" font-size="10.5" fill="#234D1A">Atlan · Collibra · Purview</text>
+
+            <!-- mid-left: cloud IAM -->
+            <rect x="40" y="252" width="190" height="56" rx="8" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.4"/>
+            <text x="135" y="276" text-anchor="middle" font-size="12.5" font-weight="600" fill="#6E1626">Cloud IAM / STS</text>
+            <text x="135" y="293" text-anchor="middle" font-size="10.5" fill="#6E1626">role assumption · token mint</text>
+
+            <!-- mid-right: agents -->
+            <rect x="590" y="252" width="190" height="56" rx="8" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.4"/>
+            <text x="685" y="276" text-anchor="middle" font-size="12.5" font-weight="600" fill="#23266E">AI agents / MCP</text>
+            <text x="685" y="293" text-anchor="middle" font-size="10.5" fill="#23266E">governed tool discovery</text>
+
+            <!-- bottom-left: table format -->
+            <rect x="120" y="448" width="200" height="56" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="220" y="472" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1E3A6B">Apache Iceberg</text>
+            <text x="220" y="489" text-anchor="middle" font-size="10.5" fill="#1E3A6B">metadata tree · snapshots</text>
+
+            <!-- bottom-right: object storage -->
+            <rect x="500" y="448" width="200" height="56" rx="8" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="600" y="472" text-anchor="middle" font-size="12.5" font-weight="600" fill="#3A4252">Object storage</text>
+            <text x="600" y="489" text-anchor="middle" font-size="10.5" fill="#3A4252">S3 · GCS · ADLS · MinIO</text>
+
+            <!-- edges -->
+            <!-- engines <-> IRC -->
+            <line x1="410" y1="92" x2="410" y2="230" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow3)"/>
+            <rect x="338" y="150" width="144" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="410" y="163" text-anchor="middle" font-size="10" fill="#3A4252">IRC / HTTPS · loadTable</text>
+            <!-- identity -> IRC -->
+            <line x1="190" y1="116" x2="320" y2="234" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow3)"/>
+            <rect x="196" y="164" width="118" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="255" y="177" text-anchor="middle" font-size="10" fill="#3A4252">JWT validation</text>
+            <!-- governance <-> IRC -->
+            <line x1="628" y1="116" x2="500" y2="234" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow3)" marker-start="url(#arrow3)"/>
+            <rect x="512" y="158" width="172" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="598" y="171" text-anchor="middle" font-size="10" fill="#3A4252">metadata up / policy down</text>
+            <!-- cloud IAM <-> IRC -->
+            <line x1="230" y1="280" x2="308" y2="280" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow3)"/>
+            <rect x="206" y="304" width="138" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="275" y="317" text-anchor="middle" font-size="10" fill="#3A4252">assume role / mint</text>
+            <!-- agents -> IRC -->
+            <line x1="590" y1="280" x2="512" y2="280" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow3)"/>
+            <rect x="470" y="304" width="160" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="550" y="317" text-anchor="middle" font-size="10" fill="#3A4252">discover · same RBAC</text>
+            <!-- IRC -> Iceberg -->
+            <line x1="360" y1="326" x2="250" y2="446" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow3)"/>
+            <rect x="222" y="372" width="138" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="291" y="385" text-anchor="middle" font-size="10" fill="#3A4252">owns metadata pointer</text>
+            <!-- IRC -> object storage (vended creds, dashed) -->
+            <line x1="460" y1="326" x2="570" y2="446" stroke="#5A6273" stroke-width="1.5"
+                  stroke-dasharray="5 3" marker-end="url(#arrow3)"/>
+            <rect x="470" y="372" width="142" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="541" y="385" text-anchor="middle" font-size="10" fill="#3A4252">scopes vended creds</text>
+            <!-- Iceberg -> storage -->
+            <line x1="320" y1="476" x2="498" y2="476" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arrow3)"/>
+            <rect x="350" y="467" width="118" height="18" rx="9" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="409" y="480" text-anchor="middle" font-size="10" fill="#3A4252">files written to</text>
+
+            <!-- legend -->
+            <g font-size="11" fill="#5A6273">
+              <rect x="40" y="524" width="13" height="13" rx="3" fill="#EADDF7" stroke="#7E4FB5"/>
+              <text x="59" y="535">Catalog (focus)</text>
+              <rect x="168" y="524" width="13" height="13" rx="3" fill="#D6F0EE" stroke="#1F9E8F"/>
+              <text x="187" y="535">Compute</text>
+              <rect x="262" y="524" width="13" height="13" rx="3" fill="#DCE8FB" stroke="#3B73C4"/>
+              <text x="281" y="535">Table format</text>
+              <rect x="372" y="524" width="13" height="13" rx="3" fill="#E8EBF0" stroke="#8A94A6"/>
+              <text x="391" y="535">Storage</text>
+              <rect x="452" y="524" width="13" height="13" rx="3" fill="#FAD9DC" stroke="#C8425A"/>
+              <text x="471" y="535">Identity</text>
+              <rect x="528" y="524" width="13" height="13" rx="3" fill="#DEEFD9" stroke="#4A9A3C"/>
+              <text x="547" y="535">Governance</text>
+              <rect x="626" y="524" width="13" height="13" rx="3" fill="#DEE0FA" stroke="#5256C8"/>
+              <text x="645" y="535">Agents</text>
+            </g>
+          </svg>
+        </div>
+        <figcaption><b>Figure 6.</b> The IRC at the centre of the lakehouse. Solid arrows are
+          control/metadata; the dashed arrow is the data-plane grant. The two bidirectional edges
+          — governance (metadata up, policy down) — are where the IRC stops being plumbing and
+          becomes the enforcement layer.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Component</th><th>Connection mechanism</th><th>What crosses</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Apache Iceberg (table format)</td>
+              <td>The catalog owns the pointer to each table's current <code>metadata.json</code>.</td>
+              <td>Metadata-file location in; an atomic pointer swap out on commit. The IRC is the catalog half of Iceberg's table/catalog split.</td>
+            </tr>
+            <tr>
+              <td>Object storage</td>
+              <td>Indirect: the catalog vends scoped credentials or signs requests; the engine does the I/O.</td>
+              <td>No bulk data through the catalog. It crosses scope boundaries (the storage prefix) and credential lifetime.</td>
+            </tr>
+            <tr>
+              <td>Trino &amp; other engines</td>
+              <td>Iceberg connector with <code>iceberg.catalog.type=rest</code>; thin <code>RESTCatalog</code> client over HTTPS.</td>
+              <td><code>loadTable</code>/<code>commit</code> calls, capability negotiation, vended credentials. The engine speaks only the spec.</td>
+            </tr>
+            <tr>
+              <td>Identity provider</td>
+              <td>OIDC discovery + JWKS validation; OAuth2 client-credentials and RFC 8693 token exchange.</td>
+              <td>Tokens. The IdP authenticates; the catalog validates and consumes the identity claims.</td>
+            </tr>
+            <tr>
+              <td>Cloud IAM / STS</td>
+              <td>The catalog assumes a role / mints a session token; it holds the standing cloud trust.</td>
+              <td>A short-lived, path-scoped storage credential, minted per table load.</td>
+            </tr>
+            <tr>
+              <td>Knowledge / governance catalog</td>
+              <td>Metadata harvest up from the IRC; classification and policy pushed down into it.</td>
+              <td>Technical metadata and lineage up; tags, row/column policy, classifications down for the IRC to enforce.</td>
+            </tr>
+            <tr>
+              <td>AI agents / MCP</td>
+              <td>An agent discovers tables via the IRC and is bounded by the <em>same</em> RBAC/ABAC as a human caller.</td>
+              <td>Catalog listings and table metadata as governed tool context; agent identity for per-call authorization.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The catalog implementations — same protocol, different opinions</h3>
+      <p>Every implementation below speaks the IRC; what differs is the governance model, the
+        deployment shape, and the surrounding ambitions. This is the table to internalize for a
+        platform decision.</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Implementation</th><th>Origin / governance</th><th>What distinguishes it</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Apache Polaris</strong></td>
+              <td>Originated at Snowflake; Apache Top-Level Project since Feb 2026. Contributors include AWS, Google, Microsoft, Confluent, Dremio.</td>
+              <td>The de facto reference IRC implementation. Two-level RBAC (principal roles → catalog roles → grants), credential vending across clouds. Project Nessie is being merged into Polaris, consolidating the OSS catalog space.</td>
+            </tr>
+            <tr>
+              <td><strong>Unity Catalog (OSS)</strong></td>
+              <td>Open-sourced by Databricks; Apache 2.0; broad multimodal scope (tables, files, ML models, functions).</td>
+              <td>Implements the IRC <em>and</em> a Hive-compatible API; vends credentials that inherit the requesting principal's privileges; can read Delta tables as Iceberg via UniForm. As much governance catalog as technical catalog.</td>
+            </tr>
+            <tr>
+              <td><strong>Apache Gravitino</strong></td>
+              <td>From Datastrato; Apache project; a federated "metadata lake" with a <em>metalake</em> as the top-level tenant.</td>
+              <td>Runs an IRC service that can also proxy Hive/JDBC backends. Aims wider than tables — its 2026 roadmap adds an AI model catalog and an MCP server for agents. Useful when one metadata layer must span many heterogeneous sources.</td>
+            </tr>
+            <tr>
+              <td><strong>Lakekeeper</strong></td>
+              <td>Independent; Apache-licensed; written in Rust for low footprint and latency.</td>
+              <td>Authorization-first: externalizes authZ to OpenFGA (ReBAC, Zanzibar-style) with an OPA bridge for engines. The clearest example of the catalog-as-PDP thesis taken seriously.</td>
+            </tr>
+            <tr>
+              <td><strong>Project Nessie</strong></td>
+              <td>Created by Dremio; speaks the IRC protocol; now being merged into Apache Polaris.</td>
+              <td>Git-for-data: catalog-level branches, tags, and commits giving multi-table atomic transactions and reproducible cross-table state. Its versioning ideas are flowing into Polaris.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ---- 6. TRADE-OFFS ---- -->
+    <section id="tradeoffs">
+      <h2><span class="num">6</span>Trade-offs, failure modes &amp; when (not) to use it</h2>
+      <p>The IRC is, on balance, the right default for a new Iceberg lakehouse in 2026 — but its
+        strengths come with a sharply different operational profile from a file-system or
+        metastore catalog, and an honest assessment has to name what it concentrates.</p>
+
+      <h3>What it genuinely buys you</h3>
+      <ul>
+        <li><strong>Real engine portability.</strong> The same Iceberg table is reachable from
+          Trino, Spark, Flink, DuckDB, Snowflake and PyIceberg through one protocol. Swapping the
+          catalog implementation does not touch the engines.</li>
+        <li><strong>Correct, server-side commits.</strong> Conflict resolution stops being
+          replicated (and subtly mis-implemented) per engine. The catalog is one serialization
+          point with one definition of a valid commit.</li>
+        <li><strong>Credential blast-radius collapse.</strong> Engines stop holding long-lived
+          cloud keys. A leaked credential is now short-lived and path-scoped instead of a
+          standing key to the lake.</li>
+        <li><strong>One enforcement seam.</strong> AuthN, authZ, and audit converge on a single
+          chokepoint — far easier to reason about than policy scattered across engine configs and
+          IAM.</li>
+      </ul>
+
+      <h3>Where it breaks — failure modes to design against</h3>
+      <ul>
+        <li><strong>The catalog is a single point of trust and availability.</strong> If the IRC
+          is down, no engine can resolve or commit a table — the lake is effectively offline.
+          Catalog HA, latency, and throughput are now first-class platform concerns, not
+          afterthoughts.</li>
+        <li><strong>Governance is <em>not</em> standardized.</strong> The IRC standardizes the
+          metadata API, not the RBAC model, policy language, or vending semantics. Migrating from
+          Polaris RBAC to Lakekeeper's OpenFGA model is a real re-implementation. "Open protocol"
+          does not mean "portable policy."</li>
+        <li><strong>Client maturity is uneven.</strong> As the 2025–2026 Trino issues show, a
+          conformant <em>spec</em> does not guarantee a conformant <em>client</em>: vended
+          credentials ignored, not refreshed before expiry, or unsupported on some clouds. Always
+          validate the exact engine version against your storage backend.</li>
+        <li><strong>Commit ambiguity after <code>5xx</code>.</strong> A server error on a commit
+          leaves the outcome genuinely unknown; the platform must make commits idempotent or
+          surface a definitive result, and operators must understand that retries are unsafe
+          here.</li>
+        <li><strong>The catalog can become a hot path.</strong> High-concurrency workloads with
+          many small operations — or aggressive server-side scan planning — push real load onto
+          the catalog. It is a service to capacity-plan, not a passive directory.</li>
+      </ul>
+
+      <h3>When it fits</h3>
+      <ul>
+        <li>A multi-engine Iceberg lakehouse where the same tables are read and written by Trino,
+          Spark, Flink, and Python clients.</li>
+        <li>Any environment where standing cloud credentials on compute is unacceptable and you
+          need centralized, short-lived, scoped storage access.</li>
+        <li>Platforms that need one auditable enforcement point for table access — including
+          AI agents that must be governed identically to human callers.</li>
+      </ul>
+      <h3>When to avoid it or wait</h3>
+      <ul>
+        <li>A single-engine, single-team setup with no portability or central-governance need —
+          the operational cost of running an HA catalog service may exceed the benefit.</li>
+        <li>Workloads that depend on a specific catalog's advanced governance and would treat the
+          IRC's portability as theoretical — be honest that you are buying the implementation,
+          not the protocol.</li>
+        <li>When your chosen engine's IRC client cannot yet correctly handle vended credentials
+          for your cloud — verify before committing the architecture, not after.</li>
+      </ul>
+    </section>
+
+    <!-- ---- 7. ARCHITECT'S TAKE ---- -->
+    <section id="take">
+      <h2><span class="num">7</span>Architect's take</h2>
+      <p>The IRC has effectively won the catalog-interface argument. By early 2026 — with Apache
+        Polaris a Top-Level Project and Nessie folding into it — the question for a new Iceberg
+        platform is no longer "REST catalog or not" but "which implementation, and how do I run
+        it well." Four things actually matter for the decision:</p>
+      <ul>
+        <li><strong>Choose the implementation for its governance model, not its protocol.</strong>
+          Every option speaks the same IRC. The real differentiator is the authorization model —
+          Polaris's two-level RBAC, Lakekeeper's OpenFGA/ReBAC, Unity Catalog's
+          principal-inheriting vending. That choice is the one you cannot cheaply reverse, because
+          the IRC does <em>not</em> make policy portable.</li>
+        <li><strong>Treat the catalog as tier-1 infrastructure.</strong> It is now on the critical
+          path of every query and every commit. Budget for HA, latency SLOs, capacity planning,
+          and a tested failure story. A catalog outage is a lake outage.</li>
+        <li><strong>Make credential vending real, not nominal.</strong> The security win only
+          lands if engines hold no standing keys, honour scope, and refresh tokens before expiry.
+          Validate this end-to-end on your exact engine versions and cloud — the gap between spec
+          and client implementation is where this quietly fails.</li>
+        <li><strong>Plan for the catalog as the AI governance point.</strong> As agents become
+          first-class data consumers, the IRC is the natural place to govern them — same RBAC,
+          same audit, same vended scope as a human. An MCP-style agent that discovers tables
+          through the catalog inherits its policy for free.</li>
+      </ul>
+      <p>What to watch over the next 12–18 months: <strong>(1)</strong> whether the community
+        standardizes any part of the governance layer — a portable policy or vending contract
+        would close the IRC's biggest gap; <strong>(2)</strong> the maturation of server-side
+        scan planning, which shifts work and trust further onto the catalog and changes its
+        capacity profile; <strong>(3)</strong> the Polaris/Nessie consolidation and whether
+        catalog-level versioning (git-for-data) becomes a first-class IRC concept; and
+        <strong>(4)</strong> the agent/MCP integration path — the catalog is positioned to become
+        the control point for agentic access to the lake, and the implementations are already
+        building toward it.</p>
+    </section>
+
+    <!-- ---- GLOSSARY ---- -->
+    <section id="glossary">
+      <h2>Glossary</h2>
+      <dl class="glossary">
+        <dt>IRC (Iceberg REST Catalog)</dt>
+        <dd>The OpenAPI-defined HTTP/JSON catalog protocol for Apache Iceberg; the contract
+          engines and catalog implementations both conform to.</dd>
+        <dt>Credential vending</dt>
+        <dd>The catalog returning short-lived, path-scoped cloud storage credentials on a table
+          load, so engines need no standing storage keys.</dd>
+        <dt>Remote signing</dt>
+        <dd>An alternative delegation mode in which the engine holds no credential and instead
+          asks the catalog to pre-sign each individual storage request.</dd>
+        <dt>Requirements / updates</dt>
+        <dd>The two lists in an IRC commit: optimistic-concurrency assertions to validate, and
+          the declarative metadata changes to apply.</dd>
+        <dt>PDP (Policy Decision Point)</dt>
+        <dd>The component that evaluates an authorization policy and returns permit/deny — a role
+          the IRC catalog increasingly plays for table access.</dd>
+        <dt>Token exchange (RFC 8693)</dt>
+        <dd>An OAuth2 flow that swaps one token for a narrower one, used to carry an end user's
+          identity through a service to the catalog.</dd>
+        <dt>ReBAC</dt>
+        <dd>Relationship-based access control (Google-Zanzibar lineage); the model OpenFGA, and
+          thus Lakekeeper, uses for hierarchical namespace permissions.</dd>
+      </dl>
+    </section>
+
+    <!-- ---- SOURCES ---- -->
+    <section id="sources">
+      <h2>Sources</h2>
+      <ul class="sources">
+        <li><span class="tier spec">Spec</span><a href="https://iceberg.apache.org/rest-catalog-spec/" target="_blank" rel="noopener">Apache Iceberg — REST Catalog Spec (OpenAPI)</a> — the canonical contract: endpoints, the requirements/updates commit model, config negotiation, access delegation.</li>
+        <li><span class="tier code">Code</span><a href="https://github.com/apache/iceberg/blob/main/open-api/rest-catalog-open-api.yaml" target="_blank" rel="noopener">apache/iceberg — <code>open-api/rest-catalog-open-api.yaml</code></a> — source of truth for routes, the <code>X-Iceberg-Access-Delegation</code> header, and <code>LoadTableResponse</code> credential fields.</li>
+        <li><span class="tier code">Code</span><a href="https://deepwiki.com/apache/iceberg/3.2-rest-catalog" target="_blank" rel="noopener">apache/iceberg — REST Catalog (client internals)</a> — <code>RESTSessionCatalog</code>, <code>OAuth2Util</code>, retry strategy, endpoint discovery, vended-credential handling.</li>
+        <li><span class="tier docs">Docs</span><a href="https://polaris.apache.org/releases/1.2.0/" target="_blank" rel="noopener">Apache Polaris — documentation</a> — two-level RBAC (principal roles → catalog roles → grants) and credential vending; reference IRC implementation.</li>
+        <li><span class="tier docs">Docs</span><a href="https://docs.lakekeeper.io/docs/nightly/authorization-openfga/" target="_blank" rel="noopener">Lakekeeper — Authorization (OpenFGA)</a> — ReBAC authorization, OpenFGA inheritance for nested namespaces, the OPA bridge for engines.</li>
+        <li><span class="tier docs">Docs</span><a href="https://github.com/unitycatalog/unitycatalog" target="_blank" rel="noopener">Unity Catalog (OSS)</a> — IRC + Hive API support and principal-inheriting credential vending.</li>
+        <li><span class="tier docs">Docs</span><a href="https://gravitino.apache.org/docs/1.1.0/iceberg-rest-service/" target="_blank" rel="noopener">Apache Gravitino — Iceberg REST service</a> — metalake model, IRC service deployment modes, multi-cloud vending.</li>
+        <li><span class="tier docs">Docs</span><a href="https://projectnessie.org/guides/iceberg-rest/" target="_blank" rel="noopener">Project Nessie — Iceberg REST</a> — git-for-data catalog versioning over the IRC protocol.</li>
+        <li><span class="tier docs">Docs</span><a href="https://trino.io/docs/current/connector/iceberg.html" target="_blank" rel="noopener">Trino — Iceberg connector</a> — REST catalog configuration, <code>vended-credentials-enabled</code>, OAuth2 settings.</li>
+        <li><span class="tier code">Code</span><a href="https://github.com/trinodb/trino/issues/27416" target="_blank" rel="noopener">trinodb/trino — vended-credential issues (#27416, #25827, #23238)</a> — concrete client-maturity failure modes: creds ignored, not refreshed, uneven Azure support.</li>
+        <li><span class="tier docs">Docs</span><a href="https://opensource.googleblog.com/2025/09/apache-iceberg-110-maturing-the-v3-spec-the-rest-api-and-google-contributions.html" target="_blank" rel="noopener">Google Open Source — Apache Iceberg 1.10: maturing the REST API</a> — server-side scan planning, the <code>5xx</code> commit-retry fix.</li>
+        <li><span class="tier docs">Docs</span><a href="https://iceberg.apache.org/releases/" target="_blank" rel="noopener">Apache Iceberg — Releases (1.11.0, 2026-05-19)</a> — spec baseline and currency anchor for this document.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://iomete.com/resources/blog/iceberg-access-delegation" target="_blank" rel="noopener">IOMETE — Access Delegation in Apache Iceberg</a> — clear treatment of vended credentials vs. remote signing as two trust models.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://www.dremio.com/blog/apache-polaris-the-catalog-standard-for-lakehouses-and-ai/" target="_blank" rel="noopener">Dremio — Apache Polaris as the catalog standard</a> (vendor; used for ecosystem positioning) — catalog-layer governance and the agentic-analytics direction.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://www.nidhivichare.com/blog/catalog-wars-part-2" target="_blank" rel="noopener">N. Vichare — "Picking Your Catalog"</a> — independent comparison; the observation that catalog governance models are not converging.</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      Data Platform Deep-Dive · generated 2026-05-21 · accuracy-first, no marketing fluff.
+      Spec baseline Apache Iceberg 1.11.0. Verify time-sensitive claims (catalog versions,
+      client vended-credential support) against the cited sources before relying on them.
+    </div>
+
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad:true, securityLevel:'loose', theme:'base' });
+  }
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var map = {};
+    links.forEach(function(a){
+      var id = a.getAttribute('href').slice(1);
+      var el = document.getElementById(id);
+      if (el) map[id] = a;
+    });
+    var obs = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting){
+          links.forEach(function(l){ l.classList.remove('active'); });
+          if (map[e.target.id]) map[e.target.id].classList.add('active');
+        }
+      });
+    }, { rootMargin:'-15% 0px -75% 0px' });
+    Object.keys(map).forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) obs.observe(el);
+    });
+  })();
+</script>
+</body>
+</html>
