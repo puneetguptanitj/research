@@ -513,6 +513,43 @@
         <p>As of mid-2025, Trino's Iceberg connector supports <code>iceberg.rest-catalog.vended-credentials-enabled=true</code>, but there are known issues: the client does not always invoke the <code>/credentials</code> refresh endpoint, falling back to re-fetching via <code>oauth/tokens</code>. Spark's Iceberg implementation honors <code>LoadTableResponse</code> vended credentials more reliably. Track GitHub issues #25827 and #27416 before relying on this in production.</p>
       </div>
 
+      <h3>Worked example: join + aggregation</h3>
+      <p>To make the stage / task / driver model concrete, consider a join with a partial + final aggregation:</p>
+      <pre style="background:var(--code-bg,#f6f8fa);border:1px solid var(--border,#d8dde8);border-radius:6px;padding:14px 18px;font-size:13px;line-height:1.6;overflow-x:auto;"><code>SELECT c.region, SUM(o.total)
+FROM   orders o
+JOIN   customers c ON o.cust_id = c.id
+GROUP  BY c.region;</code></pre>
+      <p>Trino compiles this into <strong>four stages</strong> connected by three network exchanges. The stage DAG shows the logical decomposition; the physical layout shows how those stages map onto three workers.</p>
+
+      <figure style="margin:28px 0;">
+        <img src="files/stage_dag.png" alt="Stage DAG for the join + aggregation example query" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#d8dde8);display:block;">
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure 4a — Stage DAG.</b> Stage 0 and Stage 3 scan both tables in parallel. Both shuffle by <code>hash(cust_id)</code> into Stage 1, which builds the hash table and computes a partial SUM. Stage 1 then shuffles by <code>hash(region)</code> into Stage 2 for the final aggregation, which streams results to the client.</figcaption>
+      </figure>
+
+      <p>Walking through each stage:</p>
+      <ul style="line-height:1.9;">
+        <li><strong>Stage 0 — scan customers</strong>: 3 tasks (one per worker), each processing a subset of customer file splits — ~4 drivers per task. Each driver scans Parquet pages and hash-partitions rows by <code>cust_id</code> into the exchange output buffer.</li>
+        <li><strong>Stage 3 — scan orders</strong>: 3 tasks in parallel. Orders is much larger — 20 splits per worker, so 20 concurrent drivers per task. Each driver scans and hash-partitions by <code>cust_id</code>.</li>
+        <li><strong>First exchange — shuffle by <code>hash(cust_id)</code></strong>: for any given <code>cust_id</code>, both the matching customer row and all matching order rows land on the <em>same</em> worker. This is a <strong>partitioned join</strong> (repartitioned on both sides), not a broadcast join — orders is too large to replicate to all workers.</li>
+        <li><strong>Stage 1 — join + partial agg</strong>: 3 tasks, each running <em>two pipelines</em>. Pipeline A builds the in-memory hash table from the customer-side rows. Pipeline B probes that hash table with order rows and computes a partial <code>SUM(total)</code> per <code>region</code>. The hash table is local to each task — no additional shuffle needed between build and probe because both sides already arrived at the same worker via the partitioned exchange. The build pipeline must complete before the probe pipeline begins — a local barrier within the task.</li>
+        <li><strong>Second exchange — shuffle by <code>hash(region)</code></strong>: partial sums are routed so that all rows for a given region land on the same worker for the final merge.</li>
+        <li><strong>Stage 2 — final agg</strong>: runs on Worker 1 only (output volume is tiny — just one row per region). Merges partial sums into a final <code>SUM</code> per region and streams rows to the client.</li>
+      </ul>
+
+      <figure style="margin:28px 0;">
+        <img src="files/physical_layout.png" alt="Physical layout across coordinator and three workers" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#d8dde8);display:block;">
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure 4b — Physical layout.</b> The coordinator assigns tasks and splits to each worker. Workers 1–3 each run tasks for Stage 0 and Stage 3 concurrently. After the first exchange, each worker receives a disjoint <code>cust_id % 3</code> partition for Stage 1. Workers 2 and 3 are idle during Stage 2 — the final aggregation runs on Worker 1 alone.</figcaption>
+      </figure>
+
+      <p>Key observations from this example:</p>
+      <ul style="line-height:1.9;">
+        <li><strong>One task per (stage, worker)</strong>: Worker 2 runs S0-W2, S3-W2, and S1-W2 simultaneously — three tasks, each with its own memory pool and driver set, all sharing the same thread pool.</li>
+        <li><strong>Drivers ≠ splits 1:1 globally</strong>: Stage 3 has 20 splits per worker → 20 concurrent drivers per task. Stage 2 has <em>no splits</em> — it reads from an exchange buffer — so it just has a few drivers consuming pages from upstream HTTP output buffers.</li>
+        <li><strong>Pipelined execution</strong>: Stage 1 starts consuming pages from the exchange as soon as Stage 0/3 tasks begin producing them. There is no global barrier waiting for all of Stage 0 to finish before Stage 1 begins — stages are pipelined end-to-end.</li>
+        <li><strong>Two pipelines inside one task</strong>: Stage 1 is unusual — a single task runs both the hash-build pipeline and the probe+agg pipeline against the same in-memory hash table. This local build-then-probe barrier is the only intentional serialisation point in the query.</li>
+        <li><strong>Skew risk</strong>: If a small number of <code>cust_id</code> values account for most order rows, the worker assigned that hash bucket will be overloaded. This is the classic join-skew problem — FTE + runtime adaptive re-partitioning can mitigate it, but skew detection is still a manual tuning concern in most deployments.</li>
+      </ul>
+
       <figure>
         <div class="diagram">
           <div class="mermaid">
