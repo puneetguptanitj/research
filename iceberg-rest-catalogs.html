@@ -1,0 +1,1452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Iceberg REST Catalogs — UC · Glue · Apache Polaris · Snowflake Horizon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #F0EEE6; --surface: #E8E4DA; --surface2: #DCD7C9; --surface3: #CFC9B8;
+    --border: #D6D2C5; --accent: #CC785C; --accent2: #7B5C75;
+    --green: #5E7E4F; --red: #A8483C; --yellow: #A8842F;
+    --orange: #C57A3D; --teal: #4A776F;
+    --text: #1F1B17; --muted: #6B6760; --dim: #9A968D;
+    --uc: #6B8FA8; --glue: #C57A3D; --oss-polaris: #6FA098; --horizon: #9F6E7C; --compare: #7B5C75;
+    --serif: 'Source Serif 4', 'Tiempos Headline', Georgia, serif;
+    --sans:  'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
+
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .logo { width: 30px; height: 30px; background: linear-gradient(135deg, #CC785C, #A85F47); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+  .header-title { font-family: var(--serif); font-size: 17px; font-weight: 600; letter-spacing: -0.005em; color: var(--text); }
+  .header-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .catalog-tabs { display: flex; background: var(--surface); border-bottom: 2px solid var(--border); flex-shrink: 0; }
+  .cat-tab { padding: 10px 22px; font-size: 13px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; color: var(--muted); display: flex; align-items: center; gap: 7px; user-select: none; }
+  .cat-tab:hover { color: var(--text); }
+  .cat-tab.active-uc          { color: var(--uc);          border-bottom-color: var(--uc); }
+  .cat-tab.active-glue        { color: var(--glue);        border-bottom-color: var(--glue); }
+  .cat-tab.active-oss-polaris { color: var(--oss-polaris); border-bottom-color: var(--oss-polaris); }
+  .cat-tab.active-horizon     { color: var(--horizon);     border-bottom-color: var(--horizon); }
+  .cat-tab.active-compare     { color: var(--compare);     border-bottom-color: var(--compare); }
+  .cat-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  .steps-panel { width: 210px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto; }
+  .steps-hdr { padding: 10px 14px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 700; }
+  .step-item { padding: 9px 14px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: flex-start; gap: 9px; transition: background 0.1s; user-select: none; }
+  .step-item:hover { background: var(--surface2); }
+  .step-item.active { background: rgba(204,120,92,0.10); border-left: 2px solid var(--accent); }
+  .step-num { width: 20px; height: 20px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--border); font-size: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--muted); margin-top: 1px; }
+  .step-item.active .step-num { background: var(--accent); border-color: var(--accent); color: #FAF8F0; }
+  .step-title { font-size: 12px; line-height: 1.4; color: var(--muted); }
+  .step-item.active .step-title { color: var(--text); font-weight: 600; }
+
+  .flow-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--bg); }
+  .flow-hdr { padding: 12px 18px; font-family: var(--serif); font-size: 15px; font-weight: 600; letter-spacing: -0.005em; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .flow-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; align-items: flex-start; justify-content: center; }
+
+  .mermaid-wrap { width: 100%; max-width: 860px; }
+  .mermaid-wrap svg { width: 100% !important; height: auto !important; background: transparent !important; }
+  .mermaid-error { color: var(--red); font-size: 11px; font-family: monospace; background: var(--surface2); padding: 12px; border-radius: 6px; border: 1px solid rgba(248,113,113,0.4); white-space: pre-wrap; width: 100%; }
+  .mermaid-loading { color: var(--muted); font-size: 12px; padding: 60px; text-align: center; }
+
+  .detail-panel { width: 320px; border-left: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+  .detail-hdr { padding: 10px 14px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 700; }
+  .detail-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+
+  .nav-bar { padding: 8px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-shrink: 0; background: var(--surface); }
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-family: var(--sans); cursor: pointer; transition: all 0.15s; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); background: var(--surface2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #FAF8F0; }
+  .btn.primary:hover { background: #B86A4C; border-color: #B86A4C; color: #FAF8F0; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .step-info { flex: 1; font-size: 12px; color: var(--muted); text-align: center; }
+
+  .explain-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+  .explain-title { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .explain-body { font-size: 12px; color: var(--text); line-height: 1.65; }
+  .explain-body strong { color: var(--accent); font-weight: 600; }
+  .explain-body code { background: rgba(31,27,23,0.06); padding: 1px 5px; border-radius: 3px; font-family: 'JetBrains Mono', 'SF Mono', 'Courier New', monospace; font-size: 11px; color: var(--accent); }
+
+  .kv-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 11px; margin-bottom: 10px; }
+  .kv-key { color: var(--muted); white-space: nowrap; padding: 2px 0; }
+  .kv-val { color: var(--text); padding: 2px 0; }
+  .kv-val.good { color: var(--green); }
+  .kv-val.bad  { color: var(--red); }
+  .kv-val.warn { color: var(--yellow); }
+
+  .badge { display: inline-block; font-size: 9px; padding: 2px 7px; border-radius: 10px; font-weight: 700; letter-spacing: 0.06em; margin-top: 3px; }
+  .badge-ga      { background: rgba(94,126,79,0.18);  color: var(--green); }
+  .badge-preview { background: rgba(168,132,47,0.18); color: var(--yellow); }
+  .badge-no      { background: rgba(168,72,60,0.18);  color: var(--red); }
+  .badge-partial { background: rgba(197,122,61,0.18); color: var(--orange); }
+
+  .code-block { font-family: 'JetBrains Mono', 'SF Mono', 'Courier New', monospace; font-size: 10.5px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; line-height: 1.7; overflow-x: auto; color: var(--text); margin-bottom: 8px; white-space: pre; }
+  .code-block .ck { color: var(--accent2); font-weight: 600; }
+  .code-block .cv { color: var(--green); }
+  .code-block .cc { color: var(--muted); font-style: italic; }
+  .code-block .cu { color: var(--teal); }
+
+  .priv-row { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; border-bottom: 1px solid var(--border); }
+  .priv-name { font-family: monospace; font-size: 10px; color: var(--teal); min-width: 185px; flex-shrink: 0; }
+  .priv-desc { font-size: 11px; color: var(--muted); line-height: 1.4; }
+
+  .compare-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .compare-table th { background: var(--surface2); color: var(--muted); padding: 7px 10px; text-align: left; font-weight: 700; border-bottom: 2px solid var(--border); font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; }
+  .compare-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.4; }
+  .compare-table tr:last-child td { border-bottom: none; }
+  .dim-col  { color: var(--muted); font-weight: 600; font-size: 10px; }
+  .uc-col   { color: var(--uc); }
+  .glue-col { color: var(--glue); }
+  .pol-col  { color: var(--horizon); }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">🧊</div>
+  <div>
+    <div class="header-title">Iceberg REST Catalog — Unity Catalog · Glue · Apache Polaris (OSS) · Snowflake Horizon</div>
+    <div class="header-sub">Auth · Read · Write · RBAC · ABAC · Credential Vending · Engine Support</div>
+  </div>
+</div>
+
+<div class="catalog-tabs">
+  <div class="cat-tab" onclick="selectCatalog('uc')"          id="tab-uc">
+    <div class="cat-dot" style="background:var(--uc)"></div>Databricks Unity Catalog
+  </div>
+  <div class="cat-tab" onclick="selectCatalog('glue')"        id="tab-glue">
+    <div class="cat-dot" style="background:var(--glue)"></div>Amazon Glue IRC
+  </div>
+  <div class="cat-tab" onclick="selectCatalog('oss-polaris')" id="tab-oss-polaris">
+    <div class="cat-dot" style="background:var(--oss-polaris)"></div>Apache Polaris (OSS)
+  </div>
+  <div class="cat-tab" onclick="selectCatalog('horizon')"     id="tab-horizon">
+    <div class="cat-dot" style="background:var(--horizon)"></div>Snowflake Horizon
+  </div>
+  <div class="cat-tab" onclick="selectCatalog('compare')"     id="tab-compare">
+    <div class="cat-dot" style="background:var(--compare)"></div>Side-by-Side
+  </div>
+</div>
+
+<div class="main">
+  <div class="steps-panel">
+    <div class="steps-hdr">Flows</div>
+    <div id="stepsList"></div>
+  </div>
+
+  <div class="flow-panel">
+    <div class="flow-hdr">
+      <span id="flowTitle" style="color:var(--accent)">—</span>
+    </div>
+    <div class="flow-body" id="flowBody">
+      <div class="mermaid-loading">Loading…</div>
+    </div>
+    <div class="nav-bar">
+      <button class="btn" id="prevBtn" onclick="navigate(-1)">← Prev</button>
+      <div class="step-info" id="stepInfo"></div>
+      <button class="btn primary" id="nextBtn" onclick="navigate(1)">Next →</button>
+    </div>
+  </div>
+
+  <div class="detail-panel">
+    <div class="detail-hdr" id="detailHdr">Details</div>
+    <div class="detail-body" id="detailBody"></div>
+  </div>
+</div>
+
+<script>
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  themeVariables: {
+    background:            '#F0EEE6',
+    mainBkg:               '#FAF8F0',
+    primaryColor:          '#FAF8F0',
+    primaryBorderColor:    '#CC785C',
+    primaryTextColor:      '#1F1B17',
+    secondaryColor:        '#E8E4DA',
+    tertiaryColor:         '#DCD7C9',
+    lineColor:             '#7B5C75',
+    edgeLabelBackground:   '#F0EEE6',
+    actorBkg:              '#FAF8F0',
+    actorBorder:           '#CC785C',
+    actorTextColor:        '#1F1B17',
+    actorLineColor:        '#9A968D',
+    signalColor:           '#7B5C75',
+    signalTextColor:       '#1F1B17',
+    labelBoxBkgColor:      '#E8E4DA',
+    labelBoxBorderColor:   '#D6D2C5',
+    labelTextColor:        '#1F1B17',
+    loopTextColor:         '#A8842F',
+    noteBorderColor:       '#A8842F',
+    noteBkgColor:          '#F5EFD8',
+    noteTextColor:         '#1F1B17',
+    activationBorderColor: '#CC785C',
+    activationBkgColor:    '#E8E4DA',
+    fontFamily:            "'Inter', system-ui, sans-serif",
+    fontSize:              '13px'
+  },
+  sequence: {
+    diagramMarginX: 20, diagramMarginY: 10,
+    actorMargin: 60, width: 160, height: 50,
+    boxMargin: 8, noteMargin: 12, messageMargin: 30,
+    mirrorActors: true, useMaxWidth: true, rightAngles: false
+  }
+});
+
+async function renderMermaid(container, definition) {
+  container.innerHTML = '<div class="mermaid-loading">Rendering…</div>';
+  const id = 'mm' + Math.random().toString(36).slice(2, 9);
+  try {
+    const { svg } = await mermaid.render(id, definition);
+    container.innerHTML = `<div class="mermaid-wrap">${svg}</div>`;
+  } catch(e) {
+    container.innerHTML = `<div class="mermaid-error">Diagram error: ${e.message}\n\nSource:\n${definition}</div>`;
+  }
+}
+
+// ─── Catalog data ────────────────────────────────────────────────────────────
+// Rules for Mermaid sequence diagrams:
+//   Arrow labels  → single-line, no special chars, no angle brackets
+//   Note blocks   → can use <br/> for line breaks
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CATALOGS = {
+
+// ════════════════════════ UNITY CATALOG ══════════════════════════════════════
+uc: { color: '#6B8FA8', steps: [
+
+{ title: 'Endpoint & Spec', badge: 'GA read / Preview write', badgeClass: 'badge-preview',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant UC as Unity Catalog (IRC)
+    C->>UC: GET /v1/config
+    UC-->>C: supported endpoints + overrides
+    C->>UC: GET /v1/{prefix}/namespaces
+    UC-->>C: [catalog.schema, ...]
+    C->>UC: GET /v1/{prefix}/namespaces/{ns}/tables
+    UC-->>C: [table1, table2, ...]
+    Note over C,UC: prefix = catalog name<br/>namespace = schema name<br/>3-part: catalog.schema.table`,
+  detail: { hdr: 'Endpoint Reference', content: `
+<div class="explain-box">
+  <div class="explain-title">Base URL</div>
+  <div class="explain-body"><code>https://&lt;workspace&gt;.azuredatabricks.net/api/2.1/unity-catalog/iceberg-rest</code></div>
+</div>
+<div class="kv-grid">
+  <span class="kv-key">Spec</span><span class="kv-val">Iceberg REST Catalog v1</span>
+  <span class="kv-key">Read status</span><span class="kv-val good">GA</span>
+  <span class="kv-key">Write status</span><span class="kv-val warn">Public Preview (DBR 16.4 LTS)</span>
+  <span class="kv-key">Namespace model</span><span class="kv-val">Two-level: catalog.schema</span>
+  <span class="kv-key">UniForm (Delta→Iceberg)</span><span class="kv-val good">GA, read-only via IRC</span>
+</div>` }
+},
+
+{ title: 'Authentication', badge: 'OAuth 2.0 + PAT', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant IDP as Databricks IdP
+    participant UC as Unity Catalog
+    rect rgb(232,228,218)
+      Note over C,UC: Option A — Personal Access Token (dev / interactive)
+      C->>UC: Any IRC request
+      Note right of C: Authorization: Bearer dapi[PAT]
+      UC-->>C: 200 OK
+    end
+    rect rgb(232,228,218)
+      Note over C,UC: Option B — OAuth2 Client Credentials (prod service principal)
+      C->>IDP: POST /oidc/v1/token
+      Note right of C: grant_type=client_credentials<br/>client_id + client_secret<br/>scope=all-apis
+      IDP-->>C: access_token + expires_in
+      C->>UC: Any IRC request
+      Note right of C: Authorization: Bearer JWT
+      UC-->>C: 200 OK
+    end`,
+  detail: { hdr: 'Spark Config', content: `
+<div class="code-block"><span class="cc"># Option A: PAT</span>
+<span class="ck">spark.sql.catalog.uc.security</span>=<span class="cv">OAUTH2</span>
+<span class="ck">spark.sql.catalog.uc.oauth2.token</span>=<span class="cv">dapi&lt;token&gt;</span>
+
+<span class="cc"># Option B: OAuth2 SP</span>
+<span class="ck">spark.sql.catalog.uc.security</span>=<span class="cv">OAUTH2</span>
+<span class="ck">spark.sql.catalog.uc.oauth2.token-endpoint</span>=<span class="cu">https://&lt;ws&gt;/oidc/v1/token</span>
+<span class="ck">spark.sql.catalog.uc.oauth2.client-id</span>=<span class="cv">&lt;id&gt;</span>
+<span class="ck">spark.sql.catalog.uc.oauth2.client-secret</span>=<span class="cv">&lt;secret&gt;</span>
+<span class="ck">spark.sql.catalog.uc.oauth2.scope</span>=<span class="cv">all-apis</span></div>
+<div class="explain-box">
+  <div class="explain-title">Snowflake Token Exchange</div>
+  <div class="explain-body">Snowflake configures <code>REST_AUTHENTICATION TYPE=OAUTH</code> pointing to UC's OIDC endpoint — Snowflake fetches a fresh Databricks OAuth token on each catalog call.</div>
+</div>` }
+},
+
+{ title: 'Read Flow', badge: 'GA + Credential Vending', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant UC as Unity Catalog
+    participant STS as Cloud STS
+    participant S as Object Storage
+    C->>UC: GET /namespaces/{ns}/tables/{tbl}
+    Note right of C: Authorization: Bearer token
+    Note over UC: RBAC check:<br/>SELECT + EXTERNAL USE SCHEMA
+    UC->>STS: AssumeRole / SAS / GCS SA token
+    Note right of UC: Scoped to table storage path only
+    STS-->>UC: short-lived cloud credentials
+    UC-->>C: LoadTableResult
+    Note left of UC: metadata_location<br/>schema, snapshots<br/>config.credentials (vended)
+    C->>S: read metadata.json
+    C->>S: read manifest-list
+    C->>S: read manifests
+    C->>S: read Parquet data files
+    Note right of C: All reads use vended credentials`,
+  detail: { hdr: 'Credential Vending', content: `
+<div class="kv-grid">
+  <span class="kv-key">AWS S3</span><span class="kv-val good">STS AssumeRole → temp AK/SK/token</span>
+  <span class="kv-key">Azure ADLS</span><span class="kv-val good">SAS token or MI-scoped token</span>
+  <span class="kv-key">GCS</span><span class="kv-val good">SA short-lived OAuth token</span>
+  <span class="kv-key">Scope</span><span class="kv-val">Table storage path only (not full bucket)</span>
+  <span class="kv-key">Duration</span><span class="kv-val">~1 hour, auto-refreshed by client</span>
+  <span class="kv-key">Client needs own S3 IAM?</span><span class="kv-val good">No</span>
+</div>
+<div class="explain-box">
+  <div class="explain-title">⚠ EXTERNAL USE SCHEMA Gate</div>
+  <div class="explain-body">Without <strong>EXTERNAL USE SCHEMA</strong> on the schema, no external engine receives vended credentials — even with SELECT granted. Only catalog owners can grant this privilege.</div>
+</div>` }
+},
+
+{ title: 'Write Flow', badge: 'Public Preview', badgeClass: 'badge-preview',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant UC as Unity Catalog
+    participant S as Object Storage
+    C->>UC: GET /namespaces/{ns}/tables/{tbl}
+    UC-->>C: metadata + version + vended write credentials
+    C->>S: PutObject new Parquet data files
+    Note right of C: Using vended write credentials
+    C->>UC: POST CommitTable
+    Note right of C: requirements: assert-schema-id,<br/>  assert-ref-snapshot-id<br/>updates: add-snapshot,<br/>  set-snapshot-ref
+    Note over UC: OCC — validate requirements atomically
+    alt 409 Conflict (concurrent writer advanced)
+      UC-->>C: 409 Conflict
+      Note over C: Retry commit only<br/>Data files already written
+      C->>UC: POST CommitTable (retry)
+      UC-->>C: 200 OK
+    else Success
+      UC-->>C: 200 OK — new metadata-vN.json written
+    end`,
+  detail: { hdr: 'OCC & Write Limits', content: `
+<div class="kv-grid">
+  <span class="kv-key">Concurrency</span><span class="kv-val">Optimistic (OCC)</span>
+  <span class="kv-key">Default retries</span><span class="kv-val">4</span>
+  <span class="kv-key">Backoff range</span><span class="kv-val">100ms → 60s</span>
+  <span class="kv-key">Total timeout</span><span class="kv-val">30 min</span>
+  <span class="kv-key">What is retried</span><span class="kv-val good">Metadata commit only (not data write)</span>
+  <span class="kv-key">CTAS</span><span class="kv-val good">Supported</span>
+  <span class="kv-key">RenameTable</span><span class="kv-val good">Supported</span>
+  <span class="kv-key">UniForm write via IRC</span><span class="kv-val bad">Not supported — read-only</span>
+</div>` }
+},
+
+{ title: 'RBAC', badge: 'Hierarchical privileges', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant A as Admin
+    participant UC as Unity Catalog
+    participant E as External Engine
+    A->>UC: GRANT USE CATALOG ON my_cat TO engine_sp
+    A->>UC: GRANT USE SCHEMA ON my_schema TO engine_sp
+    A->>UC: GRANT SELECT ON TABLE my_tbl TO engine_sp
+    A->>UC: GRANT EXTERNAL USE SCHEMA ON my_schema TO engine_sp
+    Note over A,UC: Grants cascade downward automatically:<br/>Catalog grant covers all schemas + tables below
+    E->>UC: POST /oidc/v1/token
+    UC-->>E: bearer token
+    E->>UC: GET /namespaces/{ns}/tables/{tbl}
+    Note over UC: Check: USE CATALOG<br/>USE SCHEMA + SELECT<br/>EXTERNAL USE SCHEMA
+    UC-->>E: LoadTableResult + vended credentials`,
+  detail: { hdr: 'Key Privileges', content: `
+<div class="priv-row"><span class="priv-name">USE CATALOG</span><span class="priv-desc">Entry prerequisite for everything in catalog</span></div>
+<div class="priv-row"><span class="priv-name">USE SCHEMA</span><span class="priv-desc">Entry prerequisite for tables in schema</span></div>
+<div class="priv-row"><span class="priv-name">SELECT</span><span class="priv-desc">Read table data via Databricks SQL or IRC</span></div>
+<div class="priv-row"><span class="priv-name">MODIFY</span><span class="priv-desc">Write / update table data and metadata</span></div>
+<div class="priv-row"><span class="priv-name">CREATE TABLE</span><span class="priv-desc">Create tables in schema</span></div>
+<div class="priv-row"><span class="priv-name">EXTERNAL USE SCHEMA</span><span class="priv-desc">⚡ IRC gate: external engines can request vended credentials. Only catalog owners can grant.</span></div>
+<div class="priv-row"><span class="priv-name">ALL PRIVILEGES</span><span class="priv-desc">Full capability, cascades to all descendants</span></div>` }
+},
+
+{ title: 'ABAC / Fine-Grained', badge: 'Not via IRC', badgeClass: 'badge-no',
+  flow: `sequenceDiagram
+    participant SE as Databricks SQL Engine
+    participant E as External IRC Engine
+    participant UC as Unity Catalog
+    participant S as Object Storage
+    rect rgb(232,228,218)
+      Note over SE,UC: Governed path — Databricks SQL engine
+      SE->>UC: Query table with row filter policy
+      Note over UC: Row filter + column mask enforced
+      UC-->>SE: Filtered and masked rows
+    end
+    rect rgb(238,222,213)
+      Note over E,S: External IRC path — policies bypassed
+      E->>UC: GET /namespaces/{ns}/tables/{tbl}
+      alt Table has row filter or column mask
+        UC-->>E: 403 Access blocked entirely
+      else Table has no filter
+        UC-->>E: LoadTableResult — full unmasked data
+        E->>S: Read all data files
+      end
+    end
+    Note over SE,S: IRC cannot propagate row/column security<br/>to raw external engines`,
+  detail: { hdr: 'ABAC Status', content: `
+<div class="kv-grid">
+  <span class="kv-key">Row-level filtering (IRC)</span><span class="kv-val bad">Not available</span>
+  <span class="kv-key">Column masking (IRC)</span><span class="kv-val bad">Not available</span>
+  <span class="kv-key">Tables with masks via IRC</span><span class="kv-val bad">Access blocked entirely (403)</span>
+  <span class="kv-key">Databricks SQL engine</span><span class="kv-val good">Full enforcement</span>
+  <span class="kv-key">Workaround</span><span class="kv-val warn">Expose pre-filtered SQL views via IRC</span>
+  <span class="kv-key">Databricks ABAC-for-IRC</span><span class="kv-val warn">In development, not GA May 2026</span>
+</div>` }
+},
+
+{ title: 'Engine Support', badge: 'Multi-engine', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant E as External Engine
+    participant UC as Unity Catalog
+    participant STS as Cloud STS
+    participant S as Object Storage
+    Note over E,UC: Same OAuth2 flow for all engines:<br/>Spark, Flink, Trino, DuckDB, Dremio, StarRocks
+    E->>UC: POST /oidc/v1/token (SP credentials)
+    UC-->>E: bearer token
+    E->>UC: GET /namespaces/{ns}/tables/{tbl}
+    Note right of E: EXTERNAL USE SCHEMA required on schema
+    Note over UC: RBAC check + credential vending
+    UC->>STS: AssumeRole scoped to table path
+    STS-->>UC: temp cloud credentials
+    UC-->>E: LoadTableResult + vended credentials
+    E->>S: Read / write data files directly
+    Note right of E: Spark/Flink/Trino: read + write<br/>Snowflake: read-only`,
+  detail: { hdr: 'Engine Matrix', content: `
+<div class="kv-grid">
+  <span class="kv-key">Apache Spark</span><span class="kv-val">R✓ W-preview</span>
+  <span class="kv-key">Apache Flink</span><span class="kv-val">R✓ W-preview</span>
+  <span class="kv-key">Trino / Starburst</span><span class="kv-val">R✓ W-preview</span>
+  <span class="kv-key">DuckDB</span><span class="kv-val">R✓ W-preview</span>
+  <span class="kv-key">Snowflake</span><span class="kv-val warn">R✓ W✗ (read via catalog integration)</span>
+  <span class="kv-key">Dremio</span><span class="kv-val">R✓ W-preview</span>
+  <span class="kv-key">StarRocks</span><span class="kv-val good">R✓ W✓</span>
+</div>` }
+},
+]},
+
+// ════════════════════════ AMAZON GLUE ════════════════════════════════════════
+glue: { color: '#C57A3D', steps: [
+
+{ title: 'Endpoint & Spec', badge: 'GA', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant G as Glue IRC
+    C->>G: GET /v1/config (SigV4 signed)
+    G-->>C: config, overrides
+    C->>G: GET /catalogs/{cat}/namespaces
+    G-->>C: [database1, database2, ...]
+    Note over C,G: Single-level namespaces ONLY<br/>Glue database = Iceberg namespace (1:1)<br/>Multi-level hierarchy not supported
+    C->>G: GET /catalogs/{cat}/namespaces/{ns}/tables
+    G-->>C: [table1, table2, ...]`,
+  detail: { hdr: 'Endpoint Reference', content: `
+<div class="kv-grid">
+  <span class="kv-key">Base URL</span><span class="kv-val">https://glue.{region}.amazonaws.com/iceberg</span>
+  <span class="kv-key">Extension (Redshift MRS)</span><span class="kv-val">https://glue.{region}.amazonaws.com/extensions</span>
+  <span class="kv-key">Spec</span><span class="kv-val">Iceberg REST Catalog v1</span>
+  <span class="kv-key">Namespace model</span><span class="kv-val bad">Single-level only (Glue database)</span>
+  <span class="kv-key">Warehouse param</span><span class="kv-val">AWS account ID e.g. "123456789012"</span>
+  <span class="kv-key">Iceberg v3 support</span><span class="kv-val good">Glue 5.1+</span>
+  <span class="kv-key">Catalog federation (remote IRC)</span><span class="kv-val good">GA Nov 2025</span>
+</div>` }
+},
+
+{ title: 'Authentication', badge: 'AWS SigV4 (IAM)', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant META as AWS Metadata Service
+    participant G as Glue IRC
+    Note over C,META: Step 1 — Obtain IAM credentials
+    C->>META: GET instance profile credentials
+    Note right of C: Or: env vars, IRSA, AssumeRole
+    META-->>C: AccessKeyId + SecretKey + SessionToken
+    Note over C,G: Step 2 — Sign every HTTP request with SigV4<br/>service = glue, region = us-east-1
+    C->>G: GET /iceberg/catalogs/{cat}/namespaces/{ns}/tables
+    Note right of C: X-Amz-Date: 20260515T...<br/>Authorization: AWS4-HMAC-SHA256 ...glue/aws4_request
+    Note over G: IAM policy evaluation:<br/>glue:GetTable on resource ARN
+    G-->>C: 200 OK
+    Note over C,G: No OAuth2, no bearer token support<br/>Non-AWS clients must implement SigV4 signing`,
+  detail: { hdr: 'SigV4 Spark Config', content: `
+<div class="code-block"><span class="ck">spark.sql.catalog.glue.type</span>=<span class="cv">rest</span>
+<span class="ck">spark.sql.catalog.glue.uri</span>=<span class="cu">https://glue.us-east-1.amazonaws.com/iceberg</span>
+<span class="ck">spark.sql.catalog.glue.warehouse</span>=<span class="cv">123456789012</span>
+<span class="ck">spark.sql.catalog.glue.rest.sigv4-enabled</span>=<span class="cv">true</span>
+<span class="ck">spark.sql.catalog.glue.rest.signing-name</span>=<span class="cv">glue</span>
+<span class="ck">spark.sql.catalog.glue.rest.signing-region</span>=<span class="cv">us-east-1</span></div>
+<div class="explain-box">
+  <div class="explain-title">Non-AWS Client Friction</div>
+  <div class="explain-body">SigV4 requires the AWS SDK or custom HMAC-SHA256 signing. Self-hosted Trino / on-prem Spark face significant extra integration work vs the OAuth2 used by UC and Polaris.</div>
+</div>` }
+},
+
+{ title: 'Read Flow', badge: 'GA — no native cred vending', badgeClass: 'badge-partial',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant G as Glue IRC
+    participant S as S3
+    C->>G: GET /catalogs/{cat}/namespaces/{ns}/tables/{tbl}
+    Note right of C: SigV4 signed
+    Note over G: IAM check: glue:GetTable on ARN
+    G-->>C: LoadTableResult
+    Note left of G: metadata_location only<br/>NO vended credentials
+    Note over C: Client needs own S3 IAM permissions:<br/>s3:GetObject + s3:ListBucket on bucket
+    C->>S: GetObject metadata.json
+    Note right of C: Using own IAM role
+    C->>S: GetObject manifest-list
+    C->>S: GetObject manifests
+    C->>S: GetObject Parquet data files`,
+  detail: { hdr: 'Spark Read Config', content: `
+<div class="code-block"><span class="cc"># REST catalog endpoint</span>
+<span class="ck">spark.sql.catalog.glue.type</span>=<span class="cv">rest</span>
+<span class="ck">spark.sql.catalog.glue.uri</span>=<span class="cu">https://glue.us-east-1.amazonaws.com/iceberg</span>
+
+<span class="cc"># Or: native Glue catalog (non-REST)</span>
+<span class="ck">spark.sql.catalog.glue.catalog-impl</span>=<span class="cv">org.apache.iceberg.aws.glue.GlueCatalog</span>
+<span class="ck">spark.sql.catalog.glue.warehouse</span>=<span class="cv">s3://my-bucket/iceberg</span>
+
+<span class="cc"># Glue Job shortcut (auto-configures IAM role)</span>
+--datalake-formats=iceberg</div>` }
+},
+
+{ title: 'Write Flow', badge: 'GA', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant G as Glue IRC
+    participant S as S3
+    C->>G: GET LoadTable (SigV4)
+    G-->>C: metadata + current version_id
+    C->>S: PutObject new Parquet files
+    Note right of C: Using client own IAM role — no vending
+    C->>G: POST CommitTable (SigV4)
+    Note right of C: requirements: assert-table-uuid,<br/>  assert-ref-snapshot-id<br/>updates: add-snapshot, set-snapshot-ref
+    Note over G: Check version_id atomically (OCC)
+    alt 409 Conflict
+      G-->>C: 409 CommitFailedException
+      C->>G: Retry metadata commit only
+      G-->>C: 200 OK
+    else Success
+      G-->>C: 200 OK
+    end
+    Note over C,G: No CTAS, No RenameTable on S3<br/>No View APIs, 20MB metadata limit`,
+  detail: { hdr: 'Write Limitations', content: `
+<div class="kv-grid">
+  <span class="kv-key">Concurrency</span><span class="kv-val">OCC (Glue 4.0+)</span>
+  <span class="kv-key">Retry scope</span><span class="kv-val good">Metadata commit only</span>
+  <span class="kv-key">CREATE TABLE AS SELECT</span><span class="kv-val bad">Not supported</span>
+  <span class="kv-key">stageCreate parameter</span><span class="kv-val bad">Not supported — error</span>
+  <span class="kv-key">RenameTable (S3)</span><span class="kv-val bad">Not supported</span>
+  <span class="kv-key">View APIs</span><span class="kv-val bad">Not supported</span>
+  <span class="kv-key">Namespace DDL</span><span class="kv-val bad">Not supported</span>
+  <span class="kv-key">Max metadata size</span><span class="kv-val warn">20 MB hard limit</span>
+</div>` }
+},
+
+{ title: 'RBAC (IAM)', badge: 'IAM-native', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant IAM as AWS IAM
+    participant G as Glue IRC
+    participant S as S3
+    C->>IAM: STS AssumeRole
+    IAM-->>C: AccessKeyId + SecretKey + SessionToken
+    C->>G: GET /catalogs/{cat}/tables/{tbl} (SigV4)
+    Note over G,IAM: Evaluate identity-based policy:<br/>glue:GetTable on table ARN
+    G-->>C: LoadTableResult (no vended credentials)
+    C->>S: GetObject data files
+    Note over S: IAM check: s3:GetObject on bucket ARN
+    S-->>C: data files
+    Note over C,S: No catalog-native role system<br/>All access control via IAM policies + ARN patterns`,
+  detail: { hdr: 'Minimum Read Policy', content: `
+<div class="code-block">{
+  <span class="ck">"Statement"</span>: [{
+    <span class="ck">"Effect"</span>: <span class="cv">"Allow"</span>,
+    <span class="ck">"Action"</span>: [<span class="cv">"glue:GetCatalog"</span>,
+               <span class="cv">"glue:GetDatabase"</span>,
+               <span class="cv">"glue:GetTable"</span>],
+    <span class="ck">"Resource"</span>: [
+      <span class="cv">"arn:aws:glue:us-east-1:123:catalog"</span>,
+      <span class="cv">"arn:aws:glue:us-east-1:123:database/mydb"</span>,
+      <span class="cv">"arn:aws:glue:us-east-1:123:table/mydb/*"</span>
+    ]
+  }, {
+    <span class="ck">"Effect"</span>: <span class="cv">"Allow"</span>,
+    <span class="ck">"Action"</span>: [<span class="cv">"s3:GetObject"</span>, <span class="cv">"s3:ListBucket"</span>],
+    <span class="ck">"Resource"</span>: [<span class="cv">"arn:aws:s3:::bucket"</span>,
+                 <span class="cv">"arn:aws:s3:::bucket/*"</span>]
+  }]
+}</div>` }
+},
+
+{ title: 'ABAC + Lake Formation', badge: 'LF-tags + IAM conditions', badgeClass: 'badge-partial',
+  flow: `sequenceDiagram
+    participant E as Query Engine (Spark/Athena)
+    participant LF as Lake Formation
+    participant G as Glue IRC
+    participant S as S3
+    E->>G: GET LoadTable (SigV4)
+    G-->>E: LoadTableResult (no vended credentials)
+    alt Principal opted-in to Lake Formation
+      E->>LF: Request table access
+      Note over LF: Apply data filters:<br/>Column filter: hide PII columns<br/>Row filter: WHERE dept = PrincipalTag/dept<br/>Cell-level: row AND column combined
+      LF->>S: AssumeRole scoped to S3 prefix
+      S-->>LF: temp STS credentials
+      LF-->>E: scoped credentials + filter specs
+      E->>S: Read data (engine applies filters)
+    else No LF opt-in — raw IRC client
+      Note over E,S: LF bypassed entirely<br/>No row/column filtering
+      E->>S: Read full unfiltered data files
+    end`,
+  detail: { hdr: 'LF-Tag ABAC Example', content: `
+<div class="code-block"><span class="cc"># IAM ABAC — match principal tag to resource tag</span>
+<span class="ck">"Condition"</span>: {
+  <span class="ck">"StringEquals"</span>: {
+    <span class="cv">"aws:ResourceTag/Environment"</span>:
+      <span class="cv">"\${aws:PrincipalTag/Environment}"</span>
+  }
+}
+<span class="cc"># Allow only when tags match</span></div>
+<div class="kv-grid">
+  <span class="kv-key">Row-level filtering</span><span class="kv-val warn">Via LF data filters (engine-dependent)</span>
+  <span class="kv-key">Column masking</span><span class="kv-val warn">Via LF data filters (engine-dependent)</span>
+  <span class="kv-key">LF-tags</span><span class="kv-val good">Key-value classification on tables/columns</span>
+  <span class="kv-key">Works on raw IRC client</span><span class="kv-val bad">No — LF bypassed entirely</span>
+  <span class="kv-key">Works via Athena/EMR</span><span class="kv-val good">Yes — engine enforces LF filters</span>
+</div>` }
+},
+
+{ title: 'Credential Vending', badge: 'LF opt-in only', badgeClass: 'badge-partial',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant G as Glue IRC
+    participant LF as Lake Formation
+    participant STS as AWS STS
+    participant S as S3
+    rect rgb(238,222,213)
+      Note over C,G: Default path — no vended credentials
+      C->>G: GET LoadTable (SigV4)
+      G-->>C: LoadTableResult — no credentials in response
+      C->>S: GetObject using own IAM role directly
+    end
+    rect rgb(232,228,218)
+      Note over C,S: Lake Formation opt-in path
+      C->>LF: Request access (principal opted-in to LF)
+      Note over LF: Verify LF permissions + data filters
+      LF->>STS: AssumeRole for registered S3 bucket prefix
+      STS-->>LF: temp credentials
+      LF-->>C: scoped STS credentials (S3 prefix only)
+      C->>S: Read data files with scoped credentials
+    end
+    Note over C,LF: Without opt-in: LF BLOCKS S3 access<br/>even when IAM directly permits it`,
+  detail: { hdr: 'Credential Vending Summary', content: `
+<div class="kv-grid">
+  <span class="kv-key">Native in LoadTable</span><span class="kv-val bad">No</span>
+  <span class="kv-key">LF credential vending</span><span class="kv-val warn">Opt-in per principal</span>
+  <span class="kv-key">Credential scope</span><span class="kv-val">S3 prefix (not table-level path)</span>
+  <span class="kv-key">Credential type</span><span class="kv-val">STS AssumeRole temp credentials</span>
+  <span class="kv-key">Client needs own S3 IAM?</span><span class="kv-val warn">Yes unless LF opt-in</span>
+  <span class="kv-key">Multi-cloud support</span><span class="kv-val bad">AWS S3 only</span>
+</div>` }
+},
+]},
+
+// ════════════════════ APACHE POLARIS (OSS) ════════════════════════════════════
+'oss-polaris': { color: '#6FA098', steps: [
+
+{ title: 'Overview & Architecture', badge: 'ASF Incubating v1.4.x', badgeClass: 'badge-preview',
+  flow: `sequenceDiagram
+    participant D as Developer / Ops
+    participant P as Apache Polaris (self-hosted)
+    participant IDP as External IdP (Keycloak/Okta)
+    participant S as Object Storage (any cloud)
+    Note over P: Deployed via Docker or Kubernetes<br/>JDBC backend (Postgres/MySQL) for HA<br/>Or in-memory for dev/CI
+    D->>P: POST /api/management/v1/principals
+    Note right of D: Bootstrap: create service accounts,<br/>principal roles, catalog roles
+    P-->>D: clientId + clientSecret
+    D->>P: PUT /api/management/v1/catalogs/{cat}
+    Note right of D: storageConfigInfo:<br/>S3/Azure/GCS role + allowedLocations
+    IDP->>P: JWKS endpoint (for token verification)
+    Note over P,IDP: Optional: configure external IdP<br/>so engines bring their own JWT
+    P-->>D: catalog ready`,
+  detail: { hdr: 'What Apache Polaris Is', content: `
+<div class="explain-box">
+  <div class="explain-title">Donated by Snowflake to ASF (2024)</div>
+  <div class="explain-body">Apache Polaris is the open-source catalog engine powering <strong>Snowflake Open Catalog</strong>. Same codebase — you self-host it. Donated to the Apache Software Foundation in 2024; currently in the incubator as of v1.4.x.</div>
+</div>
+<div class="kv-grid">
+  <span class="kv-key">License</span><span class="kv-val good">Apache 2.0</span>
+  <span class="kv-key">ASF status</span><span class="kv-val warn">Incubating — v1.4.x (May 2026)</span>
+  <span class="kv-key">GitHub</span><span class="kv-val">apache/polaris</span>
+  <span class="kv-key">IRC spec</span><span class="kv-val good">Full v1 (OpenAPI 3.1)</span>
+  <span class="kv-key">Namespace model</span><span class="kv-val good">Multi-level (Catalog → Namespace → Table)</span>
+  <span class="kv-key">Backing store</span><span class="kv-val">In-memory (dev) or JDBC (Postgres/MySQL)</span>
+  <span class="kv-key">Deployment</span><span class="kv-val">Docker, Kubernetes, bare-metal JVM</span>
+  <span class="kv-key">Horizon governance</span><span class="kv-val bad">Not available — OSS has no Horizon</span>
+</div>` }
+},
+
+{ title: 'Authentication', badge: 'OAuth 2.0 + External IdP', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant C as Client (Spark/Trino/etc)
+    participant P as Polaris OAuth Endpoint
+    participant IDP as External IdP (Keycloak/Okta)
+    participant API as Catalog API
+    rect rgb(232,228,218)
+      Note over C,P: Option A — Polaris-native credentials
+      C->>P: POST /api/catalog/v1/oauth/tokens
+      Note right of C: grant_type=client_credentials<br/>client_id + client_secret<br/>scope=PRINCIPAL_ROLE:ALL
+      Note over P: Validate against internal principal store<br/>Rotate credentials on every request
+      P-->>C: access_token (JWT) + expires_in: 3600
+    end
+    rect rgb(232,228,218)
+      Note over C,IDP: Option B — External IdP token pass-through
+      C->>IDP: Authenticate via OIDC
+      IDP-->>C: JWT with PRINCIPAL_ROLE claims
+      C->>API: Any IRC request
+      Note right of C: Authorization: Bearer JWT (from IdP)
+      Note over API: Verify signature via IdP JWKS<br/>Map PRINCIPAL_ROLE claim to Polaris roles
+      API-->>C: 200 OK
+    end`,
+  detail: { hdr: 'Spark Config (self-hosted)', content: `
+<div class="code-block"><span class="cc"># Self-hosted Polaris endpoint</span>
+<span class="ck">spark.sql.catalog.pol.type</span>=<span class="cv">rest</span>
+<span class="ck">spark.sql.catalog.pol.uri</span>=<span class="cu">http://polaris.internal:8181/api/catalog</span>
+<span class="ck">spark.sql.catalog.pol.credential</span>=<span class="cv">&lt;clientId&gt;:&lt;clientSecret&gt;</span>
+<span class="ck">spark.sql.catalog.pol.scope</span>=<span class="cv">PRINCIPAL_ROLE:ALL</span>
+<span class="ck">spark.sql.catalog.pol.warehouse</span>=<span class="cv">my-catalog</span></div>
+<div class="explain-box">
+  <div class="explain-title">External IdP Advantage</div>
+  <div class="explain-body">Unlike Snowflake Open Catalog, self-hosted Polaris lets you plug in any OIDC-compliant IdP (Keycloak, Okta, Auth0). Engines already holding a corporate SSO token can use it directly — no second credential set.</div>
+</div>` }
+},
+
+{ title: 'Read Flow', badge: 'GA + Credential Vending', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant P as Apache Polaris
+    participant STS as Cloud STS
+    participant S as Object Storage
+    C->>P: POST /api/catalog/v1/oauth/tokens
+    P-->>C: bearer JWT
+    C->>P: GET /v1/config
+    P-->>C: config, overrides
+    C->>P: GET /v1/{prefix}/namespaces/{ns}/tables/{tbl}
+    Note right of C: Authorization: Bearer JWT
+    Note over P: RBAC: TABLE_READ_DATA check<br/>Verify path in catalog allowedLocations
+    P->>STS: AssumeRole (S3) / Token svc (Azure) / SA (GCS)
+    STS-->>P: short-lived credentials scoped to table path
+    P-->>C: LoadTableResult
+    Note left of P: metadata_location<br/>config.credentials — always included<br/>config: s3.access-key-id, s3.session-token
+    C->>S: read metadata.json
+    C->>S: read manifest-list + manifests
+    C->>S: read Parquet data files
+    Note right of C: Using vended credentials<br/>No direct cloud IAM needed`,
+  detail: { hdr: 'Storage Backend Config', content: `
+<div class="explain-box">
+  <div class="explain-title">allowedLocations = Security Boundary</div>
+  <div class="explain-body">Credential vending is scoped to paths listed in <code>allowedLocations</code> at catalog creation. Tables outside this scope are inaccessible even with valid RBAC — prevents path traversal attacks.</div>
+</div>
+<div class="code-block"><span class="cc"># Catalog creation — storageConfigInfo</span>
+POST /api/management/v1/catalogs
+{
+  <span class="ck">"name"</span>: <span class="cv">"prod-catalog"</span>,
+  <span class="ck">"storageConfigInfo"</span>: {
+    <span class="ck">"storageType"</span>: <span class="cv">"S3"</span>,
+    <span class="ck">"roleArn"</span>: <span class="cv">"arn:aws:iam::123:role/polaris-storage"</span>,
+    <span class="ck">"allowedLocations"</span>: [<span class="cv">"s3://data-lake/prod/"</span>]
+  }
+}</div>` }
+},
+
+{ title: 'Write Flow', badge: 'GA — full DDL', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant C as Client
+    participant P as Apache Polaris
+    participant S as Object Storage
+    C->>P: GET /namespaces/{ns}/tables/{tbl}
+    Note right of C: TABLE_READ_DATA + TABLE_WRITE_DATA required
+    P-->>C: metadata + current version + vended write credentials
+    C->>S: PutObject new Parquet data files
+    Note right of C: Using vended write credentials
+    C->>P: POST CommitTable
+    Note right of C: requirements: assert-schema-id,<br/>  assert-ref-snapshot-id<br/>updates: add-snapshot,<br/>  set-snapshot-ref
+    Note over P: OCC: validate requirements atomically<br/>Write new metadata-vN.json to storage
+    alt 409 Conflict (concurrent writer)
+      P-->>C: 409 Conflict
+      Note over C: Retry commit only<br/>Data files already in storage
+      C->>P: POST CommitTable (retry)
+      P-->>C: 200 OK
+    else Success
+      P-->>C: 200 OK
+    end`,
+  detail: { hdr: 'Full DDL Support', content: `
+<div class="kv-grid">
+  <span class="kv-key">Write status</span><span class="kv-val good">GA</span>
+  <span class="kv-key">Concurrency</span><span class="kv-val">OCC (optimistic)</span>
+  <span class="kv-key">CREATE TABLE AS SELECT</span><span class="kv-val good">Supported</span>
+  <span class="kv-key">RenameTable</span><span class="kv-val good">Supported</span>
+  <span class="kv-key">View APIs</span><span class="kv-val good">Supported</span>
+  <span class="kv-key">Namespace DDL</span><span class="kv-val good">Full CRUD</span>
+  <span class="kv-key">Streaming ingest</span><span class="kv-val good">TABLE_ADD_SNAPSHOT privilege</span>
+  <span class="kv-key">Metadata size limit</span><span class="kv-val good">No hard limit (JDBC-backed)</span>
+</div>
+<div class="explain-box">
+  <div class="explain-title">Append-Only for Streaming</div>
+  <div class="explain-body">Grant <code>TABLE_ADD_SNAPSHOT</code> instead of full <code>TABLE_WRITE_DATA</code> to streaming writers (Flink, Kafka connectors). They can append snapshots but cannot overwrite or delete data — tighter blast radius.</div>
+</div>` }
+},
+
+{ title: 'RBAC', badge: 'Realm → 4-entity chain', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant OPS as Ops (realm admin)
+    participant P as Apache Polaris
+    participant A as Catalog Admin
+    participant C as Client (Principal)
+    Note over OPS,P: Step 1 — Realm bootstrap<br/>Realm = top-level isolation unit<br/>All principals, catalogs, grants are realm-scoped
+    OPS->>P: POST /api/management/v1/principals
+    Note right of OPS: Polaris-Realm: prod-realm<br/>name: spark-writer, type: service
+    P-->>OPS: clientId + clientSecret
+    Note over A,P: Step 2 — Build the 4-entity chain
+    A->>P: POST /management/v1/principal-roles
+    Note right of A: name: data-engineers (realm-scoped)
+    A->>P: PUT assign spark-writer to data-engineers
+    A->>P: POST /management/v1/catalogs/{cat}/catalog-roles
+    Note right of A: name: analyst-read
+    A->>P: PUT assign analyst-read to data-engineers
+    A->>P: PUT GRANT TABLE_READ_DATA ON TABLE orders TO analyst-read
+    Note over OPS,P: Full chain:<br/>Realm / Principal / PrincipalRole / CatalogRole / Privilege
+    C->>P: POST /oauth/tokens
+    Note right of C: Polaris-Realm: prod-realm<br/>client_id + client_secret
+    P-->>C: bearer JWT
+    C->>P: GET /namespaces/{ns}/tables/orders
+    Note over P: Resolve realm scope -> chain -> TABLE_READ_DATA
+    P-->>C: LoadTableResult + vended credentials`,
+  detail: { hdr: 'Realm + Privilege Reference', content: `
+<div class="explain-box">
+  <div class="explain-title">Realm = Multi-tenancy Boundary</div>
+  <div class="explain-body">A single Polaris deployment can host multiple realms. Each realm has <strong>completely isolated</strong> principals, catalogs, and grants — no cross-realm sharing. In self-hosted deployments the realm is selected via the <code>Polaris-Realm</code> HTTP header (or config default). In Snowflake Open Catalog, your Snowflake account is the realm.</div>
+</div>
+<div class="priv-row"><span class="priv-name">CATALOG_MANAGE_CONTENT</span><span class="priv-desc">Full admin: create/drop namespaces + tables + grants</span></div>
+<div class="priv-row"><span class="priv-name">CATALOG_MANAGE_ACCESS</span><span class="priv-desc">Grant / revoke privileges within catalog</span></div>
+<div class="priv-row"><span class="priv-name">NAMESPACE_READ</span><span class="priv-desc">List tables and namespaces</span></div>
+<div class="priv-row"><span class="priv-name">NAMESPACE_WRITE</span><span class="priv-desc">Create / drop tables and nested namespaces</span></div>
+<div class="priv-row"><span class="priv-name">TABLE_READ_DATA</span><span class="priv-desc">Read table data — triggers credential vending</span></div>
+<div class="priv-row"><span class="priv-name">TABLE_WRITE_DATA</span><span class="priv-desc">Write / commit transactions — vends write creds</span></div>
+<div class="priv-row"><span class="priv-name">TABLE_ADD_SNAPSHOT</span><span class="priv-desc">Append-only streaming ingest (Flink, Kafka)</span></div>
+<div class="priv-row"><span class="priv-name">TABLE_MANAGE_GRANTS</span><span class="priv-desc">Delegate grant/revoke on this specific table</span></div>
+<div class="priv-row"><span class="priv-name">VIEW_CREATE / VIEW_READ</span><span class="priv-desc">Create and read Iceberg views</span></div>` }
+},
+
+{ title: 'ABAC Status', badge: 'RBAC only — no masking', badgeClass: 'badge-no',
+  flow: `sequenceDiagram
+    participant A as Admin
+    participant P as Apache Polaris
+    participant C as Client
+    participant S as Object Storage
+    Note over A,P: OSS Polaris has no Horizon overlay<br/>No column masking, no row access policies<br/>Table-level RBAC is the only control
+    rect rgb(232,228,218)
+      A->>P: GRANT TABLE_READ_DATA ON TABLE sensitive TO CATALOG_ROLE analyst
+      Note right of A: Table-level grant — no column filter
+      C->>P: GET /namespaces/{ns}/tables/sensitive
+      Note over P: Check TABLE_READ_DATA — granted
+      P-->>C: LoadTableResult — full unmasked data
+      C->>S: Read ALL columns, ALL rows
+    end
+    rect rgb(238,222,213)
+      Note over A,P: Workaround: expose pre-filtered Iceberg views
+      A->>P: CREATE VIEW masked_sensitive
+      Note right of A: AS SELECT non_pii_col,<br/>hash(pii_col) FROM sensitive
+      A->>P: GRANT VIEW_READ ON VIEW masked_sensitive TO analyst_role
+      C->>P: GET /namespaces/{ns}/views/masked_sensitive
+      P-->>C: ViewResult — filtered + hashed columns
+    end`,
+  detail: { hdr: 'ABAC Gaps vs Snowflake', content: `
+<div class="kv-grid">
+  <span class="kv-key">Column masking</span><span class="kv-val bad">Not available (no Horizon)</span>
+  <span class="kv-key">Row-level filtering</span><span class="kv-val bad">Not available (OSS issue #137 open)</span>
+  <span class="kv-key">Object tagging / classification</span><span class="kv-val bad">Not available</span>
+  <span class="kv-key">Table-level RBAC</span><span class="kv-val good">Full 4-entity model</span>
+  <span class="kv-key">Best workaround</span><span class="kv-val warn">Pre-filtered Iceberg views via VIEW_READ</span>
+  <span class="kv-key">Planned</span><span class="kv-val warn">Community PRs in flight — not GA</span>
+</div>
+<div class="explain-box">
+  <div class="explain-title">OSS vs Managed Trade-off</div>
+  <div class="explain-body">If row/column security for external engines matters, neither OSS nor managed Polaris solves it via IRC. Snowflake Open Catalog adds Horizon governance only for Snowflake SQL — not for external engines. The gap is the same; the OSS version just doesn't pretend otherwise.</div>
+</div>` }
+},
+
+{ title: 'Deployment & Ops', badge: 'Self-hosted', badgeClass: 'badge-preview',
+  flow: `sequenceDiagram
+    participant OPS as Ops Team
+    participant K as Kubernetes / Docker
+    participant P as Apache Polaris JVM
+    participant DB as JDBC Store (Postgres)
+    participant S as Object Storage
+    OPS->>K: docker run apache/polaris:1.4 (dev)
+    Note right of OPS: In-memory store — no persistence<br/>Good for CI/CD, local dev only
+    OPS->>K: helm install polaris (prod)
+    Note right of OPS: JDBC backend: quarkus.datasource.url<br/>HA: multiple replicas, shared DB
+    K->>P: start Polaris (port 8181)
+    OPS->>P: Bootstrap: create root principal
+    Note right of OPS: POST /api/management/v1/principals<br/>with bootstrap credentials
+    P-->>OPS: root clientId + clientSecret
+    OPS->>P: Configure catalog storageConfigInfo
+    Note right of OPS: Set IAM role ARN + allowedLocations
+    P->>S: Verify storage access at startup`,
+  detail: { hdr: 'Deployment Checklist', content: `
+<div class="explain-box">
+  <div class="explain-title">Dev vs Prod Backends</div>
+  <div class="explain-body"><strong>Dev/CI</strong>: <code>-Dpolaris.persistence.type=in-memory</code> — fast, stateless, no external deps. Data lost on restart.<br/><br/><strong>Prod</strong>: Postgres or MySQL via <code>quarkus.datasource.jdbc.url</code>. Multiple Polaris replicas share one DB for HA. Migrate schema with Flyway (bundled).</div>
+</div>
+<div class="kv-grid">
+  <span class="kv-key">JVM port</span><span class="kv-val">8181 (catalog) / 8182 (admin)</span>
+  <span class="kv-key">Docker image</span><span class="kv-val">apache/polaris:latest</span>
+  <span class="kv-key">Helm chart</span><span class="kv-val good">apache/polaris (community)</span>
+  <span class="kv-key">Prod HA</span><span class="kv-val">Stateless replicas + shared JDBC</span>
+  <span class="kv-key">Metrics</span><span class="kv-val">Micrometer → Prometheus/Grafana</span>
+  <span class="kv-key">Storage IAM bootstrap</span><span class="kv-val warn">Cloud role trust policy required before first table</span>
+</div>` }
+},
+
+{ title: 'OSS vs Managed', badge: 'Trade-off guide', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant T as Team
+    participant OSS as Apache Polaris (self-hosted)
+    participant MC as Snowflake Open Catalog (managed)
+    Note over OSS: You own: upgrades, HA, JDBC infra,<br/>backups, incident response
+    Note over MC: Snowflake owns: HA, upgrades, SLA,<br/>global replication, support
+    T->>OSS: Upgrade to v1.5 — test + migrate schema
+    Note over OSS: 2-6 h engineering effort per upgrade
+    T->>MC: Auto-updated by Snowflake
+    Note over MC: Zero-effort, aligned with Snowflake releases
+    T->>OSS: Plug in Keycloak as IdP directly
+    Note over OSS: Full OIDC config control
+    T->>MC: Use Snowflake SP management + OAuth
+    Note over MC: Less flexibility, more guardrails
+    Note over OSS,MC: Same IRC spec — engines connect identically<br/>RBAC model identical (4-entity)<br/>Credential vending identical`,
+  detail: { hdr: 'When to choose each', content: `
+<div class="explain-box">
+  <div class="explain-title">Choose OSS Apache Polaris when:</div>
+  <div class="explain-body">You need to run fully on-prem or in a VPC without any SaaS dependency. You want to use your own IdP (Keycloak, corporate OIDC) natively. You have existing infrastructure investment and Postgres to spare. Cost sensitivity at very high table count matters.</div>
+</div>
+<div class="explain-box">
+  <div class="explain-title">Choose Snowflake Open Catalog when:</div>
+  <div class="explain-body">You already use Snowflake and want zero ops overhead. You need Snowflake-native write-back from Snowflake SQL through the same catalog. You want SLA guarantees and 24/7 Snowflake support. You may eventually want Horizon governance for Snowflake SQL workloads.</div>
+</div>
+<div class="kv-grid">
+  <span class="kv-key">Ops burden</span><span class="kv-val warn">OSS: High / Managed: None</span>
+  <span class="kv-key">IdP flexibility</span><span class="kv-val good">OSS: Any OIDC / Managed: Snowflake SP</span>
+  <span class="kv-key">Snowflake integration</span><span class="kv-val warn">OSS: Manual / Managed: Native</span>
+  <span class="kv-key">Upgrade cadence</span><span class="kv-val warn">OSS: You control / Managed: Snowflake controls</span>
+  <span class="kv-key">IRC behavior</span><span class="kv-val good">Identical — same codebase</span>
+</div>` }
+},
+
+]},
+
+// ════════════════════ SNOWFLAKE HORIZON CATALOG ═══════════════════════════════
+horizon: { color: '#9F6E7C', steps: [
+
+{ title: 'Architecture Overview', badge: 'GA', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant SE as Snowflake SQL Engine
+    participant H as Horizon Catalog
+    participant OC as Open Catalog (Polaris IRC)
+    participant E as External Engine (Spark/Trino)
+    participant S as Object Storage
+    Note over H,OC: Horizon = governance overlay sitting on top of Open Catalog<br/>Same physical tables — two query paths with different guarantees
+    rect rgb(232,228,218)
+      Note over SE,H: Path A — Snowflake SQL (governed)
+      SE->>H: SELECT * FROM prod.orders WHERE region='US'
+      Note over H: Evaluate masking policies on PII columns<br/>Evaluate row access policy (user -> allowed regions)<br/>Apply object tags + classification metadata
+      H-->>SE: Filtered + masked result set
+    end
+    rect rgb(238,222,213)
+      Note over E,S: Path B — External engine via IRC (RBAC only)
+      E->>OC: GET /namespaces/prod/tables/orders
+      Note over OC: TABLE_READ_DATA check only<br/>No masking, no row filter evaluation
+      OC-->>E: LoadTableResult + vended credentials
+      E->>S: Read raw unmasked Parquet files
+    end`,
+  detail: { hdr: 'What Horizon Is and Isn\'t', content: `
+<div class="explain-box">
+  <div class="explain-title">Horizon = Governance Overlay, Not a Protocol</div>
+  <div class="explain-body">Horizon Catalog is Snowflake's governance layer on top of Open Catalog (Polaris-based IRC). It adds masking, row access policies, data classification, object tagging, lineage, and compliance tooling — but only evaluated when Snowflake SQL engine is the query tier.</div>
+</div>
+<div class="kv-grid">
+  <span class="kv-key">Underlying catalog engine</span><span class="kv-val">Snowflake Open Catalog (Polaris IRC)</span>
+  <span class="kv-key">IRC spec</span><span class="kv-val good">Full v1 — external engines connect normally</span>
+  <span class="kv-key">Governance applies to</span><span class="kv-val warn">Snowflake SQL engine only</span>
+  <span class="kv-key">Governance for external IRC</span><span class="kv-val bad">Not evaluated — RBAC only</span>
+  <span class="kv-key">Masking engine</span><span class="kv-val">Snowflake SQL runtime</span>
+  <span class="kv-key">Classification engine</span><span class="kv-val">Snowflake auto-classify (built-in ML)</span>
+</div>` }
+},
+
+{ title: 'Authentication', badge: 'Snowflake-native + OAuth', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant U as User / Service
+    participant SF as Snowflake Auth
+    participant H as Horizon (SQL Engine)
+    participant OC as Open Catalog (IRC)
+    rect rgb(232,228,218)
+      Note over U,H: Path A — Snowflake SQL client
+      U->>SF: Authenticate via key-pair / SSO / OAuth
+      Note right of U: Private key JWT or<br/>Okta/Azure AD SAML assertion
+      SF-->>U: session token
+      U->>H: SQL query (governess enforced)
+      Note over H: Session context includes role<br/>Role determines masking policy evaluation
+      H-->>U: masked + filtered rows
+    end
+    rect rgb(232,228,218)
+      Note over U,OC: Path B — External engine via IRC
+      U->>OC: POST /api/catalog/v1/oauth/tokens
+      Note right of U: grant_type=client_credentials<br/>client_id + secret (Open Catalog SP)
+      OC-->>U: bearer JWT (RBAC scoped)
+      U->>OC: GET /v1/prefix/namespaces/{ns}/tables/{tbl}
+      OC-->>U: LoadTableResult + vended credentials
+    end`,
+  detail: { hdr: 'Auth Methods by Client Type', content: `
+<div class="kv-grid">
+  <span class="kv-key">Snowflake SQL: Key-pair</span><span class="kv-val good">RSA 2048/4096 — most secure for services</span>
+  <span class="kv-key">Snowflake SQL: OAuth</span><span class="kv-val good">Okta, Azure AD, custom OIDC</span>
+  <span class="kv-key">Snowflake SQL: SSO</span><span class="kv-val good">SAML 2.0 IdP federation</span>
+  <span class="kv-key">Snowflake SQL: Password</span><span class="kv-val warn">Allowed, not recommended for production</span>
+  <span class="kv-key">External IRC engine</span><span class="kv-val">Open Catalog OAuth2 client credentials</span>
+  <span class="kv-key">MFA enforcement</span><span class="kv-val good">Via network policy + MFA_ENROLLMENT account param</span>
+</div>
+<div class="explain-box">
+  <div class="explain-title">Role Determines Masking Context</div>
+  <div class="explain-body">For Snowflake SQL: the active role at query time determines which masking policy conditions evaluate to true. A user querying as ANALYST sees masked SSN; querying as ANALYST_ADMIN may see unmasked. Role is part of the session context, not just the auth token.</div>
+</div>` }
+},
+
+{ title: 'Column Masking (DDM)', badge: 'Snowflake SQL only', badgeClass: 'badge-partial',
+  flow: `sequenceDiagram
+    participant A as Admin
+    participant H as Horizon
+    participant U as User (role: ANALYST)
+    participant UA as User (role: ANALYST_ADMIN)
+    Note over A,H: Step 1 — Define and apply masking policy
+    A->>H: CREATE MASKING POLICY mask_ssn
+    Note right of A: AS (val STRING) RETURNS STRING -><br/>CASE WHEN CURRENT_ROLE() = 'ANALYST_ADMIN'<br/>THEN val ELSE '***-**-' || RIGHT(val,4) END
+    A->>H: ALTER TABLE orders MODIFY COLUMN ssn
+    Note right of A: SET MASKING POLICY mask_ssn
+    Note over A,H: Step 2 — Query evaluation
+    U->>H: SELECT name, ssn FROM orders
+    Note over H: Evaluate mask_ssn with role=ANALYST<br/>Condition: ANALYST_ADMIN? No -> mask
+    H-->>U: name=Alice, ssn=***-**-6789
+    UA->>H: SELECT name, ssn FROM orders
+    Note over H: Evaluate mask_ssn with role=ANALYST_ADMIN<br/>Condition: ANALYST_ADMIN? Yes -> plaintext
+    H-->>UA: name=Alice, ssn=123-45-6789`,
+  detail: { hdr: 'Masking Policy Patterns', content: `
+<div class="explain-box">
+  <div class="explain-title">Conditional Masking</div>
+  <div class="explain-body">Masking policies accept the protected column value AND optional additional context columns (e.g. a <code>sensitivity_level</code> column on the same row). The policy is a SQL function — any CASE/IF expression works.</div>
+</div>
+<div class="code-block"><span class="cc"># Conditional masking: use another column as context</span>
+CREATE MASKING POLICY mask_by_sensitivity
+  AS (val STRING, sensitivity STRING) RETURNS STRING ->
+  CASE
+    WHEN sensitivity = <span class="cv">'PUBLIC'</span> THEN val
+    WHEN CURRENT_ROLE() = <span class="cv">'DATA_OWNER'</span> THEN val
+    ELSE <span class="cv">'[REDACTED]'</span>
+  END;</div>
+<div class="kv-grid">
+  <span class="kv-key">Masking scope</span><span class="kv-val">Column-level (per table column)</span>
+  <span class="kv-key">Policy assignment</span><span class="kv-val">ALTER TABLE … SET MASKING POLICY</span>
+  <span class="kv-key">Context functions</span><span class="kv-val">CURRENT_ROLE, CURRENT_USER, IS_ROLE_IN_SESSION</span>
+  <span class="kv-key">External engine</span><span class="kv-val bad">Not evaluated — raw data via IRC</span>
+  <span class="kv-key">Policy sharing</span><span class="kv-val">One policy reused across multiple columns/tables</span>
+</div>` }
+},
+
+{ title: 'Row Access Policies', badge: 'Snowflake SQL only', badgeClass: 'badge-partial',
+  flow: `sequenceDiagram
+    participant A as Admin
+    participant H as Horizon
+    participant U1 as User (region: US)
+    participant U2 as User (region: EU)
+    Note over A,H: Step 1 — Create mapping table + policy
+    A->>H: CREATE TABLE region_access_map
+    Note right of A: user_name STRING, allowed_region STRING
+    A->>H: INSERT INTO region_access_map VALUES
+    Note right of A: ('alice','US'), ('bob','EU')
+    A->>H: CREATE ROW ACCESS POLICY region_filter
+    Note right of A: AS (order_region STRING) RETURNS BOOLEAN -><br/>EXISTS (SELECT 1 FROM region_access_map<br/>WHERE user_name = CURRENT_USER()<br/>AND allowed_region = order_region)
+    A->>H: ALTER TABLE orders ADD ROW ACCESS POLICY region_filter ON (region)
+    Note over A,H: Step 2 — Query rewrite at runtime
+    U1->>H: SELECT * FROM orders
+    Note over H: Rewrite: SELECT * FROM orders<br/>WHERE region_filter(region) = TRUE<br/>-> evaluates to region IN ('US') for alice
+    H-->>U1: only US rows
+    U2->>H: SELECT * FROM orders
+    H-->>U2: only EU rows`,
+  detail: { hdr: 'Row Access Policy Notes', content: `
+<div class="explain-box">
+  <div class="explain-title">Implicit WHERE Clause</div>
+  <div class="explain-body">Horizon rewrites every query on the table to add an implicit <code>WHERE policy_function(col) = TRUE</code>. The user never sees the filter — it's transparent, and COUNT(*) also reflects only allowed rows.</div>
+</div>
+<div class="kv-grid">
+  <span class="kv-key">Filter mechanism</span><span class="kv-val">SQL function returning BOOLEAN</span>
+  <span class="kv-key">Mapping pattern</span><span class="kv-val">JOIN to mapping table (most common)</span>
+  <span class="kv-key">Context functions</span><span class="kv-val">CURRENT_USER, CURRENT_ROLE, IS_ROLE_IN_SESSION</span>
+  <span class="kv-key">Multiple policies</span><span class="kv-val">Only one RAP per table (combine logic in the function)</span>
+  <span class="kv-key">Performance</span><span class="kv-val warn">Mapping table join adds latency — cache-friendly structures matter</span>
+  <span class="kv-key">External engine</span><span class="kv-val bad">Not evaluated — raw Parquet via IRC</span>
+</div>` }
+},
+
+{ title: 'Object Tagging & Classification', badge: 'GA', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant A as Admin
+    participant H as Horizon
+    participant AC as Auto-Classify (ML)
+    participant Q as Querier
+    Note over A,H: Step 1 — Create and assign tags
+    A->>H: CREATE TAG pii_type ALLOWED_VALUES 'EMAIL','SSN','PHONE'
+    A->>H: ALTER TABLE customers MODIFY COLUMN email
+    Note right of A: SET TAG pii_type = 'EMAIL'
+    Note over AC,H: Step 2 — Automated classification (optional)
+    AC->>H: SYSTEM$CLASSIFY('db.schema.customers', ...)
+    Note over H: ML scans column names + sample data<br/>Suggests: email -> PII/EMAIL, ssn -> PII/SSN
+    H-->>A: classification recommendations (review + apply)
+    Note over A,H: Step 3 — Tag propagates to lineage
+    Q->>H: SELECT email FROM customers JOIN orders
+    Note over H: Tag metadata follows column through query<br/>Captured in ACCESS_HISTORY.objects_modified
+    H-->>Q: query result
+    Note over H: Tag lineage: customers.email tag<br/>propagates to downstream derived columns`,
+  detail: { hdr: 'Tagging Architecture', content: `
+<div class="kv-grid">
+  <span class="kv-key">Tag granularity</span><span class="kv-val">Table, column, schema, database, warehouse</span>
+  <span class="kv-key">System tag categories</span><span class="kv-val">SNOWFLAKE.CORE.PRIVACY_CATEGORY, SENSITIVITY_CATEGORY</span>
+  <span class="kv-key">Auto-classify</span><span class="kv-val warn">ML-based — suggest only, human approval needed</span>
+  <span class="kv-key">Tag propagation</span><span class="kv-val">Flows through lineage to downstream objects</span>
+  <span class="kv-key">Tag-based masking</span><span class="kv-val good">Tag-based masking policies (auto-apply on tag)</span>
+  <span class="kv-key">Cross-database tags</span><span class="kv-val">Allowed — tags are account-level objects</span>
+  <span class="kv-key">Discovery UI</span><span class="kv-val">Universal Search, Data Catalog in Snowsight</span>
+</div>
+<div class="explain-box">
+  <div class="explain-title">Tag-Based Masking Policy</div>
+  <div class="explain-body">Attach a masking policy to a tag: any column tagged <code>pii_type='EMAIL'</code> automatically gets the email masking policy applied, without manual per-column ALTER. New columns inherit governance at tagging time.</div>
+</div>` }
+},
+
+{ title: 'The IRC Governance Boundary', badge: 'Critical limitation', badgeClass: 'badge-no',
+  flow: `sequenceDiagram
+    participant E as External Engine (Spark/Trino/Flink)
+    participant OC as Open Catalog (IRC)
+    participant S as Object Storage
+    participant SF as Snowflake SQL Engine
+    participant H as Horizon
+    rect rgb(238,222,213)
+      Note over E,S: External engine path — governance blind spot
+      E->>OC: GET /namespaces/prod/tables/customers
+      Note over OC: Evaluates: TABLE_READ_DATA privilege only<br/>Masking policies: NOT evaluated<br/>Row access policies: NOT evaluated<br/>Tags: NOT evaluated
+      OC-->>E: LoadTableResult + vended credentials
+      E->>S: GetObject *.parquet
+      Note over E: Reads raw Parquet — all columns, all rows<br/>SSN, email, PII all in plaintext
+    end
+    rect rgb(232,228,218)
+      Note over SF,H: Governed path — same physical table
+      SF->>H: SELECT ssn, email FROM prod.customers
+      Note over H: Masking policy on ssn -> mask for role ANALYST<br/>Row access policy -> filter by user's region
+      H-->>SF: masked SSN, filtered rows
+    end
+    Note over E,H: Same table. Same files. Different enforcement.`,
+  detail: { hdr: 'Architecture Implication', content: `
+<div class="explain-box">
+  <div class="explain-title">IRC Cannot Enforce Column/Row Policy</div>
+  <div class="explain-body">IRC delivers Parquet file locations. Object storage is byte-addressable — there is no mechanism to intercept reads at the column or row level. Horizon policies run inside Snowflake's SQL runtime, which sees structured rows. An external engine that reads the raw files bypasses this entirely.</div>
+</div>
+<div class="explain-box">
+  <div class="explain-title">Workaround: Pre-filtered Views via IRC</div>
+  <div class="explain-body">Create a Snowflake view that applies the row filter and drops masked columns, then expose that view through Open Catalog's IRC View API. External engines query the view — they receive pre-filtered Parquet from the view's materialized snapshot, not the raw table.</div>
+</div>
+<div class="kv-grid">
+  <span class="kv-key">Masking (external IRC)</span><span class="kv-val bad">Not evaluated</span>
+  <span class="kv-key">Row filtering (external IRC)</span><span class="kv-val bad">Not evaluated</span>
+  <span class="kv-key">RBAC (external IRC)</span><span class="kv-val good">TABLE_READ_DATA enforced</span>
+  <span class="kv-key">View-based workaround</span><span class="kv-val warn">Viable but adds latency + materialization cost</span>
+</div>` }
+},
+
+{ title: 'Access History & Lineage', badge: 'GA', badgeClass: 'badge-ga',
+  flow: `sequenceDiagram
+    participant U as User
+    participant SF as Snowflake SQL
+    participant H as Horizon
+    participant AH as ACCESS_HISTORY view
+    participant L as Lineage Graph
+    U->>SF: SELECT email, region FROM customers JOIN orders ON id
+    SF->>H: Execute — apply masking + RAP
+    H-->>SF: result set
+    Note over H: Record in ACCESS_HISTORY:<br/>query_id, user_name, role_name<br/>objects_accessed: customers.email, customers.region<br/>objects_modified: none (SELECT)
+    SF-->>U: result
+    AH->>AH: Append row (latency ~3 h for full detail)
+    Note over AH: QUERY_ID, USER_NAME, ROLE_NAME<br/>OBJECTS_ACCESSED (column-level!)<br/>POLICY_CONTEXT (was masking applied?)
+    L->>L: Build column-level lineage graph
+    Note over L: customers.email -> report.pii_summary<br/>orders.total -> finance.monthly_agg<br/>Available via Snowsight Data Lineage UI`,
+  detail: { hdr: 'Audit & Compliance Queries', content: `
+<div class="code-block"><span class="cc">-- Who accessed PII columns in last 7 days?</span>
+SELECT user_name, role_name,
+       f.value:columnName::STRING AS col,
+       query_start_time
+FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY,
+     LATERAL FLATTEN(base_objects_accessed) o,
+     LATERAL FLATTEN(o.value:columns) f
+WHERE o.value:objectName::STRING = <span class="cv">'CUSTOMERS'</span>
+  AND f.value:columnName::STRING IN (<span class="cv">'SSN'</span>,<span class="cv">'EMAIL'</span>)
+  AND query_start_time > DATEADD(day,-7,CURRENT_TIMESTAMP);</div>
+<div class="kv-grid">
+  <span class="kv-key">Granularity</span><span class="kv-val good">Column-level access tracking</span>
+  <span class="kv-key">Masking context</span><span class="kv-val good">Records whether masking policy was applied</span>
+  <span class="kv-key">Latency</span><span class="kv-val warn">~3 hours to ACCOUNT_USAGE (QUERY_HISTORY is real-time)</span>
+  <span class="kv-key">Lineage UI</span><span class="kv-val">Snowsight Data Lineage — column-level graph</span>
+  <span class="kv-key">Compliance reports</span><span class="kv-val">Trust Center: CIS, SOC2, HIPAA checks built-in</span>
+  <span class="kv-key">External IRC audit</span><span class="kv-val bad">Not captured in ACCESS_HISTORY — Open Catalog logs only</span>
+</div>` }
+},
+]},
+
+// ════════════════════════ COMPARE ════════════════════════════════════════════
+compare: { color: '#7B5C75', steps: [
+
+{ title: 'Auth Models', badge: 'All catalogs', badgeClass: 'badge-ga', isTable: true,
+  tableData: {
+    hdr: ['Dimension', 'Unity Catalog', 'Glue IRC', 'Snowflake Horizon'],
+    rows: [
+      ['Protocol', 'OAuth 2.0 / PAT (Bearer)', 'AWS SigV4 (IAM-native)', 'OAuth 2.0 client credentials'],
+      ['Token type', 'Bearer JWT / opaque', 'IAM signed request', 'Bearer JWT'],
+      ['Token lifetime', 'Session / configurable', 'Request-scoped signature', '15-60 min, auto-rotated'],
+      ['Service principal', 'Databricks SP', 'IAM role / user', 'Polaris Principal'],
+      ['External IdP', 'Azure AD / Databricks IdP', 'IAM OIDC federation', 'Keycloak, Okta, any OIDC'],
+      ['Non-AWS client ease', '✓ Easy — standard OAuth2', '✗ Hard — SigV4 signing library', '✓ Easy — standard OAuth2'],
+      ['IRC spec alignment', '✓ Bearer per IRC spec', '✗ SigV4 (non-standard)', '✓ OAuth2 per IRC spec'],
+    ]
+  },
+  detail: { hdr: 'Auth Verdict', content: `
+<div class="explain-box">
+  <div class="explain-title">For Multi-Engine Shops</div>
+  <div class="explain-body">UC and Polaris use standard OAuth2 bearer tokens — any language/engine integrates easily. Glue's SigV4 requires the AWS SDK or custom HMAC-SHA256 signing. Self-hosted Trino or on-prem Spark outside AWS face significant extra work.</div>
+</div>` }
+},
+
+{ title: 'RBAC Depth', badge: 'All catalogs', badgeClass: 'badge-ga', isTable: true,
+  tableData: {
+    hdr: ['Dimension', 'Unity Catalog', 'Glue IRC', 'Snowflake Horizon'],
+    rows: [
+      ['Native role system', '✓ UC privilege hierarchy', '✗ IAM only', '✓ Principal + Catalog roles'],
+      ['Top-level isolation unit', 'Metastore (per workspace)', 'AWS Account', 'Realm (per deployment)'],
+      ['Hierarchy', 'Metastore→Catalog→Schema→Table', 'Account→Database→Table', 'Realm→Catalog→Namespace→Table'],
+      ['Multi-tenant boundary', 'Metastore — one per region', 'Account boundary', 'Realm — multiple per deployment; complete isolation'],
+      ['Privilege inheritance', '✓ Downward propagation', 'Via ARN wildcards', 'Explicit per object'],
+      ['External access gate', 'EXTERNAL USE SCHEMA', 'glue:GetTable IAM action', 'TABLE_READ_DATA privilege'],
+      ['Cross-account', 'Federated workspace auth', 'IAM resource policy + RAM', 'External catalog federation'],
+      ['Audit trail', 'Unity Catalog audit logs', 'AWS CloudTrail', 'ACCESS_HISTORY (column-level) + Open Catalog logs'],
+      ['Most expressive model', 'Inheritance-based', 'IAM ARN patterns', '✓ 4-entity chain under Realm'],
+    ]
+  },
+  detail: { hdr: 'RBAC Verdict', content: `
+<div class="explain-box">
+  <div class="explain-title">Polaris: Realm is the Root</div>
+  <div class="explain-body"><strong>Realm</strong> is the top-level isolation unit — a single Polaris deployment can host multiple realms with zero cross-realm visibility. In Snowflake Open Catalog, a Snowflake account maps to one realm. In self-hosted deployments the realm is set via the <code>Polaris-Realm</code> HTTP header (or config) and scopes all principals, catalogs, and grants within it.</div>
+</div>
+<div class="explain-box">
+  <div class="explain-title">Full 5-level Chain</div>
+  <div class="explain-body">Realm → Principal → PrincipalRole → CatalogRole → Privilege (e.g. <code>TABLE_ADD_SNAPSHOT</code> for append-only streaming). UC is simpler to operate via inheritance. Glue has no catalog-native roles at all.</div>
+</div>` }
+},
+
+{ title: 'ABAC / Fine-Grained', badge: 'All catalogs', badgeClass: 'badge-ga', isTable: true,
+  tableData: {
+    hdr: ['Dimension', 'Unity Catalog', 'Glue IRC', 'Snowflake Horizon'],
+    rows: [
+      ['Row filtering (external IRC)', '✗ Table blocked entirely', '✗ Not via raw IRC', '✗ Not via IRC (Horizon SQL only)'],
+      ['Column masking (external IRC)', '✗ Table blocked entirely', '✗ Not via raw IRC', '✗ Not via IRC (Horizon SQL only)'],
+      ['Row filtering (governed engine)', 'Databricks SQL only', 'EMR/Athena via Lake Formation', 'Snowflake SQL only (Horizon)'],
+      ['Column masking (governed engine)', 'Databricks SQL only', 'EMR/Athena via Lake Formation', 'Snowflake SQL only (Horizon)'],
+      ['Tag-based ABAC', 'Attribute policies (Databricks)', 'LF-tags + IAM condition keys', 'Object tagging (Horizon)'],
+      ['Dynamic masking for IRC', '✗', '✗', '✗ — none of the three'],
+    ]
+  },
+  detail: { hdr: 'The Shared Limitation', content: `
+<div class="explain-box">
+  <div class="explain-title">None Solve This for IRC</div>
+  <div class="explain-body">IRC delivers file locations. Object storage has no per-row awareness. Fine-grained filtering requires a <strong>trusted governed engine</strong> as the access tier.</div>
+</div>
+<div class="explain-box">
+  <div class="explain-title">Architecture Pattern</div>
+  <div class="explain-body">Expose governed <strong>SQL views</strong> (not raw tables) via IRC. The view is pre-filtered at definition time. External engines read the view and get filtered data without engine-level masking.</div>
+</div>` }
+},
+
+{ title: 'Credential Vending', badge: 'All catalogs', badgeClass: 'badge-ga', isTable: true,
+  tableData: {
+    hdr: ['Dimension', 'Unity Catalog', 'Glue IRC', 'Snowflake Horizon'],
+    rows: [
+      ['Native in LoadTable', '✓ Always', '✗ Not by default', '✓ Always'],
+      ['AWS S3', '✓ STS AssumeRole', '✓ Via LF opt-in only', '✓ STS AssumeRole'],
+      ['Azure ADLS', '✓ SAS / MI token', '✗ AWS-only', '✓ Token service'],
+      ['Google GCS', '✓ SA short-lived token', '✗ AWS-only', '✓ SA impersonation'],
+      ['Credential scope', 'Table path (not full bucket)', 'S3 prefix (LF-vended)', 'Table path (allowedLocations)'],
+      ['Duration', '~1 hour', 'Variable (LF config)', '15–60 min'],
+      ['Client needs cloud IAM?', '✗ No', '✓ Yes (or LF opt-in)', '✗ No'],
+      ['Multi-cloud', '✓ All three clouds', '✗ S3 only', '✓ All three clouds'],
+    ]
+  },
+  detail: { hdr: 'Vending Verdict', content: `
+<div class="explain-box">
+  <div class="explain-title">UC and Snowflake Win</div>
+  <div class="explain-body">Both provide first-class credential vending in LoadTableResult — no opt-in, works on all three clouds. Glue requires Lake Formation per-principal opt-in and only works on S3. In multi-cloud environments this is a hard blocker for Glue.</div>
+</div>` }
+},
+
+{ title: 'Write & Operations', badge: 'All catalogs', badgeClass: 'badge-ga', isTable: true,
+  tableData: {
+    hdr: ['Dimension', 'Unity Catalog', 'Glue IRC', 'Snowflake Horizon'],
+    rows: [
+      ['Write status', 'Public Preview (May 2026)', 'GA', 'GA'],
+      ['Concurrency', 'OCC', 'OCC (Glue 4.0+)', 'OCC'],
+      ['CREATE TABLE AS SELECT', '✓', '✗', '✓'],
+      ['RenameTable', '✓', '✗ (S3 tables)', '✓'],
+      ['View APIs', '✓', '✗', '✓'],
+      ['Namespace DDL', '✓', '✗', '✓'],
+      ['Max metadata size', 'No known limit', '20 MB hard limit', 'No known limit'],
+      ['Open source catalog engine', '✓ unitycatalog/unitycatalog', '✗', '✓ apache/polaris (Horizon is proprietary)'],
+      ['Multi-cloud', '✓ S3, ADLS, GCS', '✗ S3 only', '✓ S3, ADLS, GCS'],
+      ['Self-hosted', '✓ Open Catalog binary', '✗ AWS-only', '✗ Managed SaaS only'],
+      ['Governance overlay', '✗ (Databricks SQL enforces)', '✗', '✓ Masking + RAP + Tags + Lineage'],
+      ['UniForm (Delta→Iceberg)', '✓ Unique to UC', '✗', '✗'],
+    ]
+  },
+  detail: { hdr: 'Operations Verdict', content: `
+<div class="explain-box">
+  <div class="explain-title">Snowflake Horizon: Most Governance Depth</div>
+  <div class="explain-body">Column masking, row access policies, object tagging, auto-classification, column-level lineage, and Trust Center compliance checks — all built-in. No equivalent in Glue or UC today. Trade-off: governance only applies when Snowflake SQL is the query engine.</div>
+</div>
+<div class="explain-box">
+  <div class="explain-title">UC Unique: UniForm</div>
+  <div class="explain-body">Keep Delta as primary format and expose Iceberg reads to external engines — no data copy, no migration. No equivalent in Glue or Horizon.</div>
+</div>` }
+},
+
+{ title: 'Engine Support', badge: 'All catalogs', badgeClass: 'badge-ga', isTable: true,
+  tableData: {
+    hdr: ['Engine', 'Unity Catalog', 'Glue IRC', 'Snowflake Horizon'],
+    rows: [
+      ['Apache Spark', 'R✓ W-preview', 'R✓ W✓', 'R✓ W✓ (no Horizon governance)'],
+      ['Apache Flink', 'R✓ W-preview', 'R✓ W✓', 'R✓ W✓ (no Horizon governance)'],
+      ['Trino / Starburst', 'R✓ W-preview', 'R✓ W✓ (some issues)', 'R✓ W✓ (no Horizon governance)'],
+      ['DuckDB', 'R✓ W-preview', 'R✓ W✓', 'R✓ W✓ (no Horizon governance)'],
+      ['Dremio', 'R✓ W-preview', 'R✓ W✓', 'R✓ W✓ (no Horizon governance)'],
+      ['StarRocks / Doris', 'R✓ W✓', 'R✓ W✓', 'R✓ W✓ (no Horizon governance)'],
+      ['Snowflake SQL', 'R✓ W✗ (read via catalog integration)', 'R✓ (catalog integration)', 'R✓ W✓ — full Horizon governance'],
+      ['PyIceberg', 'R✓ W-preview', 'R✓ W✓', 'R✓ W✓ (no Horizon governance)'],
+      ['Athena / EMR', 'Via federation', 'R✓ W✓ (native)', 'R✓ (no Horizon governance)'],
+    ]
+  },
+  detail: { hdr: 'Engine Verdict', content: `
+<div class="explain-box">
+  <div class="explain-title">Governance Only for Snowflake SQL</div>
+  <div class="explain-body">All engines can read/write via Open Catalog IRC — but only Snowflake SQL queries run through Horizon and get column masking, row access policies, and tag enforcement. For Workday multi-engine workloads (Spark + Flink + Trino), Horizon provides IRC access parity but no governance advantage over Apache Polaris OSS.</div>
+</div>` }
+},
+
+]},
+}; // end CATALOGS
+
+// ─── State & render ──────────────────────────────────────────────────────────
+let currentCatalog = 'uc';
+let currentStep    = 0;
+
+function selectCatalog(cat) {
+  currentCatalog = cat;
+  currentStep    = 0;
+  ['uc','glue','oss-polaris','horizon','compare'].forEach(c =>
+    document.getElementById('tab-' + c).className = 'cat-tab'
+  );
+  document.getElementById('tab-' + cat).className = `cat-tab active-${cat}`;
+  renderSteps();
+  renderStep();
+}
+
+function renderSteps() {
+  const steps = CATALOGS[currentCatalog].steps;
+  document.getElementById('stepsList').innerHTML = steps.map((s, i) => `
+    <div class="step-item ${i === currentStep ? 'active' : ''}" onclick="jumpStep(${i})">
+      <div class="step-num">${i + 1}</div>
+      <div>
+        <div class="step-title">${s.title}</div>
+        ${s.badge ? `<div class="badge ${s.badgeClass || 'badge-ga'}">${s.badge}</div>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function jumpStep(i) {
+  currentStep = i;
+  renderSteps();
+  renderStep();
+}
+
+function navigate(dir) {
+  const max = CATALOGS[currentCatalog].steps.length - 1;
+  currentStep = Math.max(0, Math.min(max, currentStep + dir));
+  renderSteps();
+  renderStep();
+}
+
+function renderStep() {
+  const steps = CATALOGS[currentCatalog].steps;
+  const s     = steps[currentStep];
+  const color = CATALOGS[currentCatalog].color;
+
+  document.getElementById('flowTitle').textContent = s.title;
+  document.getElementById('flowTitle').style.color  = color;
+  document.getElementById('stepInfo').textContent   = `${currentStep + 1} / ${steps.length}`;
+  document.getElementById('prevBtn').disabled = currentStep === 0;
+  document.getElementById('nextBtn').disabled = currentStep === steps.length - 1;
+
+  const fb = document.getElementById('flowBody');
+
+  if (s.isTable && s.tableData) {
+    const { hdr, rows } = s.tableData;
+    const colClass = ['dim-col','uc-col','glue-col','pol-col'];
+    fb.innerHTML = `<div style="width:100%;overflow-x:auto"><table class="compare-table">
+      <thead><tr>${hdr.map((h,i) => `<th class="${colClass[i]||''}">${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${r.map((c,i) => `<td class="${i===0?'dim-col':''}">${c}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>`;
+  } else {
+    renderMermaid(fb, s.flow);
+  }
+
+  if (s.detail) {
+    document.getElementById('detailHdr').textContent = s.detail.hdr;
+    document.getElementById('detailBody').innerHTML  = s.detail.content;
+  }
+}
+
+selectCatalog('uc');
+</script>
+</body>
+</html>

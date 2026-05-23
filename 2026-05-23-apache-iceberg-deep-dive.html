@@ -170,6 +170,7 @@
       <li><a href="#connections"><span class="n">5</span>How it connects</a></li>
       <li><a href="#tradeoffs"><span class="n">6</span>Trade-offs &amp; failure modes</a></li>
       <li><a href="#take"><span class="n">7</span>Architect's take</a></li>
+      <li><a href="#related"><span class="n">—</span>Related tools</a></li>
       <li><a href="#glossary"><span class="n">—</span>Glossary</a></li>
       <li><a href="#sources"><span class="n">—</span>Sources</a></li>
     </ol>
@@ -813,10 +814,12 @@ sequenceDiagram
 
       <p><strong>Watch over the next 12–18 months:</strong> (1) Iceberg v3 full ecosystem adoption — particularly Trino and Flink native deletion vector support; (2) IRC catalog consolidation — Polaris vs. Gravitino vs. Lakekeeper for the ASF-native slot; (3) multi-table transaction support becoming a standard IRC feature, which would remove Iceberg's last major limitation relative to warehouse systems; (4) Iceberg as the substrate for operational tables (Lakebase / OLTP-on-Iceberg) — the boundary between the analytical and operational lakehouse is actively dissolving.</p>
 
-      <div class="callout note" style="margin-top:18px;">
-        <span class="tag">Interactive Tool</span>
-        <p><a href="iceberg-operations.html">Apache Iceberg — Operations &amp; Disk Layout</a> — step-by-step walkthrough of all six core operations (Create, Append, Query, Update, Delete, Compaction) with a live disk-layout visualizer and file-content inspector for every metadata and data file.</p>
-      </div>
+    </section>
+
+    <!-- ===== RELATED TOOLS ===== -->
+    <section id="related">
+      <h2>Related tools</h2>
+      <p><a href="iceberg-operations.html"><strong>Apache Iceberg — Operations &amp; Disk Layout</strong></a> — step-by-step walkthrough of all six core operations (Create, Append, Query, Update, Delete, Compaction) with a live disk-layout visualizer and file-content inspector for every metadata and data file.</p>
     </section>
 
     <!-- ===== GLOSSARY ===== -->
