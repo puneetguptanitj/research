@@ -315,7 +315,7 @@
   <h1>Data Platform <span>Deep-Dives</span></h1>
   <p class="hero-sub">Architecture-first research on the modern data + AI stack. Accurate, high-signal, no marketing fluff.</p>
   <div class="hero-stats">
-    <div><strong id="article-count">2</strong>Articles</div>
+    <div><strong id="article-count">3</strong>Articles</div>
     <div><strong id="word-count">~10k</strong>Words</div>
     <div><strong>7</strong>Sections each</div>
     <div><strong>5+</strong>Diagrams each</div>
@@ -346,6 +346,16 @@
   <div class="layer-map">
     <h3>Platform stack — covered articles highlighted</h3>
     <div class="stack">
+      <div class="stack-row has-article" onclick="document.getElementById('article-oauth2-jwt').scrollIntoView({behavior:'smooth'})">
+        <span class="stack-label">L8</span>
+        <span class="stack-name">Identity / Auth</span>
+        <div class="stack-items">
+          <span class="stack-item covered" style="background:#FAD9DC;color:#6E1626;border-color:#111418"><a href="2026-05-22-oauth2-jwt-diagrams.html">OAuth2 + JWT ✦</a></span>
+          <span class="stack-item" style="background:#FAD9DC;color:#6E1626;border-color:#C8425A">OIDC</span>
+          <span class="stack-item" style="background:#FAD9DC;color:#6E1626;border-color:#C8425A">RBAC / ABAC</span>
+          <span class="stack-item" style="background:#FAD9DC;color:#6E1626;border-color:#C8425A">OPA</span>
+        </div>
+      </div>
       <div class="stack-row">
         <span class="stack-label">L9</span>
         <span class="stack-name">Consumption / Agents</span>
@@ -417,7 +427,7 @@
   <!-- Cards header -->
   <div class="section-header">
     <h2>All articles</h2>
-    <span class="count-badge" id="visible-count">2 articles</span>
+    <span class="count-badge" id="visible-count">3 articles</span>
   </div>
 
   <!-- ── ARTICLE CARDS ── -->
@@ -486,6 +496,41 @@
         </span>
         <a class="read-link" href="2026-05-21-iceberg-rest-catalog-deep-dive.html">
           Read deep-dive
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </div>
+    </article>
+
+    <!-- OAuth2 + JWT -->
+    <article class="card" id="article-oauth2-jwt" data-layer="identity"
+             data-search="oauth2 jwt json web token bearer grant authorization authentication oidc openid connect jwt bearer assertion access token signature claims iss sub aud exp scope">
+      <div class="card-meta">
+        <span class="layer-chip" data-layer="identity">L8 · Identity</span>
+        <span class="mini-tag">OAuth2</span>
+        <span class="mini-tag">JWT</span>
+        <span class="mini-tag">Auth Flows</span>
+        <span class="card-date">2026-05-22</span>
+      </div>
+      <h3><a href="2026-05-22-oauth2-jwt-diagrams.html">OAuth2 + JWT — How They Connect</a></h3>
+      <p class="card-definition">OAuth2 is an authorization framework with pluggable grant types; JWT is a self-contained token format. The JWT Bearer grant wires them together — a client signs a JWT as its credential, posts it to <code>/token</code>, and receives an OAuth2 access token in return. Public key distribution and rotation is handled via the JWKS endpoint.</p>
+      <div class="card-tldr">
+        <strong>The short version:</strong> JWT appears twice — once as the <em>input assertion</em> (signed by the client's private key) and again as the <em>output access token</em> (signed by the auth server). The auth server gets the client's public key via a hosted JWKS endpoint (<code>/.well-known/jwks.json</code>); the <code>kid</code> field in the JWT header tells it which key to use. Unknown <code>kid</code> triggers a re-fetch, enabling zero-downtime key rotation.
+      </div>
+      <div class="card-footer">
+        <div class="card-tags">
+          <span class="mini-tag">JWT Bearer Grant</span>
+          <span class="mini-tag">JWKS</span>
+          <span class="mini-tag">Key Rotation</span>
+          <span class="mini-tag">OIDC</span>
+          <span class="mini-tag">Token Lifecycle</span>
+          <span class="mini-tag">M2M / Service Accounts</span>
+        </div>
+        <span class="card-reading">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          ~10 min
+        </span>
+        <a class="read-link" href="2026-05-22-oauth2-jwt-diagrams.html">
+          View diagrams
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </a>
       </div>
