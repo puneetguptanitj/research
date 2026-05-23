@@ -4,27 +4,43 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Iceberg REST Catalogs — UC · Glue · Apache Polaris · Snowflake Horizon</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg: #F0EEE6; --surface: #E8E4DA; --surface2: #DCD7C9; --surface3: #CFC9B8;
-    --border: #D6D2C5; --accent: #CC785C; --accent2: #7B5C75;
-    --green: #5E7E4F; --red: #A8483C; --yellow: #A8842F;
-    --orange: #C57A3D; --teal: #4A776F;
-    --text: #1F1B17; --muted: #6B6760; --dim: #9A968D;
-    --uc: #6B8FA8; --glue: #C57A3D; --oss-polaris: #6FA098; --horizon: #9F6E7C; --compare: #7B5C75;
-    --serif: 'Source Serif 4', 'Tiempos Headline', Georgia, serif;
-    --sans:  'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --bg: #eceef1;
+    --surface: #ffffff;
+    --surface2: #f6f7f9;
+    --surface3: #eceef1;
+    --border: #e3e6eb;
+    --border-strong: #d5d9e0;
+    --accent: #2f6fb8;
+    --accent-soft: #eef4fb;
+    --accent-dark: #1a4d8f;
+    --accent2: #444b59;
+    --green: #4A9A3C;
+    --red: #C8425A;
+    --yellow: #C99A1E;
+    --orange: #D9772E;
+    --teal: #1F9E8F;
+    --text: #1a1d24;
+    --muted: #6b7280;
+    --dim: #9ca3af;
+    /* catalog-specific colours kept */
+    --uc: #3B73C4;
+    --glue: #D9772E;
+    --oss-polaris: #1F9E8F;
+    --horizon: #7E4FB5;
+    --compare: #444b59;
+    --new-file: #4A9A3C;
+    --deleted-file: #C8425A;
+    --existing-file: #3B73C4;
   }
-  body { background: var(--bg); color: var(--text); font-family: var(--sans); height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
 
   .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
-  .logo { width: 30px; height: 30px; background: linear-gradient(135deg, #CC785C, #A85F47); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
-  .header-title { font-family: var(--serif); font-size: 17px; font-weight: 600; letter-spacing: -0.005em; color: var(--text); }
+  .logo { width: 30px; height: 30px; background: linear-gradient(135deg, #2f6fb8, #1a4d8f); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+  .header-title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 17px; font-weight: 600; letter-spacing: -0.005em; color: var(--text); }
   .header-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
   .catalog-tabs { display: flex; background: var(--surface); border-bottom: 2px solid var(--border); flex-shrink: 0; }
@@ -45,12 +61,12 @@
   .step-item:hover { background: var(--surface2); }
   .step-item.active { background: rgba(204,120,92,0.10); border-left: 2px solid var(--accent); }
   .step-num { width: 20px; height: 20px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--border); font-size: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--muted); margin-top: 1px; }
-  .step-item.active .step-num { background: var(--accent); border-color: var(--accent); color: #FAF8F0; }
+  .step-item.active .step-num { background: var(--accent); border-color: var(--accent); color: #ffffff; }
   .step-title { font-size: 12px; line-height: 1.4; color: var(--muted); }
   .step-item.active .step-title { color: var(--text); font-weight: 600; }
 
   .flow-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--bg); }
-  .flow-hdr { padding: 12px 18px; font-family: var(--serif); font-size: 15px; font-weight: 600; letter-spacing: -0.005em; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .flow-hdr { padding: 12px 18px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
   .flow-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; align-items: flex-start; justify-content: center; }
 
   .mermaid-wrap { width: 100%; max-width: 860px; }
@@ -63,10 +79,10 @@
   .detail-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
 
   .nav-bar { padding: 8px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-shrink: 0; background: var(--surface); }
-  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-family: var(--sans); cursor: pointer; transition: all 0.15s; }
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; cursor: pointer; transition: all 0.15s; }
   .btn:hover { border-color: var(--accent); color: var(--accent); background: var(--surface2); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #FAF8F0; }
-  .btn.primary:hover { background: #B86A4C; border-color: #B86A4C; color: #FAF8F0; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+  .btn.primary:hover { background: #1a4d8f; border-color: #1a4d8f; color: #ffffff; }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .step-info { flex: 1; font-size: 12px; color: var(--muted); text-align: center; }
 
@@ -111,16 +127,49 @@
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 3px; }
+
+  /* ── Deep-dive header bar ── */
+  .dd-header {
+    background: #ffffff;
+    border-bottom: 1px solid #e3e6eb;
+    padding: 14px 28px;
+    flex-shrink: 0;
+  }
+  .dd-header-inner { max-width: 1400px; }
+  .dd-eyebrow {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.09em;
+    text-transform: uppercase; color: #2f6fb8; margin-bottom: 4px;
+  }
+  .dd-eyebrow a { color: #2f6fb8; text-decoration: none; }
+  .dd-eyebrow a:hover { text-decoration: underline; }
+  .dd-title {
+    font-size: 20px; font-weight: 760; letter-spacing: -0.01em;
+    color: #1a1d24; margin: 0 0 4px; line-height: 1.2;
+  }
+  .dd-meta {
+    font-size: 12.5px; color: #6b7280; line-height: 1.4;
+  }
+  .dd-meta a { color: #2f6fb8; text-decoration: none; }
+  .dd-meta a:hover { text-decoration: underline; }
+
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="logo">🧊</div>
-  <div>
-    <div class="header-title">Iceberg REST Catalog — Unity Catalog · Glue · Apache Polaris (OSS) · Snowflake Horizon</div>
-    <div class="header-sub">Auth · Read · Write · RBAC · ABAC · Credential Vending · Engine Support</div>
+<header class="dd-header">
+  <div class="dd-header-inner">
+    <div class="dd-eyebrow">
+      Data Platform · Interactive Tool &nbsp;·&nbsp;
+      <a href="index.html">← All deep-dives</a>
+    </div>
+    <h1 class="dd-title">Iceberg REST Catalog — Implementation Comparison</h1>
+    <div class="dd-meta">
+      Unity Catalog · AWS Glue · Apache Polaris · Snowflake Horizon
+      &nbsp;·&nbsp; Companion to the
+      <a href="2026-05-21-iceberg-rest-catalog-deep-dive.html">IRC deep-dive</a>
+    </div>
   </div>
+</header>
 </div>
 
 <div class="catalog-tabs">
@@ -172,30 +221,30 @@ mermaid.initialize({
   startOnLoad: false,
   theme: 'base',
   themeVariables: {
-    background:            '#F0EEE6',
-    mainBkg:               '#FAF8F0',
-    primaryColor:          '#FAF8F0',
-    primaryBorderColor:    '#CC785C',
-    primaryTextColor:      '#1F1B17',
-    secondaryColor:        '#E8E4DA',
-    tertiaryColor:         '#DCD7C9',
+    background:            '#f6f7f9',
+    mainBkg:               '#ffffff',
+    primaryColor:          '#ffffff',
+    primaryBorderColor:    '#2f6fb8',
+    primaryTextColor:      '#1a1d24',
+    secondaryColor:        '#eef4fb',
+    tertiaryColor:         '#e3e6eb',
     lineColor:             '#7B5C75',
-    edgeLabelBackground:   '#F0EEE6',
-    actorBkg:              '#FAF8F0',
-    actorBorder:           '#CC785C',
-    actorTextColor:        '#1F1B17',
-    actorLineColor:        '#9A968D',
+    edgeLabelBackground:   '#f6f7f9',
+    actorBkg:              '#ffffff',
+    actorBorder:           '#2f6fb8',
+    actorTextColor:        '#1a1d24',
+    actorLineColor:        '#9ca3af',
     signalColor:           '#7B5C75',
-    signalTextColor:       '#1F1B17',
-    labelBoxBkgColor:      '#E8E4DA',
-    labelBoxBorderColor:   '#D6D2C5',
-    labelTextColor:        '#1F1B17',
+    signalTextColor:       '#1a1d24',
+    labelBoxBkgColor:      '#eef4fb',
+    labelBoxBorderColor:   '#e3e6eb',
+    labelTextColor:        '#1a1d24',
     loopTextColor:         '#A8842F',
     noteBorderColor:       '#A8842F',
-    noteBkgColor:          '#F5EFD8',
-    noteTextColor:         '#1F1B17',
-    activationBorderColor: '#CC785C',
-    activationBkgColor:    '#E8E4DA',
+    noteBkgColor:          '#fefce8',
+    noteTextColor:         '#1a1d24',
+    activationBorderColor: '#2f6fb8',
+    activationBkgColor:    '#eef4fb',
     fontFamily:            "'Inter', system-ui, sans-serif",
     fontSize:              '13px'
   },

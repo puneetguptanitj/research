@@ -4,34 +4,50 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Apache Iceberg — Operations & Disk Layout</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg: #F0EEE6; --surface: #E8E4DA; --surface2: #DCD7C9;
-    --border: #D6D2C5; --accent: #CC785C; --accent2: #7B5C75;
-    --green: #5E7E4F; --red: #A8483C; --yellow: #A8842F;
-    --orange: #C57A3D; --teal: #4A776F; --pink: #9F6E7C;
-    --text: #1F1B17; --muted: #6B6760; --dim: #9A968D;
-    --new-file: #5E7E4F; --deleted-file: #A8483C; --existing-file: #6B8FA8;
-    --serif: 'Source Serif 4', 'Tiempos Headline', Georgia, serif;
-    --sans:  'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --bg: #eceef1;
+    --surface: #ffffff;
+    --surface2: #f6f7f9;
+    --surface3: #eceef1;
+    --border: #e3e6eb;
+    --border-strong: #d5d9e0;
+    --accent: #2f6fb8;
+    --accent-soft: #eef4fb;
+    --accent-dark: #1a4d8f;
+    --accent2: #444b59;
+    --green: #4A9A3C;
+    --red: #C8425A;
+    --yellow: #C99A1E;
+    --orange: #D9772E;
+    --teal: #1F9E8F;
+    --text: #1a1d24;
+    --muted: #6b7280;
+    --dim: #9ca3af;
+    /* catalog-specific colours kept */
+    --uc: #3B73C4;
+    --glue: #D9772E;
+    --oss-polaris: #1F9E8F;
+    --horizon: #7E4FB5;
+    --compare: #444b59;
+    --new-file: #4A9A3C;
+    --deleted-file: #C8425A;
+    --existing-file: #3B73C4;
   }
-  body { background: var(--bg); color: var(--text); font-family: var(--sans); height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
 
   /* Header */
   .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
-  .header h1 { font-family: var(--serif); font-size: 17px; font-weight: 600; letter-spacing: -0.005em; color: var(--text); }
+  .header h1 { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 17px; font-weight: 600; letter-spacing: -0.005em; color: var(--text); }
   .header .subtitle { font-size: 12px; color: var(--muted); }
-  .iceberg-logo { width: 28px; height: 28px; background: linear-gradient(135deg, #CC785C, #A85F47); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+  .iceberg-logo { width: 28px; height: 28px; background: linear-gradient(135deg, #2f6fb8, #1a4d8f); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
 
   /* Op tabs */
   .op-tabs { display: flex; gap: 4px; background: var(--surface); padding: 10px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; overflow-x: auto; }
-  .op-tab { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: all 0.15s; font-family: var(--sans); }
+  .op-tab { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: all 0.15s; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
   .op-tab:hover { color: var(--text); border-color: var(--accent); background: var(--surface2); }
-  .op-tab.active { background: var(--accent); color: #FAF8F0; border-color: var(--accent); }
+  .op-tab.active { background: var(--accent); color: #ffffff; border-color: var(--accent); }
 
   /* Main layout */
   .main { display: flex; flex: 1; overflow: hidden; }
@@ -43,8 +59,8 @@
   .step-item:hover { background: var(--surface2); }
   .step-item.active { background: rgba(204,120,92,0.12); border-left: 2px solid var(--accent); }
   .step-num { width: 20px; height: 20px; border-radius: 50%; background: var(--bg); border: 1px solid var(--border); font-size: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--muted); margin-top: 1px; }
-  .step-item.done .step-num { background: var(--green); border-color: var(--green); color: #FAF8F0; }
-  .step-item.active .step-num { background: var(--accent); border-color: var(--accent); color: #FAF8F0; }
+  .step-item.done .step-num { background: var(--green); border-color: var(--green); color: #ffffff; }
+  .step-item.active .step-num { background: var(--accent); border-color: var(--accent); color: #ffffff; }
   .step-title { font-size: 12px; line-height: 1.4; color: var(--muted); }
   .step-item.active .step-title { color: var(--text); }
 
@@ -100,10 +116,10 @@
 
   /* Nav buttons */
   .nav-bar { padding: 10px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-shrink: 0; background: var(--surface); }
-  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-family: var(--sans); cursor: pointer; transition: all 0.15s; }
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; cursor: pointer; transition: all 0.15s; }
   .btn:hover { background: var(--surface2); border-color: var(--accent); color: var(--accent); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #FAF8F0; }
-  .btn.primary:hover { background: #B86A4C; border-color: #B86A4C; color: #FAF8F0; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+  .btn.primary:hover { background: #1a4d8f; border-color: #1a4d8f; color: #ffffff; }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .step-info { flex: 1; font-size: 12px; color: var(--muted); text-align: center; }
 
@@ -157,16 +173,49 @@
   .chain-h-label { font-size: 9px; color: var(--green); white-space: nowrap; margin-top: 2px; }
   .chain-section { margin-bottom: 6px; }
   .chain-section-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.07em; }
+
+  /* ── Deep-dive header bar ── */
+  .dd-header {
+    background: #ffffff;
+    border-bottom: 1px solid #e3e6eb;
+    padding: 14px 28px;
+    flex-shrink: 0;
+  }
+  .dd-header-inner { max-width: 1400px; }
+  .dd-eyebrow {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.09em;
+    text-transform: uppercase; color: #2f6fb8; margin-bottom: 4px;
+  }
+  .dd-eyebrow a { color: #2f6fb8; text-decoration: none; }
+  .dd-eyebrow a:hover { text-decoration: underline; }
+  .dd-title {
+    font-size: 20px; font-weight: 760; letter-spacing: -0.01em;
+    color: #1a1d24; margin: 0 0 4px; line-height: 1.2;
+  }
+  .dd-meta {
+    font-size: 12.5px; color: #6b7280; line-height: 1.4;
+  }
+  .dd-meta a { color: #2f6fb8; text-decoration: none; }
+  .dd-meta a:hover { text-decoration: underline; }
+
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="iceberg-logo">🧊</div>
-  <div>
-    <div class="header h1">Apache Iceberg — Operations & Disk Layout</div>
-    <div class="subtitle">Click a file in the tree to see its content • Navigate steps with buttons below</div>
+<header class="dd-header">
+  <div class="dd-header-inner">
+    <div class="dd-eyebrow">
+      Data Platform · Interactive Tool &nbsp;·&nbsp;
+      <a href="index.html">← All deep-dives</a>
+    </div>
+    <h1 class="dd-title">Apache Iceberg — Operations &amp; Disk Layout</h1>
+    <div class="dd-meta">
+      Step through Create · Append · Query · Update · Delete · Compaction
+      &nbsp;·&nbsp; Companion to the
+      <a href="2026-05-23-apache-iceberg-deep-dive.html">Iceberg deep-dive</a>
+    </div>
   </div>
+</header>
 </div>
 
 <div class="op-tabs" id="opTabs"></div>
