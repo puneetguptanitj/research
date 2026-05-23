@@ -6,41 +6,93 @@
   <title>OAuth2 + JWT Diagrams</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js"></script>
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
+      background: #eceef1;
+      color: #1a1d24;
       margin: 0;
-      padding: 32px;
+      padding: 0;
     }
-    h1 {
-      font-size: 1.5rem;
+
+    /* ── Deep-dive header ── */
+    .dd-header {
+      background: #ffffff;
+      border-bottom: 1px solid #e3e6eb;
+      padding: 14px 28px;
+    }
+    .dd-header-inner {
+      max-width: 980px;
+    }
+    .dd-eyebrow {
+      font-size: 11px;
       font-weight: 700;
-      color: #f8fafc;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: #2f6fb8;
       margin-bottom: 4px;
     }
-    .subtitle {
-      color: #94a3b8;
-      font-size: 0.9rem;
-      margin-bottom: 40px;
+    .dd-eyebrow a {
+      color: #2f6fb8;
+      text-decoration: none;
     }
+    .dd-title {
+      font-size: 20px;
+      font-weight: 760;
+      letter-spacing: -0.01em;
+      color: #1a1d24;
+      margin: 0 0 4px;
+      line-height: 1.2;
+    }
+    .dd-meta {
+      font-size: 12.5px;
+      color: #6b7280;
+      line-height: 1.4;
+    }
+    .dd-meta a {
+      color: #2f6fb8;
+      text-decoration: none;
+    }
+
+    /* ── Page content ── */
+    .page-body {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 32px 28px 64px;
+    }
+
     .diagram-block {
-      background: #1e2130;
-      border: 1px solid #2d3450;
-      border-radius: 12px;
-      padding: 28px 32px;
-      margin-bottom: 32px;
+      background: #ffffff;
+      border: 1px solid #e3e6eb;
+      border-radius: 9px;
+      padding: 24px 28px;
+      margin-bottom: 24px;
     }
     .diagram-block h2 {
-      font-size: 1.05rem;
-      font-weight: 600;
-      color: #a5b4fc;
+      font-size: 1rem;
+      font-weight: 650;
+      color: #2f6fb8;
       margin: 0 0 6px 0;
     }
     .diagram-block p {
       font-size: 0.85rem;
-      color: #94a3b8;
+      color: #6b7280;
       margin: 0 0 20px 0;
+      line-height: 1.5;
+    }
+    .diagram-block p em {
+      font-style: italic;
+      color: #374151;
+    }
+    .diagram-block p code {
+      font-family: "SF Mono", "Fira Code", Consolas, monospace;
+      font-size: 0.82em;
+      background: #f0f2f5;
+      border: 1px solid #d1d5db;
+      border-radius: 3px;
+      padding: 1px 5px;
+      color: #1a1d24;
     }
     .mermaid {
       display: flex;
@@ -50,14 +102,26 @@
 </head>
 <body>
 
-  <h1>OAuth2 + JWT — How They Connect</h1>
-  <p class="subtitle">Eight diagrams covering grant types, token flows, JWKS key distribution, and key rotation</p>
+  <header class="dd-header">
+    <div class="dd-header-inner">
+      <div class="dd-eyebrow">
+        Data Platform · Reference Diagrams &nbsp;·&nbsp;
+        <a href="index.html">← All deep-dives</a>
+      </div>
+      <h1 class="dd-title">OAuth2 + JWT — How They Connect</h1>
+      <div class="dd-meta">
+        Eight diagrams covering grant types, token flows, JWKS key distribution, and key rotation
+      </div>
+    </div>
+  </header>
 
-  <!-- Diagram 1: OAuth2 Grant Types -->
-  <div class="diagram-block">
-    <h2>1. OAuth2 Grant Types — Where JWT Bearer Fits</h2>
-    <p>OAuth2 is a framework with pluggable grant types. JWT Bearer is just one of them.</p>
-    <div class="mermaid">
+  <div class="page-body">
+
+    <!-- Diagram 1: OAuth2 Grant Types -->
+    <div class="diagram-block">
+      <h2>1. OAuth2 Grant Types — Where JWT Bearer Fits</h2>
+      <p>OAuth2 is a framework with pluggable grant types. JWT Bearer is just one of them.</p>
+      <div class="mermaid">
 flowchart TD
     A["POST /token"] --> B{grant_type?}
     B --> C["authorization_code\n(browser redirect flow)"]
@@ -68,17 +132,17 @@ flowchart TD
     F --> G["Auth server verifies\nJWT signature"]
     G --> H["Issues OAuth2\nAccess Token"]
 
-    style F fill:#4f46e5,color:#fff,stroke:#6366f1
-    style G fill:#1e2130,color:#a5b4fc,stroke:#4f46e5
-    style H fill:#065f46,color:#6ee7b7,stroke:#10b981
+    style F fill:#2f6fb8,color:#fff,stroke:#1a4d8f
+    style G fill:#dce8fb,color:#1a1d24,stroke:#2f6fb8
+    style H fill:#d1fae5,color:#065f46,stroke:#10b981
+      </div>
     </div>
-  </div>
 
-  <!-- Diagram 2: JWT Bearer Grant — Full Sequence -->
-  <div class="diagram-block">
-    <h2>2. JWT Bearer Grant — Full Sequence Flow</h2>
-    <p>Step-by-step: how the client proves identity and gets an access token.</p>
-    <div class="mermaid">
+    <!-- Diagram 2: JWT Bearer Grant — Full Sequence -->
+    <div class="diagram-block">
+      <h2>2. JWT Bearer Grant — Full Sequence Flow</h2>
+      <p>Step-by-step: how the client proves identity and gets an access token.</p>
+      <div class="mermaid">
 sequenceDiagram
     participant C as Client
     participant AS as Auth Server
@@ -103,14 +167,14 @@ sequenceDiagram
 
     C->>API: GET /data<br/>Authorization: Bearer &lt;access_token&gt;
     API-->>C: 200 OK — protected data
+      </div>
     </div>
-  </div>
 
-  <!-- Diagram 3: JWT Appears Twice -->
-  <div class="diagram-block">
-    <h2>3. JWT Appears Twice — The Common Confusion</h2>
-    <p>JWT is used as the <em>input credential</em> AND often as the <em>output access token</em> format — two different JWTs.</p>
-    <div class="mermaid">
+    <!-- Diagram 3: JWT Appears Twice -->
+    <div class="diagram-block">
+      <h2>3. JWT Appears Twice — The Common Confusion</h2>
+      <p>JWT is used as the <em>input credential</em> AND often as the <em>output access token</em> format — two different JWTs.</p>
+      <div class="mermaid">
 flowchart LR
     subgraph INPUT ["INPUT — JWT as Credential (Assertion)"]
         direction TB
@@ -132,19 +196,19 @@ flowchart LR
 
     INPUT --> AS --> OUTPUT
 
-    style INPUT fill:#1e1b4b,stroke:#4f46e5,color:#c7d2fe
-    style AS fill:#1e2130,stroke:#334155,color:#94a3b8
-    style OUTPUT fill:#064e3b,stroke:#10b981,color:#6ee7b7
-    style J1 fill:#312e81,color:#e0e7ff,stroke:#4f46e5
-    style J2 fill:#065f46,color:#d1fae5,stroke:#10b981
+    style INPUT fill:#dce8fb,stroke:#2f6fb8,color:#1a1d24
+    style AS fill:#f6f7f9,stroke:#9ca3af,color:#374151
+    style OUTPUT fill:#d1fae5,stroke:#10b981,color:#065f46
+    style J1 fill:#bfdbfe,color:#1e3a8a,stroke:#2f6fb8
+    style J2 fill:#a7f3d0,color:#065f46,stroke:#10b981
+      </div>
     </div>
-  </div>
 
-  <!-- Diagram 4: Key Concept Summary -->
-  <div class="diagram-block">
-    <h2>4. Mental Model — Separation of Concerns</h2>
-    <p>OAuth2 is the protocol, JWT is the format. They operate at different layers.</p>
-    <div class="mermaid">
+    <!-- Diagram 4: Key Concept Summary -->
+    <div class="diagram-block">
+      <h2>4. Mental Model — Separation of Concerns</h2>
+      <p>OAuth2 is the protocol, JWT is the format. They operate at different layers.</p>
+      <div class="mermaid">
 flowchart TD
     subgraph Protocol["OAuth2 — The Protocol Layer"]
         P1["Defines flows: who talks to whom, when"]
@@ -167,17 +231,17 @@ flowchart TD
     Protocol -->|"extended by"| OIDC
     OIDC -->|"ID token is\nalways a"| Format
 
-    style Protocol fill:#1e1b4b,stroke:#4f46e5,color:#c7d2fe
-    style Format fill:#064e3b,stroke:#10b981,color:#a7f3d0
-    style OIDC fill:#1c1917,stroke:#d97706,color:#fde68a
+    style Protocol fill:#dce8fb,stroke:#2f6fb8,color:#1a1d24
+    style Format fill:#d1fae5,stroke:#10b981,color:#065f46
+    style OIDC fill:#fef3c7,stroke:#d97706,color:#78350f
+      </div>
     </div>
-  </div>
 
-  <!-- Diagram 5: JWKS Registration Patterns -->
-  <div class="diagram-block">
-    <h2>5. How the Auth Server Gets the Public Key — Two Registration Patterns</h2>
-    <p>At registration time the client hands over its public key via static upload or a JWKS URI it hosts.</p>
-    <div class="mermaid">
+    <!-- Diagram 5: JWKS Registration Patterns -->
+    <div class="diagram-block">
+      <h2>5. How the Auth Server Gets the Public Key — Two Registration Patterns</h2>
+      <p>At registration time the client hands over its public key via static upload or a JWKS URI it hosts.</p>
+      <div class="mermaid">
 flowchart TD
     subgraph PatternA ["Pattern A — Static Upload"]
         direction TB
@@ -200,17 +264,17 @@ flowchart TD
     PatternB -->|"Key rotation\nis automatic via endpoint"| TRADEOFF
     TRADEOFF["At verify time:\nAuth Server has the public key"]
 
-    style PatternA fill:#1e1b4b,stroke:#4f46e5,color:#c7d2fe
-    style PatternB fill:#064e3b,stroke:#10b981,color:#a7f3d0
-    style TRADEOFF fill:#1e2130,stroke:#d97706,color:#fde68a
+    style PatternA fill:#dce8fb,stroke:#2f6fb8,color:#1a1d24
+    style PatternB fill:#d1fae5,stroke:#10b981,color:#065f46
+    style TRADEOFF fill:#fef3c7,stroke:#d97706,color:#78350f
+      </div>
     </div>
-  </div>
 
-  <!-- Diagram 6: JWKS Endpoint Structure -->
-  <div class="diagram-block">
-    <h2>6. JWKS Endpoint — What's Inside</h2>
-    <p>The JWKS endpoint returns a JSON array of public keys. The <code>kid</code> field links each key to JWTs that reference it in their header.</p>
-    <div class="mermaid">
+    <!-- Diagram 6: JWKS Endpoint Structure -->
+    <div class="diagram-block">
+      <h2>6. JWKS Endpoint — What's Inside</h2>
+      <p>The JWKS endpoint returns a JSON array of public keys. The <code>kid</code> field links each key to JWTs that reference it in their header.</p>
+      <div class="mermaid">
 flowchart LR
     subgraph JWT_HDR ["JWT Header (in assertion)"]
         H1["alg: RS256\nkid: key-id-1"]
@@ -230,23 +294,23 @@ flowchart LR
     JWT_HDR -->|"kid lookup"| JWKS
     JWKS -->|"matched key"| VERIFY
 
-    style JWT_HDR fill:#1e1b4b,stroke:#4f46e5,color:#c7d2fe
-    style JWKS fill:#1c1917,stroke:#d97706,color:#fde68a
-    style VERIFY fill:#064e3b,stroke:#10b981,color:#a7f3d0
-    style K1 fill:#292524,stroke:#d97706,color:#fde68a
-    style K2 fill:#1c1917,stroke:#78716c,color:#a8a29e
+    style JWT_HDR fill:#dce8fb,stroke:#2f6fb8,color:#1a1d24
+    style JWKS fill:#fef3c7,stroke:#d97706,color:#78350f
+    style VERIFY fill:#d1fae5,stroke:#10b981,color:#065f46
+    style K1 fill:#fde68a,stroke:#d97706,color:#78350f
+    style K2 fill:#fef9c3,stroke:#ca8a04,color:#78350f
+      </div>
     </div>
-  </div>
 
-  <!-- Diagram 7: Key Rotation with JWKS URI -->
-  <div class="diagram-block">
-    <h2>7. Zero-Downtime Key Rotation via JWKS URI</h2>
-    <p>When the auth server sees an unknown <code>kid</code>, it re-fetches the JWKS endpoint to pick up new keys — no re-registration needed.</p>
-    <div class="mermaid">
+    <!-- Diagram 7: Key Rotation with JWKS URI -->
+    <div class="diagram-block">
+      <h2>7. Zero-Downtime Key Rotation via JWKS URI</h2>
+      <p>When the auth server sees an unknown <code>kid</code>, it re-fetches the JWKS endpoint to pick up new keys — no re-registration needed.</p>
+      <div class="mermaid">
 sequenceDiagram
     participant C as Client
     participant AS as Auth Server
-    participant JWKS as Client's JWKS Endpoint
+    participant JWKS as JWKS Endpoint
 
     Note over C: Rotates to new key pair.<br/>Updates JWKS endpoint<br/>with new kid: key-id-2.<br/>Old kid: key-id-1 still present.
 
@@ -258,26 +322,26 @@ sequenceDiagram
     JWKS-->>AS: { keys: [ key-id-1, key-id-2 ] }
 
     AS->>AS: Cache new keys
-    AS->>AS: Verify JWT signature\nusing key-id-2
+    AS->>AS: Verify JWT signature<br/>using key-id-2
 
     AS-->>C: 200 OK — access token issued
 
     Note over AS,JWKS: Old key-id-1 stays in JWKS<br/>until in-flight tokens signed<br/>with it have expired.
+      </div>
     </div>
-  </div>
 
-  <!-- Diagram 8: Full End-to-End with JWKS -->
-  <div class="diagram-block">
-    <h2>8. Full Picture — Registration + JWKS + JWT Bearer + API Call</h2>
-    <p>Everything together: key registration, assertion, JWKS verification, token issuance, and API access.</p>
-    <div class="mermaid">
+    <!-- Diagram 8: Full End-to-End with JWKS -->
+    <div class="diagram-block">
+      <h2>8. Full Picture — Registration + JWKS + JWT Bearer + API Call</h2>
+      <p>Everything together: key registration, assertion, JWKS verification, token issuance, and API access.</p>
+      <div class="mermaid">
 sequenceDiagram
     participant C as Client
     participant AS as Auth Server
     participant JWKS as JWKS Endpoint
     participant API as Resource API
 
-    rect rgb(30, 27, 75)
+    rect rgb(220, 232, 251)
         Note over C,AS: ── Registration (one-time) ──
         C->>AS: Register client_id + JWKS URI
         AS->>JWKS: Fetch /.well-known/jwks.json
@@ -285,7 +349,7 @@ sequenceDiagram
         AS->>AS: Store client_id → public keys
     end
 
-    rect rgb(6, 78, 59)
+    rect rgb(209, 250, 229)
         Note over C,AS: ── Token Request ──
         C->>C: Build JWT { iss, sub, aud, exp }<br/>Sign with private key → kid: key-id-1
         C->>AS: POST /token<br/>grant_type=jwt_bearer<br/>assertion=&lt;signed JWT&gt;
@@ -294,48 +358,50 @@ sequenceDiagram
         AS-->>C: { access_token, expires_in }
     end
 
-    rect rgb(28, 25, 23)
+    rect rgb(254, 243, 199)
         Note over C,API: ── API Access ──
         C->>API: GET /resource<br/>Authorization: Bearer &lt;access_token&gt;
-        API->>API: Verify access_token\n(also a JWT, signed by AS)
+        API->>API: Verify access_token<br/>(also a JWT, signed by AS)
         API-->>C: 200 OK — protected data
     end
+      </div>
     </div>
-  </div>
+
+  </div><!-- /.page-body -->
 
   <script>
     mermaid.initialize({
       startOnLoad: true,
-      theme: 'dark',
+      theme: 'default',
       themeVariables: {
-        primaryColor: '#4f46e5',
-        primaryTextColor: '#e2e8f0',
-        primaryBorderColor: '#6366f1',
-        lineColor: '#64748b',
-        secondaryColor: '#1e2130',
-        tertiaryColor: '#0f1117',
-        background: '#0f1117',
-        mainBkg: '#1e2130',
-        nodeBorder: '#334155',
-        clusterBkg: '#1e2130',
-        titleColor: '#f8fafc',
-        edgeLabelBackground: '#1e2130',
-        actorBkg: '#1e2130',
-        actorBorder: '#4f46e5',
-        actorTextColor: '#e2e8f0',
-        actorLineColor: '#4f46e5',
-        signalColor: '#94a3b8',
-        signalTextColor: '#e2e8f0',
-        labelBoxBkgColor: '#1e2130',
-        labelBoxBorderColor: '#4f46e5',
-        labelTextColor: '#e2e8f0',
-        loopTextColor: '#e2e8f0',
+        primaryColor: '#dce8fb',
+        primaryTextColor: '#1a1d24',
+        primaryBorderColor: '#2f6fb8',
+        lineColor: '#6b7280',
+        secondaryColor: '#f6f7f9',
+        tertiaryColor: '#fef3c7',
+        background: '#ffffff',
+        mainBkg: '#f6f7f9',
+        nodeBorder: '#d1d5db',
+        clusterBkg: '#f6f7f9',
+        titleColor: '#1a1d24',
+        edgeLabelBackground: '#ffffff',
+        actorBkg: '#dce8fb',
+        actorBorder: '#2f6fb8',
+        actorTextColor: '#1a1d24',
+        actorLineColor: '#6b7280',
+        signalColor: '#374151',
+        signalTextColor: '#1a1d24',
+        labelBoxBkgColor: '#f6f7f9',
+        labelBoxBorderColor: '#2f6fb8',
+        labelTextColor: '#1a1d24',
+        loopTextColor: '#1a1d24',
         noteBorderColor: '#d97706',
-        noteBkgColor: '#1c1917',
-        noteTextColor: '#fde68a',
+        noteBkgColor: '#fef3c7',
+        noteTextColor: '#78350f',
         activationBorderColor: '#10b981',
-        activationBkgColor: '#064e3b',
-        sequenceNumberColor: '#e2e8f0'
+        activationBkgColor: '#d1fae5',
+        sequenceNumberColor: '#1a1d24'
       }
     });
   </script>
