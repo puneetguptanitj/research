@@ -315,8 +315,8 @@
   <h1>Data Platform <span>Deep-Dives</span></h1>
   <p class="hero-sub">Architecture-first research on the modern data + AI stack. Accurate, high-signal, no marketing fluff.</p>
   <div class="hero-stats">
-    <div><strong id="article-count">3</strong>Articles</div>
-    <div><strong id="word-count">~10k</strong>Words</div>
+    <div><strong id="article-count">4</strong>Articles</div>
+    <div><strong id="word-count">~17k</strong>Words</div>
     <div><strong>7</strong>Sections each</div>
     <div><strong>5+</strong>Diagrams each</div>
   </div>
@@ -403,11 +403,11 @@
           <span class="stack-item" style="background:#EADDF7;color:#432068;border-color:#7E4FB5">Nessie</span>
         </div>
       </div>
-      <div class="stack-row">
+      <div class="stack-row has-article" onclick="document.getElementById('article-iceberg').scrollIntoView({behavior:'smooth'})">
         <span class="stack-label">L2</span>
         <span class="stack-name">Table formats</span>
         <div class="stack-items">
-          <span class="stack-item" style="background:#DCE8FB;color:#1E3A6B;border-color:#3B73C4">Apache Iceberg</span>
+          <span class="stack-item covered" style="background:#DCE8FB;color:#1E3A6B;border-color:#111418"><a href="2026-05-23-apache-iceberg-deep-dive.html">Apache Iceberg ✦</a></span>
           <span class="stack-item" style="background:#DCE8FB;color:#1E3A6B;border-color:#3B73C4">Delta Lake</span>
           <span class="stack-item" style="background:#DCE8FB;color:#1E3A6B;border-color:#3B73C4">Apache Hudi</span>
         </div>
@@ -464,6 +464,46 @@
           Read deep-dive
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </a>
+      </div>
+    </article>
+
+    <!-- Apache Iceberg -->
+    <article class="card" id="article-iceberg" data-layer="table"
+             data-search="apache iceberg table format metadata tree manifest list snapshot parquet avro puffin commit cas compare-and-swap occ optimistic concurrency cow copy-on-write mor merge-on-read deletion vector v3 schema evolution partition evolution hidden partitioning time travel acid snapshot isolation credential vending irc catalog trino spark flink duckdb">
+      <div class="card-meta">
+        <span class="layer-chip" data-layer="table">L2 · Table format</span>
+        <span class="mini-tag">Open Spec</span>
+        <span class="mini-tag">ACID</span>
+        <span class="mini-tag">v3</span>
+        <span class="card-date">2026-05-23</span>
+      </div>
+      <h3><a href="2026-05-23-apache-iceberg-deep-dive.html">Apache Iceberg: Open Table Format</a></h3>
+      <p class="card-definition">A vendor-neutral open specification that layers a tree of immutable metadata files over columnar data files on object storage — giving any engine that reads that metadata tree ACID transactions, serializable snapshot isolation, time travel, and schema and partition evolution without touching the data.</p>
+      <div class="card-tldr">
+        <strong>The short version:</strong> Iceberg's insight is that a catalog only needs to store a single pointer to a current metadata file; everything else — schema history, snapshots, file statistics — lives in an immutable tree on object storage. An atomic CAS on that pointer is all it takes for ACID. Any engine that can walk the tree is a first-class citizen. v3 (2025) adds deletion vectors (Roaring bitmaps in Puffin files), materially closing the MOR performance gap with Delta Lake.
+      </div>
+      <div class="card-footer">
+        <div class="card-tags">
+          <span class="mini-tag">Metadata Tree</span>
+          <span class="mini-tag">CAS / OCC</span>
+          <span class="mini-tag">COW + MOR</span>
+          <span class="mini-tag">Deletion Vectors</span>
+          <span class="mini-tag">Partition Evolution</span>
+        </div>
+        <span class="card-reading">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          ~29 min
+        </span>
+        <a class="read-link" href="2026-05-23-apache-iceberg-deep-dive.html">
+          Read deep-dive
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule);display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-faint);">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        Interactive tool:
+        <a href="iceberg-operations.html" style="font-weight:600;">Operations &amp; Disk Layout</a>
+        — step-by-step disk layout visualizer for all 6 operations
       </div>
     </article>
 

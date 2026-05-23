@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Apache Iceberg — Deep Dive</title>
+<style>
+  :root{
+    --bg:#eceef1; --surface:#ffffff;
+    --ink:#1a1d24; --ink-soft:#444b59; --ink-faint:#6b7280;
+    --rule:#e3e6eb; --rule-strong:#d5d9e0;
+    --accent:#2f6fb8; --accent-soft:#eef4fb;
+    --code-bg:#f4f5f7;
+    --l-storage:#8A94A6;  --l-storage-bg:#E8EBF0;
+    --l-table:#3B73C4;    --l-table-bg:#DCE8FB;
+    --l-catalog:#7E4FB5;  --l-catalog-bg:#EADDF7;
+    --l-compute:#1F9E8F;  --l-compute-bg:#D6F0EE;
+    --l-oper:#D9772E;     --l-oper-bg:#FCE4D4;
+    --l-semantic:#C99A1E; --l-semantic-bg:#FBF0CF;
+    --l-gov:#4A9A3C;      --l-gov-bg:#DEEFD9;
+    --l-identity:#C8425A; --l-identity-bg:#FAD9DC;
+    --l-consume:#5256C8;  --l-consume-bg:#DEE0FA;
+    --warn:#C8425A; --warn-bg:#FBE9EC;
+    --amber:#b8860b; --amber-bg:#FBF4DC;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16.5px; line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  code{
+    font-family:"SF Mono",SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;
+    font-size:0.86em; background:var(--code-bg); padding:0.12em 0.38em;
+    border-radius:4px; color:#9a3b66;
+  }
+  pre code{display:block; padding:14px 18px; border-radius:6px; border:1px solid var(--rule-strong);
+           font-size:13px; line-height:1.6; overflow-x:auto; color:var(--ink-soft);}
+  .wrap{max-width:var(--wrap-max,1180px); margin:0 auto; padding:0 24px;
+        display:flex; gap:36px; align-items:flex-start; transition:max-width 0.25s ease;}
+  /* width control pill */
+  .wc{position:fixed; bottom:22px; right:22px; z-index:999;
+      display:flex; align-items:center; gap:2px;
+      background:#1a1d24; border-radius:99px;
+      padding:5px 7px; box-shadow:0 4px 18px rgba(0,0,0,0.28); user-select:none;}
+  .wc-label{font-size:10px;font-weight:700;letter-spacing:0.08em;
+            text-transform:uppercase;color:#6b7280;padding:0 6px 0 4px;}
+  .wc button{border:none; background:transparent; color:#9ca3af;
+    font-size:11.5px; font-weight:600; padding:4px 10px; border-radius:99px;
+    cursor:pointer; font-family:inherit; transition:background 0.13s,color 0.13s; white-space:nowrap;}
+  .wc button:hover{background:#2d3240;color:#e5e7eb;}
+  .wc button.wc-active{background:#2f6fb8;color:#fff;}
+  .wc-sep{width:1px;height:16px;background:#2d3240;margin:0 2px;}
+  .toc{position:sticky; top:0; width:248px; flex:0 0 248px;
+    max-height:100vh; overflow-y:auto; padding:28px 0 40px;}
+  .doc{flex:1 1 auto; min-width:0; background:var(--surface);
+    margin:24px 0 64px; padding:52px 60px 64px;
+    border:1px solid var(--rule); border-radius:10px;}
+  .toc-title{font-size:11px; font-weight:700; letter-spacing:0.09em;
+             text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px 12px;}
+  .toc ol{list-style:none; margin:0; padding:0; counter-reset:toc;}
+  .toc li{margin:0;}
+  .toc a{display:block; padding:5px 12px; border-left:2px solid var(--rule);
+    color:var(--ink-soft); font-size:13.5px; line-height:1.4;}
+  .toc a:hover{color:var(--ink); border-left-color:var(--rule-strong); text-decoration:none;}
+  .toc a.active{color:var(--accent); border-left-color:var(--accent); font-weight:600;}
+  .toc a .n{color:var(--ink-faint); font-variant-numeric:tabular-nums; margin-right:7px;}
+  .toc a.active .n{color:var(--accent);}
+  .eyebrow{font-size:12px; font-weight:700; letter-spacing:0.1em;
+           text-transform:uppercase; color:var(--accent);}
+  h1{font-size:33px; line-height:1.22; margin:10px 0 6px; letter-spacing:-0.01em;}
+  .definition{font-size:18px; color:var(--ink-soft); margin:0 0 18px; max-width:62ch;}
+  .meta{display:flex; flex-wrap:wrap; gap:8px 18px; font-size:13px;
+        color:var(--ink-faint); border-top:1px solid var(--rule);
+        border-bottom:1px solid var(--rule); padding:11px 0; margin-bottom:34px;}
+  .meta b{color:var(--ink-soft); font-weight:600;}
+  section{margin:0 0 14px; padding-top:14px;}
+  h2{font-size:22px; margin:38px 0 14px; padding-bottom:7px;
+     border-bottom:2px solid var(--rule); letter-spacing:-0.01em;}
+  h2 .num{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:10px;}
+  h3{font-size:16.5px; margin:26px 0 8px; color:var(--ink);}
+  p{margin:0 0 14px;}
+  ul,ol{margin:0 0 14px; padding-left:22px;}
+  li{margin:4px 0;}
+  strong{font-weight:660;}
+  .tldr{background:var(--accent-soft); border:1px solid #cfe0f1;
+    border-radius:9px; padding:20px 24px; margin:6px 0 10px;}
+  .tldr h2{border:0; margin:0 0 8px; font-size:16px; color:var(--accent);
+           text-transform:uppercase; letter-spacing:0.06em;}
+  .tldr p{margin:0 0 10px;}
+  .tldr .takeaways{margin:0; padding-left:20px;}
+  .tldr .takeaways li{margin:6px 0;}
+  .callout{border-radius:8px; padding:13px 17px; margin:18px 0;
+           font-size:15px; border:1px solid;}
+  .callout .tag{display:block; font-size:11px; font-weight:700;
+                letter-spacing:0.07em; text-transform:uppercase; margin-bottom:3px;}
+  .callout p:last-child{margin-bottom:0;}
+  .callout.key{background:var(--accent-soft); border-color:#cfe0f1;}
+  .callout.key .tag{color:var(--accent);}
+  .callout.note{background:#f6f7f9; border-color:var(--rule-strong);}
+  .callout.note .tag{color:var(--ink-faint);}
+  .callout.warn{background:var(--warn-bg); border-color:#f0c6ce;}
+  .callout.warn .tag{color:var(--warn);}
+  .callout.amber{background:var(--amber-bg); border-color:#e0d09a;}
+  .callout.amber .tag{color:var(--amber);}
+  .tbl-wrap{overflow-x:auto; margin:18px 0;}
+  table{border-collapse:collapse; width:100%; font-size:14px;}
+  th,td{text-align:left; padding:9px 13px; border-bottom:1px solid var(--rule); vertical-align:top;}
+  thead th{background:#f6f7f9; color:var(--ink-soft); font-weight:660;
+           font-size:12px; letter-spacing:0.03em; text-transform:uppercase;
+           border-bottom:2px solid var(--rule-strong);}
+  tbody tr:last-child td{border-bottom:0;}
+  tbody tr:hover{background:#fafbfc;}
+  figure{margin:24px 0; padding:0;}
+  .diagram{background:#fcfcfd; border:1px solid var(--rule);
+    border-radius:9px; padding:22px 20px 8px; text-align:center;}
+  .diagram svg, .diagram .mermaid{max-width:100%; height:auto;}
+  figcaption{font-size:13px; color:var(--ink-faint); margin-top:12px;
+             padding:0 8px 6px; text-align:left;}
+  figcaption b{color:var(--ink-soft); font-weight:660;}
+  .legend{display:flex; flex-wrap:wrap; gap:6px 16px; justify-content:center;
+          margin-top:14px; padding-top:12px; border-top:1px solid var(--rule);
+          font-size:11.5px; color:var(--ink-soft);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .legend i{width:13px; height:13px; border-radius:3px; display:inline-block;
+            border:1px solid rgba(0,0,0,0.18);}
+  .sources{font-size:14px;}
+  .sources li{margin:9px 0;}
+  .tier{display:inline-block; font-size:10.5px; font-weight:700;
+        letter-spacing:0.04em; text-transform:uppercase; padding:1.5px 7px;
+        border-radius:4px; margin-right:8px; vertical-align:1.5px;}
+  .tier.spec{background:#e6e0f5; color:#5a3a93;}
+  .tier.docs{background:#dce8fb; color:#1E3A6B;}
+  .tier.code{background:#d6f0ee; color:#0C4A43;}
+  .tier.paper{background:#deefd9; color:#234D1A;}
+  .tier.practitioner{background:#fbf0cf; color:#6B4E06;}
+  .tier.book{background:#FCE4D4; color:#7A3D0E;}
+  .glossary dt{font-weight:660; margin-top:10px;}
+  .glossary dd{margin:2px 0 0; color:var(--ink-soft);}
+  .footer{margin-top:42px; padding-top:16px; border-top:1px solid var(--rule);
+          font-size:12.5px; color:var(--ink-faint);}
+  .toc-toggle{display:none;}
+  @media(max-width:980px){
+    .wrap{flex-direction:column; gap:0; padding:0 14px;}
+    .toc{position:static; width:100%; flex:none; max-height:none; padding:18px 0 0;}
+    .toc ol{display:none;} .toc ol.open{display:block;}
+    .toc-toggle{display:block; cursor:pointer; background:var(--surface);
+      border:1px solid var(--rule); border-radius:8px; padding:10px 14px;
+      font-weight:600; font-size:14px; color:var(--ink-soft); width:100%; text-align:left;}
+    .doc{padding:32px 22px 44px; margin:14px 0 40px;}
+    h1{font-size:26px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="toc">
+    <button class="toc-toggle" onclick="document.getElementById('tocList').classList.toggle('open')">Contents ▾</button>
+    <div class="toc-title">Contents</div>
+    <ol id="tocList">
+      <li><a href="#tldr"><span class="n">—</span>TL;DR</a></li>
+      <li><a href="#architecture"><span class="n">1</span>What it is &amp; architecture</a></li>
+      <li><a href="#placement"><span class="n">2</span>Placement in the landscape</a></li>
+      <li><a href="#mechanism"><span class="n">3</span>How it works</a></li>
+      <li><a href="#auth"><span class="n">4</span>Authentication &amp; identity</a></li>
+      <li><a href="#connections"><span class="n">5</span>How it connects</a></li>
+      <li><a href="#tradeoffs"><span class="n">6</span>Trade-offs &amp; failure modes</a></li>
+      <li><a href="#take"><span class="n">7</span>Architect's take</a></li>
+      <li><a href="#glossary"><span class="n">—</span>Glossary</a></li>
+      <li><a href="#sources"><span class="n">—</span>Sources</a></li>
+    </ol>
+  </nav>
+
+  <main class="doc">
+
+    <header>
+      <div class="eyebrow">Data Platform Deep-Dive · Table Format Layer (L2)</div>
+      <h1>Apache Iceberg: Open Table Format</h1>
+      <p class="definition">A vendor-neutral open specification that layers a tree of immutable metadata files over columnar data files on object storage, giving any engine that reads that metadata tree ACID transactions, serializable snapshot isolation, time travel, and schema and partition evolution — without touching the data files.</p>
+      <div class="meta">
+        <span><b>Prepared</b> 2026-05-23</span>
+        <span><b>Reading time</b> ~29 min</span>
+        <span><b>Primary source</b> Apache Iceberg: The Definitive Guide (Shiran, Hughes, Merced · O'Reilly 2024)</span>
+        <span><b>Focus</b> Architecture · Landscape · Auth · Connections · v3</span>
+      </div>
+    </header>
+
+    <!-- ===== TL;DR ===== -->
+    <section id="tldr" class="tldr">
+      <h2>TL;DR</h2>
+      <p>Apache Iceberg is an open table format specification (not an engine, not a catalog) that sits at L2 in the data platform stack. Its core insight: the only thing any catalog needs to store is a path to a current metadata file; everything else — schema history, partition specs, file statistics, snapshot lineage — lives in an immutable tree of Avro and JSON files collocated with the data on object storage. An atomic swap of that pointer is all it takes for ACID semantics. Any engine that can walk the tree is a first-class citizen. In 2025, the v3 spec added deletion vectors, row lineage, semi-structured <code>VARIANT</code>, nanosecond timestamps, and geospatial types, materially closing the gap with Delta Lake on high-update workloads.</p>
+      <ol class="takeaways">
+        <li><strong>Metadata tree = the innovation.</strong> The chain <em>catalog pointer → metadata file → manifest list (snapshot) → manifest files → data files</em> gives Iceberg all its guarantees. Committing a new snapshot is a single atomic CAS on the catalog pointer; readers at the old pointer are unaffected.</li>
+        <li><strong>Engine-agnostic by design.</strong> Iceberg is a spec, not a library you depend on. Trino, Spark, Flink, DuckDB, Dremio, Athena, and Snowflake all read the same on-disk format. No engine owns the table.</li>
+        <li><strong>Hidden partitioning + partition evolution.</strong> Partition transforms (hour, day, bucket, truncate) are stored in the metadata file, not the query. Changing a partition strategy never rewrites historical files; new snapshots use the new spec while old manifests retain the old one.</li>
+        <li><strong>Iceberg has no built-in auth.</strong> Auth lives at two boundaries: (a) the IRC catalog authenticates callers via OAuth2/OIDC and vends short-lived, path-scoped storage credentials; (b) storage enforces IAM policies on those credentials. Iceberg itself only defines table properties for server-side encryption type selection.</li>
+        <li><strong>COW vs MOR, and why v3 matters.</strong> Copy-on-write rewrites affected data files on update (good read performance, high write amplification). Merge-on-read appends positional or equality delete files (low write cost, read-time join penalty at scale). Iceberg v3 deletion vectors — per-file bitmaps stored as Puffin blobs — largely eliminate the MOR read penalty without rewriting data files.</li>
+        <li><strong>Small files and compaction are the operational reality.</strong> Streaming ingestion creates many small files. Each small file adds a manifest entry; manifest scanning cost grows linearly. <code>rewriteDataFiles</code> compaction is mandatory for production tables with frequent writes, and it must run regularly or query performance degrades silently.</li>
+      </ol>
+    </section>
+
+    <!-- ===== 1. ARCHITECTURE ===== -->
+    <section id="architecture">
+      <h2><span class="num">1</span>What it is &amp; core architecture</h2>
+
+      <p>Apache Iceberg is a <strong>table format specification</strong>, first proposed at Netflix in 2017 and donated to the Apache Software Foundation. The spec defines exactly how bytes are organised on a filesystem or object store so that any conforming engine can read and write the same table. The spec has had three major versions: v1 (2018 — basic format), v2 (2020 — delete files, sequence numbers, row-level deletes), and v3 (2025 — deletion vectors, row lineage, geospatial, <code>VARIANT</code>, nanosecond timestamps).</p>
+
+      <p>An Iceberg table is organised into three logical layers. From bottom to top: the <strong>data layer</strong> holds the actual bytes; the <strong>metadata layer</strong> indexes those bytes with statistics and tracks changes as snapshots; the <strong>catalog layer</strong> holds a single pointer to the current metadata file. Every read starts at the catalog and walks down; every write builds new metadata and ends with an atomic catalog pointer update.</p>
+
+      <h3>Data Layer</h3>
+      <p>The data layer contains <strong>data files</strong> and <strong>delete files</strong>. Data files store actual rows in a columnar format — Parquet (by far the most common), ORC, or Avro. Iceberg is file-format agnostic; the format in use is recorded per-file in the manifest, not globally. Parquet is dominant because its row-group statistics (per-column min/max, null counts) feed directly into Iceberg's pruning chain: the engine reads column statistics from the manifest file first, opens the Parquet footer only if the manifest passes, and reads individual row groups only if the footer passes. Three independent filter stages on the way to reading a byte.</p>
+
+      <p><strong>Delete files</strong> record which rows have been logically removed without rewriting the data file they belong to — this is the merge-on-read (MOR) strategy. The Iceberg v2 spec defines two kinds. <em>Positional delete files</em> identify a deleted row by <code>(file_path, row_position)</code> — a fast lookup but tightly coupled to the physical file. <em>Equality delete files</em> identify rows by the values of one or more columns (e.g., <code>order_id = 1234</code>) — more flexible, but at read time the engine must join every data file with every relevant equality delete file, causing scan amplification that grows with write frequency. <strong>Sequence numbers</strong> (a monotonically increasing counter per snapshot) prevent equality delete files from accidentally deleting a row added after the delete was written: an equality delete with sequence number <em>N</em> only applies to data files with sequence number < <em>N</em>.</p>
+
+      <p>The Iceberg v3 spec replaces both v2 delete-file types with <strong>deletion vectors</strong>: a compact bitmap (one bit per row in a data file) stored as a Puffin blob attached to the data file. Deletion vectors eliminate the equality-delete join entirely — a reader ANDs the bitmap with the row data in a single pass. AWS announced support for Iceberg v3 deletion vectors in November 2025; Databricks Runtime 18.0+ and Snowflake's open catalog are also in public preview as of early 2026.</p>
+
+      <h3>Metadata Layer</h3>
+      <p>The metadata layer has three file types, all stored alongside data files in object storage.</p>
+
+      <p><strong>Manifest files</strong> (Avro format) are the leaves of the metadata tree. Each manifest file tracks a subset of data or delete files (never both in the same manifest). For every tracked file it records: the file path, format, partition membership, record count, and per-column statistics (lower bound, upper bound, null count, NaN count). These statistics are written by the engine that writes the data — cheaply, because the writer has already processed the rows. This is in contrast to the Hive table format, where statistics are gathered by expensive post-write scan jobs that are rarely re-run. In practice, Iceberg tables carry accurate, up-to-date statistics; Hive tables often do not.</p>
+
+      <p><strong>Manifest lists</strong> (Avro format) represent a snapshot of the table at a point in time. Each manifest list entry references one manifest file and includes the manifest's partition column ranges and row count deltas — enough to skip the entire manifest without opening it if a query's partition predicates don't overlap. The manifest list is what Iceberg calls a <em>snapshot</em>. Its <code>sequence_number</code> field is the snapshot's monotonic commit order.</p>
+
+      <p><strong>Metadata files</strong> (JSON format) are the root of the tree. A metadata file records the table UUID, the full schema history (as a list of schema objects with stable <code>schema-id</code>s), all partition specs ever used (each with a stable <code>spec-id</code>), all known sort orders, a list of valid snapshots, and the <code>current-snapshot-id</code>. Every commit to the table writes a <em>new</em> metadata file; the old one is never mutated. This immutability is what enables time travel: any old metadata file is still valid, and reading it gives a consistent view of the table as it was at that snapshot.</p>
+
+      <p><strong>Puffin files</strong> store statistics and index structures that exceed what Parquet footers or manifest statistics can express. A Puffin file contains arbitrary binary blobs tagged with a type string. Currently two blob types are in active use: <code>apache-datasketches-theta-v1</code> (a Theta sketch for approximate distinct-value counts, enabling fast <code>COUNT(DISTINCT ...)</code>), and — new in v3 — deletion vector blobs (<code>deletion-vector-v1</code>) stored as compressed bitmaps. Puffin files are referenced from the metadata file's <code>statistics</code> array and are associated with a specific snapshot.</p>
+
+      <div class="callout key">
+        <span class="tag">Key mechanism</span>
+        <p>A commit is valid if and only if no other writer updated the catalog pointer between the time this writer read it and the time it tries to swap it. Every catalog implementation must provide compare-and-swap (CAS) semantics on the pointer. If the CAS fails, the writer discards its new metadata files and retries from scratch — this is optimistic concurrency control (OCC), not locking.</p>
+      </div>
+
+      <h3>Catalog Layer</h3>
+      <p>The catalog holds exactly one piece of information per table: the path to the current metadata file. Everything else Iceberg needs is in that file or its descendants. The catalog does not need to understand Iceberg's metadata structure — it just needs to be able to atomically update a string value. This is why Hive Metastore, AWS Glue, DynamoDB, a filesystem <code>version-hint.txt</code>, or a full REST catalog (IRC) can all serve as an Iceberg catalog: they only differ in how they guarantee atomicity of the pointer swap. The REST Catalog (IRC) moves this pointer swap to a server-side commit endpoint (<code>POST /v1/{prefix}/namespaces/{ns}/tables/{table}</code>), which centralises conflict detection and enables additional features like credential vending.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 920 502" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Apache Iceberg three-layer metadata tree structure">
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+              <marker id="arr-dash" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#8A94A6"/>
+              </marker>
+            </defs>
+
+            <!-- Row 0: Catalog (L3) -->
+            <rect x="360" y="16" width="200" height="46" rx="7"
+                  fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="460" y="38" text-anchor="middle" font-size="13.5" font-weight="600" fill="#432068">Catalog</text>
+            <text x="460" y="53" text-anchor="middle" font-size="10.5" fill="#432068">(atomic pointer store)</text>
+
+            <!-- Arrow: Catalog → Metadata File -->
+            <line x1="460" y1="62" x2="460" y2="98" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <rect x="408" y="72" width="104" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="460" y="84" text-anchor="middle" font-size="10" fill="#3A4252">pointer swap (CAS)</text>
+
+            <!-- Row 1: Metadata File (L2, FOCUS) -->
+            <rect x="195" y="98" width="530" height="56" rx="7"
+                  fill="#DCE8FB" stroke="#111418" stroke-width="2.5"/>
+            <text x="460" y="120" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1E3A6B">Metadata File (.json)</text>
+            <text x="460" y="137" text-anchor="middle" font-size="10.5" fill="#1E3A6B">table-uuid · schema history · partition-specs · snapshot refs · statistics refs</text>
+            <!-- focus badge -->
+            <rect x="690" y="103" width="30" height="16" rx="4" fill="#111418"/>
+            <text x="705" y="114.5" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">FOCUS</text>
+
+            <!-- Puffin box (side, dashed) -->
+            <rect x="750" y="98" width="155" height="56" rx="7"
+                  fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4" stroke-dasharray="5,3"/>
+            <text x="827" y="120" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">Puffin Files</text>
+            <text x="827" y="136" text-anchor="middle" font-size="10" fill="#5A6273">Theta sketches (NDV)</text>
+            <text x="827" y="149" text-anchor="middle" font-size="10" fill="#5A6273">+ deletion vectors (v3)</text>
+            <line x1="725" y1="126" x2="750" y2="126" stroke="#8A94A6" stroke-width="1.4"
+                  stroke-dasharray="4,3" marker-end="url(#arr-dash)"/>
+            <rect x="719" y="118" width="54" height="15" rx="7" fill="#fff" stroke="#D5D9E0" stroke-width="0.7"/>
+            <text x="746" y="128.5" text-anchor="middle" font-size="9" fill="#5A6273">stats refs</text>
+
+            <!-- Arrow: Metadata → Manifest List -->
+            <line x1="460" y1="154" x2="460" y2="195" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <rect x="403" y="163" width="114" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="460" y="175" text-anchor="middle" font-size="10" fill="#3A4252">current-snapshot-id</text>
+
+            <!-- Row 2: Manifest List (Snapshot) -->
+            <rect x="130" y="195" width="660" height="50" rx="7"
+                  fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="460" y="216" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1E3A6B">Manifest List (Avro) = Snapshot</text>
+            <text x="460" y="232" text-anchor="middle" font-size="10.5" fill="#1E3A6B">lists manifest files · per-manifest partition col ranges · sequence numbers</text>
+
+            <!-- Branch lines: Manifest List → 3 Manifests -->
+            <line x1="460" y1="245" x2="460" y2="270" stroke="#5A6273" stroke-width="1.5"/>
+            <line x1="145" y1="270" x2="730" y2="270" stroke="#5A6273" stroke-width="1.5"/>
+            <line x1="145" y1="270" x2="145" y2="302" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <line x1="460" y1="270" x2="460" y2="302" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <line x1="730" y1="270" x2="730" y2="302" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+
+            <!-- Row 3: Three Manifest Files -->
+            <!-- MF1: Data Manifest -->
+            <rect x="30" y="302" width="230" height="52" rx="7"
+                  fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="145" y="323" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1E3A6B">Data Manifest File (Avro)</text>
+            <text x="145" y="339" text-anchor="middle" font-size="10" fill="#1E3A6B">data file paths · col min/max</text>
+            <text x="145" y="350" text-anchor="middle" font-size="10" fill="#1E3A6B">null counts · record counts</text>
+
+            <!-- MF2: Delete Manifest -->
+            <rect x="345" y="302" width="230" height="52" rx="7"
+                  fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="460" y="323" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1E3A6B">Delete Manifest File (Avro)</text>
+            <text x="460" y="339" text-anchor="middle" font-size="10" fill="#1E3A6B">delete file paths · sequence#</text>
+            <text x="460" y="350" text-anchor="middle" font-size="10" fill="#1E3A6B">partition info · file content type</text>
+
+            <!-- MF3: ellipsis -->
+            <rect x="660" y="302" width="140" height="52" rx="7"
+                  fill="#F5F6F8" stroke="#D5D9E0" stroke-width="1.4"/>
+            <text x="730" y="332" text-anchor="middle" font-size="18" fill="#8A94A6">…</text>
+            <text x="730" y="349" text-anchor="middle" font-size="10" fill="#8A94A6">more manifests</text>
+
+            <!-- Arrows: MF1 → Data Files, MF2 → Delete Files -->
+            <line x1="110" y1="354" x2="95" y2="398" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <line x1="178" y1="354" x2="310" y2="398" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <line x1="415" y1="354" x2="340" y2="398" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <line x1="505" y1="354" x2="570" y2="398" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+
+            <!-- Row 4: Data / Delete / Deletion Vector files -->
+            <!-- Data Files -->
+            <rect x="10" y="398" width="185" height="48" rx="7"
+                  fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="102" y="419" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">Data Files</text>
+            <text x="102" y="434" text-anchor="middle" font-size="10" fill="#5A6273">Parquet / ORC / Avro</text>
+            <text x="102" y="444" text-anchor="middle" font-size="9.5" fill="#5A6273">row groups · col stats</text>
+
+            <!-- Delete Files v2 -->
+            <rect x="213" y="398" width="215" height="48" rx="7"
+                  fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="320" y="419" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">Delete Files (v2)</text>
+            <text x="320" y="434" text-anchor="middle" font-size="10" fill="#5A6273">positional: (path, row_pos)</text>
+            <text x="320" y="444" text-anchor="middle" font-size="9.5" fill="#5A6273">equality: key column values</text>
+
+            <!-- Deletion Vectors v3 -->
+            <rect x="446" y="398" width="230" height="48" rx="7"
+                  fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4" stroke-dasharray="6,3"/>
+            <text x="561" y="419" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A6B">Deletion Vectors (v3)</text>
+            <text x="561" y="434" text-anchor="middle" font-size="10" fill="#1E3A6B">per-file bitmap in Puffin blob</text>
+            <text x="561" y="444" text-anchor="middle" font-size="9.5" fill="#1E3A6B">no join needed at read time</text>
+
+            <!-- Legend -->
+            <rect x="10" y="460" width="900" height="36" rx="6" fill="#F5F6F8" stroke="#D5D9E0"/>
+            <text x="30" y="482" font-size="10.5" fill="#5A6273">Legend:</text>
+            <rect x="78" y="471" width="12" height="12" rx="2" fill="#EADDF7" stroke="#7E4FB5"/>
+            <text x="94" y="482" font-size="10" fill="#5A6273">Catalog (L3)</text>
+            <rect x="175" y="471" width="12" height="12" rx="2" fill="#DCE8FB" stroke="#3B73C4"/>
+            <text x="191" y="482" font-size="10" fill="#5A6273">Table Format / Iceberg metadata (L2)</text>
+            <rect x="388" y="471" width="12" height="12" rx="2" fill="#E8EBF0" stroke="#8A94A6"/>
+            <text x="404" y="482" font-size="10" fill="#5A6273">Storage / file format (L0–L1)</text>
+            <rect x="568" y="471" width="12" height="12" rx="2" fill="#DCE8FB" stroke="#3B73C4" stroke-dasharray="4,2"/>
+            <text x="584" y="482" font-size="10" fill="#5A6273">v3-only (dashed border)</text>
+            <rect x="718" y="471" width="12" height="12" rx="2" fill="#E8EBF0" stroke="#8A94A6" stroke-dasharray="4,2"/>
+            <text x="734" y="482" font-size="10" fill="#5A6273">Optional / indirect ref</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure 1.</b> The Iceberg metadata tree. A catalog holds a single pointer to the current Metadata File; all guarantees flow from that atomic swap. Manifest Files carry per-file statistics that allow three levels of pruning before a byte of data is read. Deletion Vectors (v3, dashed) replace both positional and equality delete files with a compact per-file bitmap, eliminating the read-time join penalty of v2 MOR tables.</figcaption>
+      </figure>
+
+      <h3>Copy-on-Write vs Merge-on-Read</h3>
+      <p>When a row is updated or deleted, Iceberg offers two write strategies that trade write amplification for read-time complexity.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Property</th><th>Copy-on-Write (COW)</th><th>Merge-on-Read (MOR v2)</th><th>Deletion Vectors (MOR v3)</th></tr></thead>
+          <tbody>
+            <tr><td>Write path</td><td>Rewrite affected data files in full</td><td>Append delete file only</td><td>Append bitmap blob to Puffin file</td></tr>
+            <tr><td>Write amplification</td><td>High (full file rewrite)</td><td>Low (small delete file)</td><td>Very low (bitmap update)</td></tr>
+            <tr><td>Read overhead</td><td>None — data files are clean</td><td>Join every data file against relevant delete files</td><td>AND bitmap with row data — single pass</td></tr>
+            <tr><td>Compaction need</td><td>Low (files stay clean)</td><td>High (delete amplification grows)</td><td>Low-moderate (bitmaps keep reads fast)</td></tr>
+            <tr><td>Best for</td><td>Read-heavy, batch updates</td><td>Streaming / high-frequency writes (v2)</td><td>Streaming / high-frequency writes (v3)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== 2. PLACEMENT ===== -->
+    <section id="placement">
+      <h2><span class="num">2</span>Placement in the data platform &amp; AI landscape</h2>
+
+      <p>Iceberg occupies <strong>L2 (Table Format)</strong> in the platform stack. It is logically above L0 (object storage, which hosts its files) and L1 (file formats, which it manages), and below L3 (catalogs, which track its metadata pointer) and L4 (query engines, which walk its tree). It is the only layer whose primary job is to impose ACID semantics and a table abstraction over a collection of raw files.</p>
+
+      <p>The key distinction: Iceberg is a <em>spec for how files are organised</em>, not a service you run. You cannot "connect to Iceberg" — you connect to a catalog that implements the IRC spec, which then points you at Iceberg metadata files on object storage. This means Iceberg is simultaneously everywhere (any engine, any cloud) and nowhere (no process, no port). Its only runtime presence is files on disk.</p>
+
+      <p><strong>What it replaces:</strong> The Hive table format, where a single Hive Metastore tracks partition directories rather than individual files, has no snapshot isolation, requires table locks for concurrent writes, and cannot evolve schemas or partitions without data rewrites. Iceberg removes all of those constraints.</p>
+
+      <p><strong>What it competes with:</strong> Delta Lake (created at Databricks, OSS under Linux Foundation) and Apache Hudi (created at Uber, optimised for write-heavy streaming). All three solve the same core problem. Delta Lake uses a JSON transaction log (<code>_delta_log/</code>) rather than Iceberg's Avro manifest tree — slightly different consistency properties at the transaction log level. Hudi adds a custom index for upsert performance. As of 2025–2026, Iceberg has the broadest multi-engine adoption and the strongest vendor-neutral governance (ASF), making it the default choice for new open lakehouse deployments not tied to a single vendor's ecosystem.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 510" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Data platform landscape showing Apache Iceberg at the L2 table format layer">
+            <defs>
+              <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- Identity strip (right) -->
+            <rect x="790" y="14" width="20" height="454" rx="4"
+                  fill="#FAD9DC" stroke="#C8425A" stroke-width="1"/>
+            <text x="800" y="244" text-anchor="middle" font-size="9.5" font-weight="700"
+                  fill="#6E1626" transform="rotate(-90,800,244)" letter-spacing="0.5">Identity &amp; Auth (L8) — cross-cutting</text>
+
+            <!-- L9 Consumption -->
+            <rect x="12" y="14" width="770" height="44" rx="6" fill="#DEE0FA" stroke="#5256C8" stroke-width="1"/>
+            <text x="22" y="32" font-size="9.5" font-weight="700" fill="#23266E" letter-spacing="0.4">L9</text>
+            <text x="22" y="47" font-size="9.5" fill="#23266E">Consumption</text>
+            <text x="130" y="40" font-size="12" font-weight="600" fill="#23266E">BI Tools · Notebooks · AI Agents · Applications</text>
+
+            <!-- L7 Governance -->
+            <rect x="12" y="64" width="770" height="44" rx="6" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1"/>
+            <text x="22" y="82" font-size="9.5" font-weight="700" fill="#234D1A" letter-spacing="0.4">L7</text>
+            <text x="22" y="97" font-size="9.5" fill="#234D1A">Governance</text>
+            <text x="130" y="90" font-size="12" font-weight="600" fill="#234D1A">DataHub · Collibra · Atlan · Purview · Knowledge Graph</text>
+
+            <!-- L6 Semantic -->
+            <rect x="12" y="114" width="770" height="44" rx="6" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1"/>
+            <text x="22" y="132" font-size="9.5" font-weight="700" fill="#6B4E06" letter-spacing="0.4">L6</text>
+            <text x="22" y="147" font-size="9.5" fill="#6B4E06">Semantic</text>
+            <text x="130" y="140" font-size="12" font-weight="600" fill="#6B4E06">dbt Semantic Layer · Cube · AtScale · LookML</text>
+
+            <!-- L5 Operational -->
+            <rect x="12" y="164" width="770" height="44" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1"/>
+            <text x="22" y="182" font-size="9.5" font-weight="700" fill="#7A3D0E" letter-spacing="0.4">L5</text>
+            <text x="22" y="197" font-size="9.5" fill="#7A3D0E">Operational</text>
+            <text x="130" y="190" font-size="12" font-weight="600" fill="#7A3D0E">Lakebase · Neon-Postgres · Operational Stores</text>
+
+            <!-- L4 Compute -->
+            <rect x="12" y="214" width="770" height="44" rx="6" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+            <text x="22" y="232" font-size="9.5" font-weight="700" fill="#0C4A43" letter-spacing="0.4">L4</text>
+            <text x="22" y="247" font-size="9.5" fill="#0C4A43">Compute</text>
+            <text x="130" y="240" font-size="12" font-weight="600" fill="#0C4A43">Trino · Apache Spark · Apache Flink · DuckDB · Athena · Dremio</text>
+
+            <!-- L3 Catalog -->
+            <rect x="12" y="264" width="770" height="44" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1"/>
+            <text x="22" y="282" font-size="9.5" font-weight="700" fill="#432068" letter-spacing="0.4">L3</text>
+            <text x="22" y="297" font-size="9.5" fill="#432068">Catalog</text>
+            <text x="130" y="290" font-size="12" font-weight="600" fill="#432068">Apache Polaris · Unity Catalog · Gravitino · Nessie · Glue · Lakekeeper (IRC)</text>
+
+            <!-- L2 Table Format — FOCUS (Iceberg) -->
+            <rect x="12" y="314" width="770" height="50" rx="6" fill="#DCE8FB" stroke="#111418" stroke-width="2.5"/>
+            <text x="22" y="334" font-size="9.5" font-weight="700" fill="#1E3A6B" letter-spacing="0.4">L2</text>
+            <text x="22" y="349" font-size="9.5" fill="#1E3A6B">Table Format</text>
+            <text x="130" y="344" font-size="13" font-weight="700" fill="#111418">Apache Iceberg  ◀ focus</text>
+            <text x="444" y="344" font-size="12" fill="#444b59">   |   also: Delta Lake · Apache Hudi</text>
+
+            <!-- L1 File Format -->
+            <rect x="12" y="370" width="770" height="44" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1"/>
+            <text x="22" y="388" font-size="9.5" font-weight="700" fill="#3A4252" letter-spacing="0.4">L1</text>
+            <text x="22" y="403" font-size="9.5" fill="#3A4252">File Format</text>
+            <text x="130" y="394" font-size="12" font-weight="600" fill="#3A4252">Apache Parquet (dominant) · Apache ORC · Apache Avro</text>
+
+            <!-- L0 Storage -->
+            <rect x="12" y="420" width="770" height="44" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1"/>
+            <text x="22" y="438" font-size="9.5" font-weight="700" fill="#3A4252" letter-spacing="0.4">L0</text>
+            <text x="22" y="453" font-size="9.5" fill="#3A4252">Storage</text>
+            <text x="130" y="444" font-size="12" font-weight="600" fill="#3A4252">Amazon S3 · Google Cloud Storage · Azure ADLS Gen2 · MinIO · HDFS</text>
+
+            <!-- Note -->
+            <text x="12" y="482" font-size="10.5" fill="#6b7280">Iceberg's metadata and data files live at L0; its spec governs L2; catalogs (L3) hold its pointer; engines (L4) walk its tree.</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure 2.</b> Apache Iceberg sits at L2 (Table Format) with a focus stroke. It has dependencies downward (L0 storage, L1 file formats) and is consumed upward (L3 catalogs hold its pointer; L4 engines query it). The L8 identity plane (right strip) cross-cuts all layers — Iceberg itself defers auth to the catalog and storage layers.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th></th><th>Data Warehouse</th><th>Data Lake</th><th>Lakehouse (Iceberg)</th><th>Lakebase</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Workload</strong></td><td>OLAP / BI</td><td>Batch, ML, raw</td><td>OLAP + ML + streaming</td><td>OLTP / operational</td></tr>
+            <tr><td><strong>Storage</strong></td><td>Proprietary, coupled</td><td>Open files</td><td>Open table format on object store</td><td>Lakehouse-native, serverless</td></tr>
+            <tr><td><strong>ACID</strong></td><td>Strong</td><td>None inherent</td><td>Strong (via metadata CAS)</td><td>Strong (transactional)</td></tr>
+            <tr><td><strong>Multi-engine</strong></td><td>No</td><td>Yes (but no guarantees)</td><td>Yes (any IRC-aware engine)</td><td>Postgres wire protocol</td></tr>
+            <tr><td><strong>Schema evolution</strong></td><td>Limited</td><td>None</td><td>Full, no rewrites</td><td>Postgres DDL</td></tr>
+            <tr><td><strong>Failure mode</strong></td><td>Cost, lock-in</td><td>Data swamp</td><td>Catalog sprawl; small files</td><td>Immature; verify state</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== 3. HOW IT WORKS ===== -->
+    <section id="mechanism">
+      <h2><span class="num">3</span>How it works</h2>
+
+      <h3>Write lifecycle</h3>
+      <p>A write to an Iceberg table follows six steps. The engine first reads the current state from the catalog (the snapshot it is building on top of). It then writes data files to object storage — in parallel, with no coordination. Once data files are written, it writes a manifest file tracking those files and their statistics. It reads the current manifest list, constructs a new manifest list that includes the old manifests plus the new one, and writes that as a new snapshot. It writes a new metadata file with that snapshot added and <code>current-snapshot-id</code> updated. Finally it issues a CAS commit to the catalog: "if the current pointer is still X, set it to Y." If another writer committed in the meantime, the CAS fails; the engine discards its new metadata files and retries from step one, re-reading the updated state.</p>
+
+      <p>This is optimistic concurrency control with no global lock. Two writers can proceed concurrently; the second to commit wins; the first retry fast. In practice, this works well for batch and moderate-frequency streaming workloads. At very high commit rates (hundreds per second to the same table), OCC retry overhead becomes significant — a regime for which Iceberg is not designed.</p>
+
+      <h3>Read lifecycle and the pruning chain</h3>
+      <p>A read query passes through three independent pruning stages before any data bytes are transferred. The engine reads the catalog to get the current metadata file path. It reads the metadata file to identify the current snapshot's manifest list. It scans the manifest list and discards any manifest file whose partition column ranges (stored in the manifest list entry) do not overlap the query's partition predicate — this is partition pruning, and it happens without opening any manifest file. For the surviving manifest files, it applies column min/max statistics to discard data files — this is data-file pruning. For surviving data files (Parquet), it applies Parquet row-group statistics for a third round of pruning before reading any row. Only then is actual data transferred.</p>
+
+      <p>For MOR v2 tables, after identifying surviving data files, the engine also identifies relevant delete files. Positional delete files tell it which row indices to skip. Equality delete files require a join: for each data file, the engine must check whether any row matches any active equality delete. This join is the MOR v2 read penalty. For MOR v3 (deletion vector) tables, the engine simply fetches the bitmap blob for each data file and filters the row scan — no join, no cross-file lookup.</p>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#DCE8FB','primaryBorderColor':'#3B73C4','primaryTextColor':'#1E3A6B','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant E as Query Engine
+    participant CAT as Catalog
+    participant META as Metadata File
+    participant ML as Manifest List
+    participant MF as Manifest Files
+    participant DF as Data Files
+    participant DV as Delete Files
+
+    Note over E,DV: WRITE PATH
+    E->>DF: Write data files to object storage in parallel
+    E->>MF: Write manifest file tracking new files and statistics
+    E->>ML: Write new manifest list = old manifests + new manifest
+    E->>META: Write new metadata file with updated current-snapshot-id
+    E->>CAT: CAS commit: set pointer to new metadata path if unchanged
+    alt CAS conflict - concurrent writer already committed
+        CAT-->>E: Failure - pointer changed by another writer
+        E->>E: Discard new metadata files and retry from step 1
+    else CAS success
+        CAT-->>E: Committed OK
+    end
+
+    Note over E,DV: READ PATH
+    E->>CAT: Get current metadata file path
+    CAT-->>E: Returns metadata file location
+    E->>META: Read metadata to get current snapshot and manifest list path
+    E->>ML: Scan manifest list - partition-prune on column ranges
+    E->>MF: Read surviving manifests - file-prune on col min/max stats
+    E->>DF: Read surviving data files with Parquet row-group pruning
+    E->>DV: Apply delete files or deletion vector bitmaps
+    DF-->>E: Row data returned to engine
+          </div>
+        </div>
+        <figcaption><b>Figure 3.</b> Write path (steps 1–7): the engine writes files bottom-up, then commits with a single CAS on the catalog pointer. OCC retry discards only the new metadata, not the data files. Read path (steps 8–14): three pruning stages (partition → file → row-group) before data bytes move; delete/DV application last.</figcaption>
+      </figure>
+
+      <h3>Schema and partition evolution</h3>
+      <p>Schema evolution in Iceberg is column-ID based, not name-based. Each column carries a stable integer <code>field-id</code> that persists across renames, reorders, and drops. An engine reading a file uses the <code>field-id</code> from the file's schema, not from the current table schema, to map columns — so adding a column never reads garbage values from old files, dropping a column leaves old file bytes untouched, and renaming is safe because the ID is the canonical identity.</p>
+
+      <p>Partition evolution works via <em>partition spec versioning</em>. The metadata file stores a list of all partition specs ever used, each with a unique <code>spec-id</code>. Each manifest file records which spec was in effect when its data files were written. When the engine plans a query, it evaluates the partition predicate against <em>each spec</em> independently: newer data files use the new spec; older data files use the old spec. Neither set needs to be rewritten. This is hidden partitioning: the query does not need to know that <code>HOUR(ts)</code> replaced <code>DAY(ts)</code>; Iceberg handles the translation transparently.</p>
+
+      <div class="callout key">
+        <span class="tag">Key insight</span>
+        <p>Partition evolution is why Iceberg tables can be repartitioned at zero cost. A table that started with <code>PARTITION BY day(event_time)</code> can gain a <code>PARTITION BY hour(event_time)</code> spec for future data without touching the existing 3TB of historical files.</p>
+      </div>
+
+      <h3>Branching and tagging</h3>
+      <p>Iceberg v2 introduced named branches and tags as references in the metadata file's <code>refs</code> map. A branch is a mutable named pointer to a snapshot (updated on each new commit to the branch); a tag is an immutable named pointer. Branches enable write isolation — two concurrent writers can commit to separate branches and merge by reference swap — and are the mechanism underlying Nessie's multi-table git-style versioning. The main branch is always called <code>main</code> and is equivalent to the <code>current-snapshot-id</code>.</p>
+    </section>
+
+    <!-- ===== 4. AUTH ===== -->
+    <section id="auth">
+      <h2><span class="num">4</span>Authentication &amp; identity</h2>
+
+      <p>Iceberg the spec has no authentication or authorization built in. It defines table properties for server-side encryption type selection (<code>write.object-storage.enabled</code>, <code>s3.sse.type</code>), but these are hints to the writer, not enforcement. Security in an Iceberg lakehouse is provided at three independent boundaries, applied in sequence.</p>
+
+      <h3>Boundary 1 — Object storage IAM</h3>
+      <p>Every read and write of a data or metadata file goes through the object storage layer (S3, GCS, ADLS). S3 enforces IAM policies, bucket policies, and ACLs; GCS enforces IAM with service account bindings; ADLS Gen2 uses Azure RBAC plus ACLs at the filesystem level. Encryption at rest is handled here: S3 SSE-S3 (AES-256, S3-managed keys), SSE-KMS (AWS KMS-managed keys, required for compliance in most regulated environments), or SSE-C (customer-provided keys, maximum control). None of these are Iceberg-specific — they apply to every byte on the storage path regardless of table format.</p>
+
+      <h3>Boundary 2 — IRC Catalog (Policy Decision Point)</h3>
+      <p>The Iceberg REST Catalog (IRC) is where table-level authorization happens and where the shift from long-lived to short-lived credentials occurs. The engine authenticates to the IRC using an OAuth2 Bearer token. The IRC validates the token (signature, expiry, audience), evaluates whether the authenticated principal has the requested privilege (typically RBAC — namespace-level or table-level grants, with some IRC implementations adding row/column-level ABAC), and if authorized, calls the underlying cloud IAM to generate <strong>vended credentials</strong>: short-lived, path-scoped object-storage credentials (<code>AssumeRoleWithWebIdentity</code> on AWS returns a temporary STS <code>access_key_id / secret_access_key / session_token</code> scoped to the table's S3 prefix; GCS returns a service account access token). The IRC returns these vended credentials alongside the table metadata in the <code>LoadTableResponse.config</code> field. The engine then reads S3 directly using the vended credentials — it never holds a long-lived storage key, and the credentials expire (typically in 1 hour or less). Engines signal they support credential vending by sending the header <code>X-Iceberg-Access-Delegation: vended-credentials</code> in the <code>loadTable</code> request.</p>
+
+      <div class="callout warn">
+        <span class="tag">Breaking change — Iceberg 1.6.0</span>
+        <p>The IRC's own OAuth token endpoint (<code>POST /v1/oauth/tokens</code>) was deprecated in Iceberg (Java) 1.6.0 and is planned for removal in Iceberg 2.0. Clients must configure <code>oauth2-server-uri</code> to point to an external OAuth2/OIDC identity provider rather than relying on the catalog to issue tokens. Deployments that use the built-in endpoint will need to migrate to an external IdP (Keycloak, Okta, Azure AD, AWS Cognito) before the Iceberg 2.0 upgrade path.</p>
+      </div>
+
+      <h3>Boundary 3 — Query engine</h3>
+      <p>Users authenticate to the query engine separately. Trino supports OAuth2/OIDC, JWT, LDAP, Kerberos (GSSAPI), and client certificate/mTLS — all requiring TLS on the coordinator HTTPS port. Spark uses Kerberos for cluster-level auth or delegates to the notebook/job environment. The engine then impersonates (or proxies as) the user when calling the IRC — either using the user's own OAuth token directly, or using a service account token with the user identity passed as a claim for ABAC evaluation at the catalog.</p>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#FAD9DC','primaryBorderColor':'#C8425A','primaryTextColor':'#6E1626','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant E as Query Engine
+    participant IdP as Identity Provider
+    participant IRC as IRC Catalog
+    participant STS as Cloud IAM
+    participant S3 as Object Storage
+
+    U->>E: Submit query with user credentials
+    E->>IdP: OAuth2 client-credentials grant or token exchange RFC 8693
+    IdP-->>E: JWT access token - scoped and short-lived
+    E->>IRC: loadTable + Bearer token + X-Iceberg-Access-Delegation header
+    IRC->>IRC: Validate JWT signature and expiry and audience
+    IRC->>IRC: Evaluate RBAC - does principal have privilege on table?
+    IRC->>STS: AssumeRoleWithWebIdentity scoped to table S3 prefix
+    STS-->>IRC: Temporary credentials with expiry
+    IRC-->>E: LoadTableResponse with metadata location and storage credentials
+    E->>S3: Read manifest and data files using vended credentials
+    S3-->>E: Parquet data returned - IAM policy enforced at storage layer
+    Note over S3: Storage policy is defense-in-depth - vended creds are path-scoped
+          </div>
+        </div>
+        <figcaption><b>Figure 4.</b> Full auth chain for a table read. The IRC acts as the Policy Decision Point — it validates the caller's JWT, evaluates RBAC, and vends short-lived path-scoped storage credentials via STS. The engine never holds a long-lived storage key. Storage IAM provides independent defense-in-depth. Step 2 uses an external IdP — the IRC's own token endpoint is deprecated as of Iceberg 1.6.0.</figcaption>
+      </figure>
+
+      <div class="callout note">
+        <span class="tag">Note</span>
+        <p>Not all catalog implementations support credential vending — it requires the catalog to have an IAM role it can assume on behalf of the caller. The Hadoop catalog (filesystem-based) has no auth at all and is not production-safe. AWS Glue's IRC endpoint and Apache Polaris support vended credentials; verify capability at the specific catalog implementation you deploy.</p>
+      </div>
+    </section>
+
+    <!-- ===== 5. CONNECTIONS ===== -->
+    <section id="connections">
+      <h2><span class="num">5</span>How it connects to the rest of the stack</h2>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 880 510" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Apache Iceberg component relationship map showing connections to catalog, engines, storage, and governance layers">
+            <defs>
+              <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+              <marker id="arr3b" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- Center: Apache Iceberg (FOCUS) -->
+            <rect x="330" y="195" width="220" height="80" rx="8"
+                  fill="#DCE8FB" stroke="#111418" stroke-width="2.5"/>
+            <text x="440" y="228" text-anchor="middle" font-size="14" font-weight="700" fill="#1E3A6B">Apache Iceberg</text>
+            <text x="440" y="246" text-anchor="middle" font-size="11" fill="#1E3A6B">Open Table Format Spec</text>
+            <text x="440" y="262" text-anchor="middle" font-size="11" fill="#1E3A6B">metadata tree on object storage</text>
+            <rect x="532" y="200" width="14" height="14" rx="3" fill="#111418"/>
+            <text x="539" y="210.5" text-anchor="middle" font-size="8" font-weight="700" fill="#fff">★</text>
+
+            <!-- IRC Catalog (top center) -->
+            <rect x="310" y="40" width="260" height="52" rx="7"
+                  fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="440" y="62" text-anchor="middle" font-size="13" font-weight="600" fill="#432068">IRC Catalog (L3)</text>
+            <text x="440" y="78" text-anchor="middle" font-size="10.5" fill="#432068">Polaris · Unity · Gravitino · Glue · Nessie</text>
+            <!-- Arrow: IRC ↔ Iceberg (bidirectional) -->
+            <line x1="440" y1="92" x2="440" y2="195" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <line x1="450" y1="195" x2="450" y2="92" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="358" y="132" width="165" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="440" y="144" text-anchor="middle" font-size="10" fill="#3A4252">HTTPS REST · CAS commit · vended creds</text>
+
+            <!-- Query Engines (left) -->
+            <rect x="22" y="195" width="220" height="80" rx="7"
+                  fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="132" y="225" text-anchor="middle" font-size="13" font-weight="600" fill="#0C4A43">Query Engines (L4)</text>
+            <text x="132" y="242" text-anchor="middle" font-size="10.5" fill="#0C4A43">Trino · DuckDB · Athena · Dremio</text>
+            <text x="132" y="258" text-anchor="middle" font-size="10.5" fill="#0C4A43">StarRocks · ClickHouse</text>
+            <!-- Arrow: Engines → Iceberg -->
+            <line x1="242" y1="235" x2="330" y2="235" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="248" y="222" width="76" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="286" y="234" text-anchor="middle" font-size="10" fill="#3A4252">read metadata tree</text>
+
+            <!-- Streaming Engines (right) -->
+            <rect x="638" y="195" width="220" height="80" rx="7"
+                  fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="748" y="225" text-anchor="middle" font-size="13" font-weight="600" fill="#0C4A43">Streaming Engines (L4)</text>
+            <text x="748" y="242" text-anchor="middle" font-size="10.5" fill="#0C4A43">Apache Spark (SparkCatalog)</text>
+            <text x="748" y="258" text-anchor="middle" font-size="10.5" fill="#0C4A43">Apache Flink (IcebergSink)</text>
+            <!-- Arrow: Iceberg ↔ Streaming -->
+            <line x1="550" y1="235" x2="638" y2="235" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="556" y="222" width="76" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="594" y="234" text-anchor="middle" font-size="10" fill="#3A4252">SparkCatalog / Flink</text>
+
+            <!-- Governance Catalog (top-left) -->
+            <rect x="22" y="40" width="230" height="52" rx="7"
+                  fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.4"/>
+            <text x="137" y="62" text-anchor="middle" font-size="13" font-weight="600" fill="#234D1A">Governance Catalog (L7)</text>
+            <text x="137" y="78" text-anchor="middle" font-size="10.5" fill="#234D1A">DataHub · Atlan · Purview · Collibra</text>
+            <!-- Arrow: Governance ↔ Iceberg (diagonal) -->
+            <line x1="215" y1="88" x2="345" y2="195" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="224" y="128" width="108" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="278" y="140" text-anchor="middle" font-size="10" fill="#3A4252">metadata harvest ↑ / policy ↓</text>
+
+            <!-- Identity / Auth (top-right) -->
+            <rect x="628" y="40" width="230" height="52" rx="7"
+                  fill="#FAD9DC" stroke="#C8425A" stroke-width="1.4"/>
+            <text x="743" y="62" text-anchor="middle" font-size="13" font-weight="600" fill="#6E1626">Identity &amp; Auth (L8)</text>
+            <text x="743" y="78" text-anchor="middle" font-size="10.5" fill="#6E1626">OIDC IdP · IAM · STS · OPA</text>
+            <!-- Arrow: Identity ↔ Iceberg (diagonal) -->
+            <line x1="660" y1="88" x2="540" y2="195" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="553" y="128" width="108" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="607" y="140" text-anchor="middle" font-size="10" fill="#3A4252">OAuth2 tokens · vended creds</text>
+
+            <!-- Object Storage (bottom center) -->
+            <rect x="310" y="370" width="260" height="52" rx="7"
+                  fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="440" y="392" text-anchor="middle" font-size="13" font-weight="600" fill="#3A4252">Object Storage (L0)</text>
+            <text x="440" y="408" text-anchor="middle" font-size="10.5" fill="#5A6273">S3 · GCS · ADLS · MinIO</text>
+            <!-- Arrow: Object Storage ↔ Iceberg (bidirectional) -->
+            <line x1="440" y1="370" x2="440" y2="275" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <line x1="450" y1="275" x2="450" y2="370" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="358" y="318" width="165" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="440" y="330" text-anchor="middle" font-size="10" fill="#3A4252">reads/writes Parquet+Avro+JSON files</text>
+
+            <!-- File Formats (bottom-left) -->
+            <rect x="22" y="370" width="230" height="52" rx="7"
+                  fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="137" y="392" text-anchor="middle" font-size="13" font-weight="600" fill="#3A4252">File Formats (L1)</text>
+            <text x="137" y="408" text-anchor="middle" font-size="10.5" fill="#5A6273">Parquet (dominant) · ORC · Avro</text>
+            <!-- Arrow: File Formats → Iceberg (diagonal) -->
+            <line x1="215" y1="370" x2="345" y2="275" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="202" y="318" width="96" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="250" y="330" text-anchor="middle" font-size="10" fill="#3A4252">data file format</text>
+
+            <!-- Semantic Layer (bottom-right) -->
+            <rect x="628" y="370" width="230" height="52" rx="7"
+                  fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.4"/>
+            <text x="743" y="392" text-anchor="middle" font-size="13" font-weight="600" fill="#6B4E06">Semantic Layer (L6)</text>
+            <text x="743" y="408" text-anchor="middle" font-size="10.5" fill="#6B4E06">dbt · Cube · AtScale</text>
+            <!-- Arrow: Semantic → Iceberg -->
+            <line x1="660" y1="370" x2="540" y2="275" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="558" y="318" width="96" height="17" rx="8" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="606" y="330" text-anchor="middle" font-size="10" fill="#3A4252">compiled SQL via engine</text>
+
+            <!-- Legend -->
+            <rect x="22" y="442" width="836" height="58" rx="6" fill="#F5F6F8" stroke="#D5D9E0"/>
+            <text x="38" y="462" font-size="10.5" font-weight="700" fill="#5A6273">Legend:</text>
+            <rect x="95" y="452" width="12" height="12" rx="2" fill="#DCE8FB" stroke="#111418" stroke-width="2"/>
+            <text x="112" y="462" font-size="10" fill="#5A6273">Table Format (Iceberg)</text>
+            <rect x="255" y="452" width="12" height="12" rx="2" fill="#EADDF7" stroke="#7E4FB5"/>
+            <text x="272" y="462" font-size="10" fill="#5A6273">Catalog (L3)</text>
+            <rect x="355" y="452" width="12" height="12" rx="2" fill="#D6F0EE" stroke="#1F9E8F"/>
+            <text x="372" y="462" font-size="10" fill="#5A6273">Compute / Engine (L4)</text>
+            <rect x="495" y="452" width="12" height="12" rx="2" fill="#DEEFD9" stroke="#4A9A3C"/>
+            <text x="512" y="462" font-size="10" fill="#5A6273">Governance (L7)</text>
+            <rect x="608" y="452" width="12" height="12" rx="2" fill="#FAD9DC" stroke="#C8425A"/>
+            <text x="625" y="462" font-size="10" fill="#5A6273">Identity (L8)</text>
+            <rect x="700" y="452" width="12" height="12" rx="2" fill="#E8EBF0" stroke="#8A94A6"/>
+            <text x="717" y="462" font-size="10" fill="#5A6273">Storage / File (L0–L1)</text>
+
+            <text x="38" y="488" font-size="10.5" font-weight="700" fill="#5A6273">Key edges:</text>
+            <text x="110" y="488" font-size="10.5" fill="#5A6273">IRC ↔ Iceberg: HTTPS REST for CAS commit + credential vending  ·  Engines read manifest tree + vended creds to reach storage  ·  Governance harvests Iceberg snapshots for lineage</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure 5.</b> Apache Iceberg at the center of its ecosystem. Every edge is labelled with the actual mechanism. The IRC Catalog is the bidirectional control plane — engines load tables from it and commit transactions through it. Object storage is the physical substrate. Governance catalogs harvest metadata upward; the semantic layer reaches data through engine-compiled SQL.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Component</th><th>Layer</th><th>Connection mechanism</th><th>What crosses / direction</th></tr></thead>
+          <tbody>
+            <tr><td>Object Storage (S3/GCS/ADLS)</td><td>L0</td><td>S3 SDK / GCS client / ADLS SDK (direct file I/O)</td><td>All data and metadata files (Parquet, Avro manifests, JSON metadata files, Puffin blobs) — bidirectional</td></tr>
+            <tr><td>File Formats (Parquet/ORC/Avro)</td><td>L1</td><td>Embedded in data layer; Parquet writer/reader libraries</td><td>Data files: Iceberg tracks them, engines read them. Format declared per-file in manifest, not globally</td></tr>
+            <tr><td>IRC Catalog (Polaris, Glue, Gravitino…)</td><td>L3</td><td>HTTPS REST (IRC OpenAPI spec)</td><td>Metadata pointer (read); CAS commit with conflict detection (write); vended storage credentials (LoadTableResponse.config)</td></tr>
+            <tr><td>Trino / DuckDB / Athena</td><td>L4</td><td>Iceberg connector → IRC for metadata; direct file I/O for data</td><td>Manifest tree traversal; partition + file-level pruning; Parquet split reads using vended credentials</td></tr>
+            <tr><td>Apache Spark</td><td>L4</td><td>SparkCatalog + Iceberg extensions (SparkSessionExtensions)</td><td>Full DDL/DML, structured streaming, branching API, time travel syntax. DataFrame API over Iceberg snapshots</td></tr>
+            <tr><td>Apache Flink</td><td>L4</td><td>Flink Iceberg connector (IcebergSink, IcebergSource)</td><td>Streaming exactly-once writes; snapshot-based bounded reads; CDC upserts via equality deletes or DVs</td></tr>
+            <tr><td>Governance Catalog (DataHub, Atlan…)</td><td>L7</td><td>Metadata harvest from IRC via REST; optional direct Iceberg metadata scan</td><td>Schema, snapshot history, partition specs, data file counts (up) → classification tags, data quality rules (down)</td></tr>
+            <tr><td>Identity Provider / IAM / STS</td><td>L8</td><td>OAuth2/OIDC for catalog auth; cloud IAM AssumeRole for vended creds</td><td>JWT tokens to IRC; temporary storage credentials from STS scoped to table path; audit events to SIEM</td></tr>
+            <tr><td>Semantic Layer (dbt, Cube…)</td><td>L6</td><td>Compiled SQL via engine connector; no direct Iceberg protocol</td><td>Metric queries compiled to engine SQL (Trino/Spark) that walk the Iceberg manifest tree at execution time</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== 6. TRADE-OFFS ===== -->
+    <section id="tradeoffs">
+      <h2><span class="num">6</span>Trade-offs, failure modes &amp; when (not) to use it</h2>
+
+      <h3>Strengths</h3>
+      <p><strong>Genuine multi-engine neutrality.</strong> The Iceberg spec is owned by the Apache Software Foundation. No single vendor controls the format. Trino, Spark, Flink, DuckDB, Dremio, Athena, BigQuery Omni, and Snowflake External Tables can all read the same on-disk format. In practice, this matters most when you need to mix compute engines (e.g., Spark for heavy ETL, Trino for interactive BI, Flink for streaming ingestion) over a single data copy.</p>
+      <p><strong>Schema and partition evolution at zero data cost.</strong> Column-ID–based schema evolution and partition-spec versioning mean no rewrites for schema or partitioning changes — a significant operational advantage over Hive format and over Delta Lake, which uses LIQUID CLUSTERING to avoid this but requires a managed service in practice.</p>
+      <p><strong>ACID without a coordinator process.</strong> OCC via CAS on the catalog pointer gives serializable snapshot isolation with no long-running lock manager. Readers are always non-blocking. Concurrent writers are isolated until commit.</p>
+      <p><strong>Time travel and audit.</strong> Because every snapshot is immutable and the metadata file tracks the full snapshot log, any historical state is reachable by snapshot ID or by timestamp (within the snapshot expiry window). This is free — it requires no ETL, no CDC pipeline, no separate audit table.</p>
+
+      <h3>Failure modes and sharp edges</h3>
+      <p><strong>Small files — the primary operational hazard.</strong> Streaming ingestion produces many small data files per micro-batch. Each small file adds a manifest entry; reading a table with 10 million small files requires scanning manifests for 10 million entries before pruning, even if the query touches 100. The solution is regular compaction (<code>rewriteDataFiles</code> in the Iceberg Java API), but compaction has write amplification — it reads and rewrites existing data files — and must be tuned to run frequently enough to prevent manifest bloat without competing with live ingestion. Failing to run compaction is the single most common reason a production Iceberg table degrades over weeks.</p>
+      <p><strong>Equality delete scan amplification (v2 MOR).</strong> An equality delete file applies to all data files in the same partition with a lower sequence number. If a table has 1,000 data files in a partition and accumulates 50 equality delete files, reading any row from that partition requires checking 50 equality delete files against each of 1,000 data files — a cross product of 50,000 file interactions per partition, per query. This grows quadratically with both data file count and uncompacted delete file count. v3 deletion vectors eliminate this; for v2 MOR tables, aggressive compaction (which rewrites the data files, absorbing the deletes) is the only mitigation.</p>
+      <p><strong>Catalog pointer CAS contention.</strong> OCC assumes low conflict. In workloads where hundreds of concurrent writers all target the same table (e.g., a high-throughput streaming pipeline with many Flink tasks committing independently), CAS retries multiply. Each retry discards new metadata files and rebuilds them — CPU and I/O cost without data movement. The mitigation is to batch writes into fewer, larger commits (e.g., Flink's <code>checkpoint.interval</code> tuning) or use a branching model (commit to sub-branches and merge).</p>
+      <p><strong>Metadata file accumulation.</strong> Every commit writes a new metadata file. A table receiving 100 commits/day accumulates 36,500 metadata files per year. The <code>write.metadata.delete-after-commit.enabled</code> table property enables automatic cleanup, keeping only the last N metadata files. Without this, the metadata directory grows unboundedly, and the metadata log entries in each file also grow, increasing the parse cost of each catalog read.</p>
+      <p><strong>No native multi-table transactions in the spec.</strong> Iceberg v2 commits are atomic per table. Cross-table atomicity (e.g., "deduct from table A and credit to table B in a single atomic transaction") requires a catalog that implements multi-table branching (Nessie's git-model, or Unity Catalog's multi-table commit API). This is a real gap for use cases that need referential integrity across Iceberg tables.</p>
+
+      <h3>When to use Iceberg</h3>
+      <p>Iceberg is the right choice when you need open, multi-engine access to a governed analytical table at scale. The canonical pattern: Flink or Spark for streaming/batch ingestion, Trino for interactive BI, and a governance catalog for lineage and classification — all over one copy of data, with ACID guarantees and no vendor lock-in on the table format. It is also appropriate when schema or partition evolution will be frequent, since the zero-rewrite guarantees are a genuine operational advantage. Time travel and audit requirements (regulatory, debugging) are well-served by the immutable snapshot model.</p>
+
+      <h3>When not to use Iceberg</h3>
+      <p>Iceberg is a poor fit for high-frequency transactional workloads. If you need sub-second commit latency at hundreds of writes per second to a single table, the OCC model and metadata overhead will not keep up — use an operational database (Postgres, Lakebase) instead. For very small data (millions of rows, gigabytes), the metadata overhead per table (catalog, manifest files, metadata files) adds operational complexity without proportional benefit. For environments where running a catalog is not feasible, the Hadoop filesystem catalog is operationally unsafe on S3 (no atomic rename → data loss risk on concurrent writes); you must run a real catalog.</p>
+
+      <div class="callout warn">
+        <span class="tag">Production checklist</span>
+        <p>Run compaction (rewriteDataFiles) on a schedule keyed to your write frequency. Enable <code>write.metadata.delete-after-commit.enabled=true</code> and <code>write.metadata.previous-versions-max=100</code>. Run snapshot expiry (expireSnapshots) to bound time-travel retention and allow orphan file GC. Monitor manifest count per partition — above ~10,000 manifest entries per partition, query planning latency will be noticeable.</p>
+      </div>
+    </section>
+
+    <!-- ===== 7. ARCHITECT'S TAKE ===== -->
+    <section id="take">
+      <h2><span class="num">7</span>Architect's take</h2>
+
+      <p><strong>Iceberg has won the table format war for open platforms.</strong> That's not marketing — it's the observable state of ecosystem alignment as of 2026. AWS S3 Tables, Snowflake Open Catalog, Azure's preview support, Google Cloud's Lakehouse Iceberg REST Catalog, and every major query engine shipping Iceberg connectors is not a coincidence. The ASF governance and the clean separation of the table spec from the catalog spec (IRC) are the structural reasons. The practical implication: new analytical table investments on open storage should default to Iceberg unless there is a specific, justified reason to prefer Delta Lake (e.g., a deeply Databricks-native stack where Liquid Clustering's auto-optimize is operationally valuable).</p>
+
+      <p><strong>The IRC catalog is the real control plane decision.</strong> Where you run your catalog (Apache Polaris, Unity Catalog OSS, Apache Gravitino, Lakekeeper, Nessie, AWS Glue) determines your auth model, your credential vending capability, your multi-table transaction support, and your governance integration surface. Iceberg's own on-disk format is stable; the catalog ecosystem is still consolidating. In 2026, Apache Polaris is the ASF-native choice; Databricks Unity Catalog is the most feature-complete for Databricks shops; Nessie is the right answer for teams that want git-style branching semantics. Pick based on operational maturity and governance requirements, not marketing.</p>
+
+      <p><strong>v3 deletion vectors close the Delta Lake MOR gap.</strong> If your workload is high-update streaming (CDC pipelines, event corrections, late-arriving records), v2 Iceberg MOR was a pragmatic trade-off against a growing read penalty. v3 deletion vectors change that equation: the per-file bitmap approach has read overhead proportional to the bitmap size, not to the number of deletes — it scales cleanly. As of mid-2026, v3 is in public preview on AWS (S3 Tables), Databricks, and Snowflake; Trino and Flink v3 support is in active development. Evaluate whether your catalog and engine support v3 before planning for it.</p>
+
+      <p><strong>Watch over the next 12–18 months:</strong> (1) Iceberg v3 full ecosystem adoption — particularly Trino and Flink native deletion vector support; (2) IRC catalog consolidation — Polaris vs. Gravitino vs. Lakekeeper for the ASF-native slot; (3) multi-table transaction support becoming a standard IRC feature, which would remove Iceberg's last major limitation relative to warehouse systems; (4) Iceberg as the substrate for operational tables (Lakebase / OLTP-on-Iceberg) — the boundary between the analytical and operational lakehouse is actively dissolving.</p>
+
+      <div class="callout note" style="margin-top:18px;">
+        <span class="tag">Interactive Tool</span>
+        <p><a href="iceberg-operations.html">Apache Iceberg — Operations &amp; Disk Layout</a> — step-by-step walkthrough of all six core operations (Create, Append, Query, Update, Delete, Compaction) with a live disk-layout visualizer and file-content inspector for every metadata and data file.</p>
+      </div>
+    </section>
+
+    <!-- ===== GLOSSARY ===== -->
+
+        <section id="glossary">
+      <h2>Glossary</h2>
+      <dl class="glossary">
+        <dt>CAS (Compare-and-Swap)</dt><dd>An atomic operation: "if the current value equals X, set it to Y; otherwise, report failure." The catalog's CAS on the metadata file path is what gives Iceberg ACID.</dd>
+        <dt>Credential vending</dt><dd>The IRC catalog's mechanism for returning short-lived, path-scoped cloud storage credentials (AWS STS temporary keys, GCS access tokens) alongside table metadata, so engines never hold long-lived storage keys.</dd>
+        <dt>Deletion vector (v3)</dt><dd>A per-data-file bitmap stored as a Puffin blob. Each bit corresponds to a row; set bits mark deleted rows. Replaces positional and equality delete files in Iceberg v3.</dd>
+        <dt>Equality delete file (v2)</dt><dd>A file specifying rows to logically delete by matching column values (e.g., <code>order_id = 1234</code>). Applied at read time by joining against every data file with a lower sequence number in the same partition.</dd>
+        <dt>Hidden partitioning</dt><dd>Iceberg stores partition transforms (e.g., <code>HOUR(ts)</code>) in the metadata file; queries filter on the base column (<code>WHERE ts &gt; …</code>) and Iceberg prunes partitions transparently, without the query knowing the physical layout.</dd>
+        <dt>Manifest file</dt><dd>An Avro file tracking a subset of data or delete files for one snapshot, including per-file column statistics. Written incrementally by each writer.</dd>
+        <dt>Manifest list</dt><dd>An Avro file listing all manifest files for one snapshot, with per-manifest partition column ranges for partition-level pruning. Equivalent to "a snapshot."</dd>
+        <dt>Metadata file</dt><dd>A JSON file at the root of the metadata tree. Contains table UUID, schema history, partition spec history, snapshot list, and pointer to current snapshot. Written on every commit; never mutated.</dd>
+        <dt>OCC (Optimistic Concurrency Control)</dt><dd>A concurrency strategy where writers proceed without locking, checking for conflicts only at commit time via CAS. Write conflicts result in retry, not blocking.</dd>
+        <dt>Partition evolution</dt><dd>Changing the partition strategy (adding, dropping, or transforming partition fields) without rewriting historical data files. New files use the new spec; old manifests retain the old spec-id.</dd>
+        <dt>Puffin file</dt><dd>A binary file format for statistical blobs associated with an Iceberg snapshot. Used for Theta sketches (approximate NDV) and deletion vector bitmaps (v3).</dd>
+        <dt>Sequence number</dt><dd>A monotonically increasing integer assigned per snapshot. Delete files apply only to data files with strictly lower sequence numbers, preventing tombstone resurrection.</dd>
+      </dl>
+    </section>
+
+    <!-- ===== SOURCES ===== -->
+    <section id="sources">
+      <h2>Sources</h2>
+      <ul class="sources">
+        <li><span class="tier book">Book</span><a href="https://www.oreilly.com/library/view/apache-iceberg-the/9781098148614/">Shiran, Hughes, Merced — <em>Apache Iceberg: The Definitive Guide</em> (O'Reilly, 2024)</a> — primary anchor for architecture chapters (Ch.2 metadata tree, Ch.3 write/read lifecycle, Ch.5 catalog comparison, Ch.12 governance/security). All structural claims in §1, §3, §4 trace here.</li>
+        <li><span class="tier spec">Spec</span><a href="https://iceberg.apache.org/spec/">Apache Iceberg Table Spec (iceberg.apache.org)</a> — canonical reference for format versions, metadata file schema, manifest schema, sequence number semantics, deletion vector spec (v3). Ground truth for any protocol detail.</li>
+        <li><span class="tier spec">Spec</span><a href="https://github.com/apache/iceberg/blob/main/open-api/rest-catalog-open-api.yaml">Iceberg REST Catalog OpenAPI Spec (apache/iceberg on GitHub)</a> — definitive for IRC endpoints, <code>LoadTableResponse</code> structure, credential vending header, commit semantics. Confirms §4 auth flow details.</li>
+        <li><span class="tier docs">Docs</span><a href="https://iceberg.apache.org/docs/latest/evolution/">Apache Iceberg — Evolution (iceberg.apache.org/docs)</a> — schema evolution guarantees, column-ID semantics, partition evolution mechanics. Backs §3 evolution section.</li>
+        <li><span class="tier docs">Docs</span><a href="https://iceberg.apache.org/rest-catalog-spec/">Apache Iceberg REST Catalog Spec (iceberg.apache.org)</a> — supplementary to the OpenAPI YAML; human-readable overview of IRC protocol.</li>
+        <li><span class="tier docs">Docs</span><a href="https://aws.amazon.com/blogs/big-data/accelerate-data-lake-operations-with-apache-iceberg-v3-deletion-vectors-and-row-lineage/">AWS Big Data Blog — Iceberg V3 Deletion Vectors and Row Lineage (Nov 2025)</a> — confirms v3 feature set, AWS support timeline, deletion vector mechanics. Tier 2 practitioner from primary implementor.</li>
+        <li><span class="tier docs">Docs</span><a href="https://www.databricks.com/blog/apache-icebergtm-v3-moving-ecosystem-towards-unification">Databricks Blog — Apache Iceberg v3: Moving the Ecosystem Towards Unification</a> — Databricks v3 support announcement; confirms Databricks Runtime 18.0 public preview. Tier 1 for vendor's own positioning.</li>
+        <li><span class="tier docs">Docs</span><a href="https://opensource.googleblog.com/2025/08/whats-new-in-iceberg-v3.html">Google Open Source Blog — What's New in Apache Iceberg v3 (Aug 2025)</a> — v3 feature summary (VARIANT, geospatial, nanosecond timestamps, row lineage). Confirms feature list from Google's implementor perspective.</li>
+        <li><span class="tier docs">Docs</span><a href="https://www.snowflake.com/en/blog/apache-iceberg-v3-support/">Snowflake — Announcing Apache Iceberg v3 Support</a> — Snowflake public preview for v3; confirms industry-wide adoption pace for §7 timing claims.</li>
+        <li><span class="tier paper">Paper</span><a href="https://www.cidrdb.org/cidr2021/papers/cidr2021_paper17.pdf">Armbrust et al. — Lakehouse: A New Generation of Open Platforms (CIDR 2021)</a> — foundational paper establishing the lakehouse pattern. Backs §2 placement and the Lake vs. Warehouse vs. Lakehouse table.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://medium.com/data-engineering-with-dremio/iceberg-rest-catalog-overview-3-oauth-authentication-34dc06a6aa20">Alex Merced (Dremio) — Iceberg REST Catalog Overview #3: OAuth Authentication</a> — detailed walkthrough of IRC OAuth2 flow; confirms oauth2-server-uri deprecation path and external IdP requirement.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://www.starburst.io/blog/iceberg-v3/">Starburst — Iceberg v3: Getting Started</a> — v3 feature overview from Trino ecosystem perspective; useful for §7 engine adoption status.</li>
+      </ul>
+    </section>
+
+    <div class="footer">
+      Data Platform Deep-Dive · Generated 2026-05-23 · Accuracy-first; no marketing fluff.
+      Verify time-sensitive claims (v3 engine support, IRC implementation maturity) against cited sources — this space moves quarterly.
+    </div>
+
+  </main>
+</div>
+
+<!-- Width control pill -->
+<div class="wc">
+  <span class="wc-label">Width</span>
+  <div class="wc-sep"></div>
+  <button onclick="setW('1180px')" id="wc-r">Reading</button>
+  <button onclick="setW('1480px')" id="wc-w">Wide</button>
+  <button onclick="setW('98vw')" id="wc-f">Full</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad:true, securityLevel:'loose', theme:'base' });
+  }
+  /* TOC scrollspy */
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var map = {};
+    links.forEach(function(a){ var id=a.getAttribute('href').slice(1); var el=document.getElementById(id); if(el) map[id]=a; });
+    var obs = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){ if(e.isIntersecting){ links.forEach(function(l){l.classList.remove('active');}); if(map[e.target.id]) map[e.target.id].classList.add('active'); } });
+    }, {rootMargin:'-15% 0px -75% 0px'});
+    Object.keys(map).forEach(function(id){ var el=document.getElementById(id); if(el) obs.observe(el); });
+  })();
+  /* Width control */
+  function setW(v){
+    document.documentElement.style.setProperty('--wrap-max', v);
+    ['wc-r','wc-w','wc-f'].forEach(function(id){ document.getElementById(id).classList.remove('wc-active'); });
+    var t = v==='1180px'?'wc-r':v==='1480px'?'wc-w':'wc-f';
+    document.getElementById(t).classList.add('wc-active');
+  }
+  setW('1180px');
+</script>
+</body>
+</html>

@@ -1,0 +1,2069 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Apache Iceberg — Operations & Disk Layout</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #F0EEE6; --surface: #E8E4DA; --surface2: #DCD7C9;
+    --border: #D6D2C5; --accent: #CC785C; --accent2: #7B5C75;
+    --green: #5E7E4F; --red: #A8483C; --yellow: #A8842F;
+    --orange: #C57A3D; --teal: #4A776F; --pink: #9F6E7C;
+    --text: #1F1B17; --muted: #6B6760; --dim: #9A968D;
+    --new-file: #5E7E4F; --deleted-file: #A8483C; --existing-file: #6B8FA8;
+    --serif: 'Source Serif 4', 'Tiempos Headline', Georgia, serif;
+    --sans:  'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
+
+  /* Header */
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+  .header h1 { font-family: var(--serif); font-size: 17px; font-weight: 600; letter-spacing: -0.005em; color: var(--text); }
+  .header .subtitle { font-size: 12px; color: var(--muted); }
+  .iceberg-logo { width: 28px; height: 28px; background: linear-gradient(135deg, #CC785C, #A85F47); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+
+  /* Op tabs */
+  .op-tabs { display: flex; gap: 4px; background: var(--surface); padding: 10px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; overflow-x: auto; }
+  .op-tab { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: all 0.15s; font-family: var(--sans); }
+  .op-tab:hover { color: var(--text); border-color: var(--accent); background: var(--surface2); }
+  .op-tab.active { background: var(--accent); color: #FAF8F0; border-color: var(--accent); }
+
+  /* Main layout */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Steps panel */
+  .steps-panel { width: 220px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto; }
+  .steps-header { padding: 12px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 600; }
+  .step-item { padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: flex-start; gap: 10px; transition: background 0.1s; }
+  .step-item:hover { background: var(--surface2); }
+  .step-item.active { background: rgba(204,120,92,0.12); border-left: 2px solid var(--accent); }
+  .step-num { width: 20px; height: 20px; border-radius: 50%; background: var(--bg); border: 1px solid var(--border); font-size: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--muted); margin-top: 1px; }
+  .step-item.done .step-num { background: var(--green); border-color: var(--green); color: #FAF8F0; }
+  .step-item.active .step-num { background: var(--accent); border-color: var(--accent); color: #FAF8F0; }
+  .step-title { font-size: 12px; line-height: 1.4; color: var(--muted); }
+  .step-item.active .step-title { color: var(--text); }
+
+  /* Center: disk view */
+  .disk-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .disk-header { padding: 10px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 600; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .disk-body { flex: 1; overflow-y: auto; padding: 12px; }
+
+  /* File tree */
+  .file-tree { font-family: 'Courier New', monospace; font-size: 12px; }
+  .tree-section { margin-bottom: 8px; }
+  .tree-section-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; padding: 4px 0; }
+  .tree-node { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 4px; cursor: pointer; transition: all 0.15s; border: 1px solid transparent; }
+  .tree-node:hover { background: var(--surface2); }
+  .tree-node.selected { background: rgba(204,120,92,0.14); border-color: var(--accent); }
+  .tree-node.new { animation: fileAppear 0.4s ease; }
+  .tree-node.highlight-new { background: rgba(94,126,79,0.12); border-color: rgba(94,126,79,0.45); }
+  .tree-node.highlight-del { background: rgba(168,72,60,0.10); border-color: rgba(168,72,60,0.35); text-decoration: line-through; color: var(--red); }
+  .tree-node.highlight-mod { background: rgba(168,132,47,0.12); border-color: rgba(168,132,47,0.40); }
+  @keyframes fileAppear { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+  .tree-indent { display: inline-block; width: 16px; flex-shrink: 0; }
+  .tree-icon { font-size: 13px; flex-shrink: 0; width: 16px; text-align: center; }
+  .tree-name { flex: 1; color: var(--text); }
+  .tree-tag { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 600; letter-spacing: 0.05em; flex-shrink: 0; }
+  .tag-new { background: rgba(94,126,79,0.22); color: var(--green); }
+  .tag-mod { background: rgba(168,132,47,0.22); color: var(--yellow); }
+  .tag-del { background: rgba(168,72,60,0.22); color: var(--red); }
+  .tag-reuse { background: rgba(107,143,168,0.20); color: var(--existing-file); }
+
+  /* Right: file content panel */
+  .content-panel { width: 380px; border-left: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+  .content-header { padding: 10px 14px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; font-family: monospace; flex-shrink: 0; }
+  .content-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+  .content-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 40px 20px; line-height: 1.6; }
+  pre.file-content { font-family: 'JetBrains Mono', 'SF Mono', 'Courier New', monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; color: var(--text); background: var(--surface2); padding: 12px; border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; }
+  .json-key { color: var(--accent2); font-weight: 600; }
+  .json-str { color: var(--green); }
+  .json-num { color: var(--orange); }
+  .json-bool { color: var(--yellow); }
+  .json-comment { color: var(--muted); font-style: italic; }
+
+  /* Explanation box */
+  .explain-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+  .explain-title { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .explain-text { font-size: 12px; color: var(--text); line-height: 1.65; }
+  .explain-text strong { color: var(--accent); font-weight: 600; }
+  .explain-text code { background: rgba(31,27,23,0.06); padding: 1px 5px; border-radius: 3px; font-family: 'JetBrains Mono', 'SF Mono', 'Courier New', monospace; font-size: 11px; color: var(--accent); }
+
+  /* Legend */
+  .legend { display: flex; gap: 12px; align-items: center; font-size: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* Nav buttons */
+  .nav-bar { padding: 10px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-shrink: 0; background: var(--surface); }
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-family: var(--sans); cursor: pointer; transition: all 0.15s; }
+  .btn:hover { background: var(--surface2); border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #FAF8F0; }
+  .btn.primary:hover { background: #B86A4C; border-color: #B86A4C; color: #FAF8F0; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .step-info { flex: 1; font-size: 12px; color: var(--muted); text-align: center; }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 3px; }
+
+  /* Partition viz */
+  .partition-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
+  .partition-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; text-align: center; font-size: 10px; }
+  .partition-box.hit { border-color: var(--green); background: rgba(94,126,79,0.10); }
+  .partition-box.skip { border-color: var(--red); background: rgba(168,72,60,0.09); opacity: 0.5; }
+  .partition-box .p-label { color: var(--muted); font-size: 9px; }
+  .partition-box .p-val { color: var(--text); font-weight: 600; margin: 2px 0; font-size: 11px; }
+  .partition-box .p-files { color: var(--accent); font-size: 9px; }
+  .partition-box.hit .p-label { color: var(--green); }
+  .partition-box.skip .p-label { color: var(--red); }
+
+  .scan-flow { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+  .scan-step { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 5px; font-size: 11px; border: 1px solid var(--border); }
+  .scan-step.pass { border-color: rgba(94,126,79,0.35); background: rgba(94,126,79,0.07); }
+  .scan-step.skip { border-color: rgba(168,72,60,0.35); background: rgba(168,72,60,0.07); color: var(--red); }
+  .scan-icon { font-size: 12px; width: 16px; }
+
+  .dv-viz { margin: 8px 0; }
+  .dv-row { display: flex; gap: 2px; flex-wrap: wrap; margin: 4px 0; }
+  .dv-bit { width: 16px; height: 16px; border-radius: 2px; font-size: 9px; display: flex; align-items: center; justify-content: center; font-family: monospace; border: 1px solid var(--border); }
+  .dv-bit.live { background: rgba(204,120,92,0.20); color: var(--accent); border-color: var(--accent); }
+  .dv-bit.dead { background: rgba(168,72,60,0.20); color: var(--red); border-color: var(--red); }
+
+  /* Pointer chain diagram */
+  .chain-wrap { margin: 8px 0 12px; }
+  .chain-row { display: flex; align-items: stretch; gap: 0; }
+  .chain-node { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-width: 0; flex: 1; }
+  .chain-node.highlight { border-color: var(--accent); background: rgba(204,120,92,0.10); }
+  .chain-node-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 4px; font-weight: 600; }
+  .chain-node-name { font-family: monospace; font-size: 11px; color: var(--accent2); font-weight: 600; margin-bottom: 6px; }
+  .chain-node-fields { font-family: monospace; font-size: 10px; line-height: 1.7; color: var(--muted); }
+  .chain-field-key { color: var(--dim); }
+  .chain-field-val { color: var(--text); }
+  .chain-field-ptr { color: var(--green); font-weight: 600; }
+  .chain-arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 6px; flex-shrink: 0; gap: 2px; }
+  .chain-arrow-line { width: 2px; flex: 1; background: var(--border); }
+  .chain-arrow-label { font-size: 9px; color: var(--green); writing-mode: vertical-rl; text-orientation: mixed; letter-spacing: 0.05em; white-space: nowrap; padding: 4px 0; }
+  .chain-arrow-head { color: var(--green); font-size: 12px; }
+  .chain-connector { display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0 4px; }
+  .chain-connector-inner { display: flex; flex-direction: column; align-items: center; }
+  .chain-h-line { height: 2px; width: 18px; background: var(--green); }
+  .chain-h-arrow { color: var(--green); font-size: 14px; line-height: 1; }
+  .chain-h-label { font-size: 9px; color: var(--green); white-space: nowrap; margin-top: 2px; }
+  .chain-section { margin-bottom: 6px; }
+  .chain-section-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.07em; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="iceberg-logo">🧊</div>
+  <div>
+    <div class="header h1">Apache Iceberg — Operations & Disk Layout</div>
+    <div class="subtitle">Click a file in the tree to see its content • Navigate steps with buttons below</div>
+  </div>
+</div>
+
+<div class="op-tabs" id="opTabs"></div>
+
+<div class="main">
+  <div class="steps-panel">
+    <div class="steps-header">Steps</div>
+    <div id="stepsList"></div>
+  </div>
+
+  <div class="disk-panel">
+    <div class="disk-header">
+      <span>📁 Disk Layout</span>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div><span style="color:var(--muted)">New</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div><span style="color:var(--muted)">Modified</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div><span style="color:var(--muted)">Logically deleted</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div><span style="color:var(--muted)">Reused</span></div>
+      </div>
+    </div>
+    <div class="disk-body" id="diskBody"></div>
+    <div class="nav-bar">
+      <button class="btn" id="prevBtn" onclick="navigate(-1)">← Prev</button>
+      <div class="step-info" id="stepInfo"></div>
+      <button class="btn primary" id="nextBtn" onclick="navigate(1)">Next →</button>
+    </div>
+  </div>
+
+  <div class="content-panel">
+    <div class="content-header" id="contentHeader">
+      <span>📄</span><span>Select a file to inspect</span>
+    </div>
+    <div class="content-body" id="contentBody">
+      <div class="content-empty">Click any file in the disk layout to see its content and structure</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── DATA MODEL ─────────────────────────────────────────────────────────────
+const OPS = [
+  { id: 'create', label: '1. Create Table' },
+  { id: 'append', label: '2. Adding Data' },
+  { id: 'query',  label: '3. Querying Data' },
+  { id: 'update', label: '4. Updating Data' },
+  { id: 'delete', label: '5. Deleting Data' },
+  { id: 'compact', label: '6. Compaction' },
+];
+
+// Each step: { title, explain, files, selectedFile }
+// files: array of { path, type:'new'|'existing'|'deleted'|'reused', icon, content }
+const STEPS = {
+create: [
+  {
+    title: "Before: Nothing exists",
+    explain: {
+      title: "Starting point",
+      text: "No files on disk yet. We will issue <code>CREATE TABLE events (id LONG, ts TIMESTAMP, user_id LONG, payload STRING) PARTITIONED BY (day(ts))</code>."
+    },
+    files: [],
+    selectedFile: null
+  },
+  {
+    title: "Write v1.metadata.json",
+    explain: {
+      title: "Step 1 — Engine writes the metadata file",
+      text: "The engine creates the first metadata file. It defines the <strong>table UUID</strong>, the full schema (with stable column IDs, not names), the partition spec using the <code>day(ts)</code> transform, and sets <code>current-snapshot-id: -1</code> (no snapshots yet). This file is <strong>written to object storage first</strong>, before touching the catalog."
+    },
+    files: [
+      { path: 'metadata/v1.metadata.json', type: 'new', icon: '📋', id: 'meta_v1_create' }
+    ],
+    selectedFile: 'meta_v1_create'
+  },
+  {
+    title: "Catalog CAS: null → v1.metadata.json",
+    explain: {
+      title: "Step 2 — Atomic catalog commit",
+      text: "The catalog does a <strong>compare-and-swap</strong>: it atomically swaps the table pointer from <code>null</code> (doesn't exist) to <code>s3://warehouse/events/metadata/v1.metadata.json</code>. This is the only mutable operation. If it fails (concurrent create), the metadata file is abandoned and becomes an orphan — cleaned up later by <code>remove_orphan_files</code>."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v1.metadata.json', type: 'new', icon: '🔗', id: 'catalog_create' },
+      { path: 'metadata/v1.metadata.json', type: 'existing', icon: '📋', id: 'meta_v1_create2' }
+    ],
+    selectedFile: 'catalog_create'
+  }
+],
+
+append: [
+  {
+    title: "Before: Empty table",
+    explain: {
+      title: "State after CREATE TABLE",
+      text: "The catalog pointer exists, <code>v1.metadata.json</code> has <code>current-snapshot-id: -1</code>. No data files, no manifests. We're about to run: <code>INSERT INTO events VALUES (...)</code> loading 3 days of data."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v1.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_pre' },
+      { path: 'metadata/v1.metadata.json', type: 'existing', icon: '📋', id: 'meta_v1_pre' },
+    ],
+    selectedFile: 'meta_v1_pre'
+  },
+  {
+    title: "Write 3 data files (one per day partition)",
+    explain: {
+      title: "Step 1 — Engine writes immutable Parquet files",
+      text: "Three Parquet data files are written to object storage — one per <code>day(ts)</code> partition value. These files are <strong>immutable from birth</strong>. Their paths include a UUID so they never collide. They are invisible to readers until a metadata commit points at them."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v1.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_a1' },
+      { path: 'metadata/v1.metadata.json', type: 'existing', icon: '📋', id: 'meta_v1_a1' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'new', icon: '🗃️', id: 'data001' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'new', icon: '🗃️', id: 'data002' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'new', icon: '🗃️', id: 'data003' },
+    ],
+    selectedFile: 'data001'
+  },
+  {
+    title: "Write manifest m0.avro",
+    explain: {
+      title: "Step 2 — Manifest indexes the 3 new files",
+      text: "A single manifest Avro file lists all 3 data files. For each file it records: path, partition value, record count, file size, and <strong>per-column min/max bounds for every column</strong> (keyed by column ID, not name). These stats are what make pruning possible at query time."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v1.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_a2' },
+      { path: 'metadata/v1.metadata.json', type: 'existing', icon: '📋', id: 'meta_v1_a2' },
+      { path: 'metadata/m0-snap1.avro', type: 'new', icon: '📊', id: 'manifest_m0' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_a2' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_a2' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_a2' },
+    ],
+    selectedFile: 'manifest_m0'
+  },
+  {
+    title: "Write snap-1 manifest list",
+    explain: {
+      title: "Step 3 — Manifest list = table of contents for this snapshot",
+      text: "The manifest list is an Avro file with <strong>one row per manifest</strong>. Each row carries the manifest path plus <strong>partition-field summaries</strong> (min/max of partition values across all entries in that manifest). These summaries allow the query planner to prune whole manifests without opening them."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v1.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_a3' },
+      { path: 'metadata/v1.metadata.json', type: 'existing', icon: '📋', id: 'meta_v1_a3' },
+      { path: 'metadata/snap-1-list-uuid.avro', type: 'new', icon: '📋', id: 'mflist_snap1' },
+      { path: 'metadata/m0-snap1.avro', type: 'existing', icon: '📊', id: 'manifest_m0_a3' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_a3' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_a3' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_a3' },
+    ],
+    selectedFile: 'mflist_snap1'
+  },
+  {
+    title: "Write v2.metadata.json + CAS catalog",
+    explain: {
+      title: "Step 4 — New metadata file + atomic commit",
+      text: "A new <code>v2.metadata.json</code> is written with <code>current-snapshot-id: 1</code> pointing to the new snapshot. Then the catalog does <strong>CAS: v1.metadata.json → v2.metadata.json</strong>. Until this swap, readers see an empty table. After it, all 3 data files are atomically visible. No partial state is ever exposed."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v2.metadata.json', type: 'new', icon: '🔗', id: 'catalog_a4' },
+      { path: 'metadata/v2.metadata.json', type: 'new', icon: '📋', id: 'meta_v2_a4' },
+      { path: 'metadata/v1.metadata.json', type: 'existing', icon: '📋', id: 'meta_v1_a4' },
+      { path: 'metadata/snap-1-list-uuid.avro', type: 'existing', icon: '📋', id: 'mflist_snap1_a4' },
+      { path: 'metadata/m0-snap1.avro', type: 'existing', icon: '📊', id: 'manifest_m0_a4' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_a4' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_a4' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_a4' },
+    ],
+    selectedFile: 'meta_v2_a4',
+    pointerChainViz: true
+  },
+  {
+    title: "Streaming microbatch (2nd append)",
+    explain: {
+      title: "Step 5 — Second append: manifest reuse",
+      text: "A streaming microbatch adds one more file to the <code>2026-05-14</code> partition. Iceberg writes: 1 new data file, 1 new small manifest <code>m1.avro</code>, a new manifest list that references <strong>m0 (reused untouched) + m1</strong>, and a new metadata file. The cost of this commit is proportional to the change — <code>m0</code> indexing 3 files is never rewritten."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v3.metadata.json', type: 'new', icon: '🔗', id: 'catalog_a5' },
+      { path: 'metadata/v3.metadata.json', type: 'new', icon: '📋', id: 'meta_v3_a5' },
+      { path: 'metadata/snap-2-list-uuid.avro', type: 'new', icon: '📋', id: 'mflist_snap2' },
+      { path: 'metadata/m1-snap2.avro', type: 'new', icon: '📊', id: 'manifest_m1' },
+      { path: 'metadata/m0-snap1.avro', type: 'reused', icon: '📊', id: 'manifest_m0_a5' },
+      { path: 'data/day=2026-05-14/data-004-uuid.parquet', type: 'new', icon: '🗃️', id: 'data004' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_a5' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_a5' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_a5' },
+    ],
+    selectedFile: 'mflist_snap2'
+  }
+],
+
+query: [
+  {
+    title: "Query: WHERE ts >= '2026-05-14'",
+    explain: {
+      title: "The read path is a sequence of pruning gates",
+      text: "Query: <code>SELECT * FROM events WHERE ts >= '2026-05-14'</code>. Iceberg executes <strong>7 pruning stages</strong> — each cheaper than the next layer it protects. Click each scan step to see what's pruned and why. Only 2 of 4 files will be scanned."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v3.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_q' },
+      { path: 'metadata/v3.metadata.json', type: 'existing', icon: '📋', id: 'meta_v3_q' },
+      { path: 'metadata/snap-2-list-uuid.avro', type: 'existing', icon: '📋', id: 'mflist_q' },
+      { path: 'metadata/m0-snap1.avro', type: 'existing', icon: '📊', id: 'manifest_m0_q' },
+      { path: 'metadata/m1-snap2.avro', type: 'existing', icon: '📊', id: 'manifest_m1_q' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_q' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_q' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_q' },
+      { path: 'data/day=2026-05-14/data-004-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data004_q' },
+    ],
+    selectedFile: 'meta_v3_q',
+    queryViz: true
+  }
+],
+
+update: [
+  {
+    title: "UPDATE: Copy-on-Write mode",
+    explain: {
+      title: "COW: entire file is rewritten",
+      text: "<code>UPDATE events SET payload='redacted' WHERE user_id=42</code> — with <code>write.update.mode=copy-on-write</code>. The engine finds which files contain <code>user_id=42</code> rows (using manifest stats), reads those files in full, rewrites them with the updated rows, and marks the originals as deleted in the new snapshot. <strong>Write amplification</strong>: one row change → entire file rewritten."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v4.metadata.json', type: 'new', icon: '🔗', id: 'catalog_cow' },
+      { path: 'metadata/v4.metadata.json', type: 'new', icon: '📋', id: 'meta_v4_cow' },
+      { path: 'metadata/snap-3-list-uuid.avro', type: 'new', icon: '📋', id: 'mflist_snap3' },
+      { path: 'metadata/m2-snap3.avro', type: 'new', icon: '📊', id: 'manifest_m2' },
+      { path: 'data/day=2026-05-14/data-005-rewritten.parquet', type: 'new', icon: '🗃️', id: 'data005_cow' },
+      { path: 'metadata/m0-snap1.avro', type: 'reused', icon: '📊', id: 'manifest_m0_cow' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'deleted', icon: '🗃️', id: 'data003_cow' },
+      { path: 'data/day=2026-05-14/data-004-uuid.parquet', type: 'deleted', icon: '🗃️', id: 'data004_cow' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_cow' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_cow' },
+    ],
+    selectedFile: 'data005_cow'
+  },
+  {
+    title: "UPDATE: Merge-on-Read (v2 — equality delete)",
+    explain: {
+      title: "MOR v2: write a tiny equality delete file instead",
+      text: "Same UPDATE but with <code>write.update.mode=merge-on-read</code> (v2 table). Instead of rewriting the data file, the engine writes a tiny <strong>equality delete file</strong> containing just <code>user_id=42</code> and the new payload. On read, the engine must anti-join this against every candidate file. <strong>The data files are physically unchanged.</strong>"
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v4.metadata.json', type: 'new', icon: '🔗', id: 'catalog_mor2' },
+      { path: 'metadata/v4.metadata.json', type: 'new', icon: '📋', id: 'meta_v4_mor2' },
+      { path: 'metadata/snap-3-list-uuid.avro', type: 'new', icon: '📋', id: 'mflist_snap3_mor2' },
+      { path: 'metadata/m-eq-delete.avro', type: 'new', icon: '🗑️', id: 'eq_delete_manifest' },
+      { path: 'deletes/eq-delete-user42.avro', type: 'new', icon: '❌', id: 'eq_delete_file' },
+      { path: 'data/day=2026-05-14/data-005-new-row.parquet', type: 'new', icon: '🗃️', id: 'data005_mor2' },
+      { path: 'metadata/m0-snap1.avro', type: 'reused', icon: '📊', id: 'manifest_m0_mor2' },
+      { path: 'metadata/m1-snap2.avro', type: 'reused', icon: '📊', id: 'manifest_m1_mor2' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_mor2' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_mor2' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_mor2' },
+      { path: 'data/day=2026-05-14/data-004-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data004_mor2' },
+    ],
+    selectedFile: 'eq_delete_file',
+    morV2ReadViz: true
+  },
+  {
+    title: "UPDATE: Merge-on-Read (v3 — deletion vector)",
+    explain: {
+      title: "MOR v3: Roaring bitmap DV replaces delete files",
+      text: "In a v3 table, instead of separate delete files, the engine updates a <strong>deletion vector</strong> (a Roaring bitmap) stored in a Puffin sidecar file, one per data file. The spec mandates <strong>exactly one DV per data file</strong> — a second update merges into the existing bitmap, never creates a new file. O(1) bitmap check per row at read time. No anti-join, no fan-out."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v4.metadata.json', type: 'new', icon: '🔗', id: 'catalog_mor3' },
+      { path: 'metadata/v4.metadata.json', type: 'new', icon: '📋', id: 'meta_v4_mor3' },
+      { path: 'metadata/snap-3-list-uuid.avro', type: 'new', icon: '📋', id: 'mflist_snap3_mor3' },
+      { path: 'metadata/m-dv.avro', type: 'new', icon: '📊', id: 'dv_manifest' },
+      { path: 'data/day=2026-05-14/data-003-uuid.puffin', type: 'new', icon: '💾', id: 'puffin_dv3' },
+      { path: 'data/day=2026-05-14/data-004-uuid.puffin', type: 'new', icon: '💾', id: 'puffin_dv4' },
+      { path: 'data/day=2026-05-14/data-005-new-row.parquet', type: 'new', icon: '🗃️', id: 'data005_mor3' },
+      { path: 'metadata/m0-snap1.avro', type: 'reused', icon: '📊', id: 'manifest_m0_mor3' },
+      { path: 'metadata/m1-snap2.avro', type: 'reused', icon: '📊', id: 'manifest_m1_mor3' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_mor3' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_mor3' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_mor3' },
+      { path: 'data/day=2026-05-14/data-004-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data004_mor3' },
+    ],
+    selectedFile: 'puffin_dv3',
+    dvViz: true,
+    morV3ReadViz: true
+  }
+],
+
+delete: [
+  {
+    title: "DELETE (GDPR): rows scattered across files",
+    explain: {
+      title: "The scenario: scattered row deletion",
+      text: "<code>DELETE FROM events WHERE user_id=999</code> — the GDPR-style case. Rows matching <code>user_id=999</code> are scattered across <code>data-003</code> and <code>data-004</code>. We will see how v2 and v3 handle this differently, and then what <strong>compaction</strong> does to materialise the deletes."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v3.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_del0' },
+      { path: 'metadata/v3.metadata.json', type: 'existing', icon: '📋', id: 'meta_v3_del0' },
+      { path: 'metadata/snap-2-list-uuid.avro', type: 'existing', icon: '📋', id: 'mflist_del0' },
+      { path: 'metadata/m0-snap1.avro', type: 'existing', icon: '📊', id: 'manifest_m0_del0' },
+      { path: 'metadata/m1-snap2.avro', type: 'existing', icon: '📊', id: 'manifest_m1_del0' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_del0' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_del0' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_del0' },
+      { path: 'data/day=2026-05-14/data-004-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data004_del0' },
+    ],
+    selectedFile: 'meta_v3_del0'
+  },
+  {
+    title: "v2 MOR Delete: positional delete files",
+    explain: {
+      title: "v2: engine writes positional delete files",
+      text: "In v2, the engine writes <strong>positional delete files</strong> — each is an Avro file with rows of <code>(file_path, row_position)</code>. Two files affected → two delete files. Sequence number on the delete files (seq=3) is critical: they only apply to data files with <code>data_sequence_number ≤ 3</code>. <strong>Data files are not touched.</strong> The risk: if deletes keep accumulating without compaction, readers must open and merge thousands of tiny delete files."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v4.metadata.json', type: 'new', icon: '🔗', id: 'catalog_del2' },
+      { path: 'metadata/v4.metadata.json', type: 'new', icon: '📋', id: 'meta_v4_del2' },
+      { path: 'metadata/snap-3-list-uuid.avro', type: 'new', icon: '📋', id: 'mflist_del2' },
+      { path: 'metadata/m2-deletes.avro', type: 'new', icon: '📊', id: 'del_manifest' },
+      { path: 'deletes/pos-delete-003-uuid.avro', type: 'new', icon: '❌', id: 'pos_del_003' },
+      { path: 'deletes/pos-delete-004-uuid.avro', type: 'new', icon: '❌', id: 'pos_del_004' },
+      { path: 'metadata/m0-snap1.avro', type: 'reused', icon: '📊', id: 'manifest_m0_del2' },
+      { path: 'metadata/m1-snap2.avro', type: 'reused', icon: '📊', id: 'manifest_m1_del2' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_del2' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_del2' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_del2' },
+      { path: 'data/day=2026-05-14/data-004-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data004_del2' },
+    ],
+    selectedFile: 'pos_del_003'
+  },
+  {
+    title: "v3 MOR Delete: deletion vectors (Puffin)",
+    explain: {
+      title: "v3: one Roaring bitmap DV per data file, in Puffin",
+      text: "In v3, instead of positional delete Avro files, the engine writes/updates a <strong>Roaring bitmap deletion vector</strong> stored in a Puffin sidecar file — one per affected data file. A subsequent delete against the same data file <strong>merges into the same DV</strong> (spec mandate), never creating a new file. Readers load the DV bitmap and skip deleted positions with a single bit-check per row. No unbounded fan-out."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v4.metadata.json', type: 'new', icon: '🔗', id: 'catalog_del3' },
+      { path: 'metadata/v4.metadata.json', type: 'new', icon: '📋', id: 'meta_v4_del3' },
+      { path: 'metadata/snap-3-list-uuid.avro', type: 'new', icon: '📋', id: 'mflist_del3' },
+      { path: 'metadata/m2-dv.avro', type: 'new', icon: '📊', id: 'dv_del_manifest' },
+      { path: 'data/day=2026-05-14/data-003-uuid.puffin', type: 'new', icon: '💾', id: 'puffin_003' },
+      { path: 'data/day=2026-05-14/data-004-uuid.puffin', type: 'new', icon: '💾', id: 'puffin_004' },
+      { path: 'metadata/m0-snap1.avro', type: 'reused', icon: '📊', id: 'manifest_m0_del3' },
+      { path: 'metadata/m1-snap2.avro', type: 'reused', icon: '📊', id: 'manifest_m1_del3' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_del3' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_del3' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data003_del3' },
+      { path: 'data/day=2026-05-14/data-004-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data004_del3' },
+    ],
+    selectedFile: 'puffin_003',
+    dvViz: true
+  },
+  {
+    title: "Compaction: materialise deletes → clean file",
+    explain: {
+      title: "Compaction = rewrite affected files, bake deletes in",
+      text: "A maintenance job runs <code>rewrite_data_files</code> on the <code>2026-05-14</code> partition. It reads <code>data-003 + data-004</code> plus their deletes/DVs and writes one clean <code>data-005-compacted.parquet</code> with deleted rows already gone. Old files are marked <code>deleted</code> in the new manifests. <strong>The old data files still physically exist</strong> — referenced by snapshots 1–3 for time travel. Only <code>expire_snapshots</code> (a separate, later commit) drops those snapshots and makes old files eligible for GC."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v5.metadata.json', type: 'new', icon: '🔗', id: 'catalog_compact' },
+      { path: 'metadata/v5.metadata.json', type: 'new', icon: '📋', id: 'meta_v5_compact' },
+      { path: 'metadata/snap-4-list-uuid.avro', type: 'new', icon: '📋', id: 'mflist_snap4' },
+      { path: 'metadata/m3-compacted.avro', type: 'new', icon: '📊', id: 'manifest_m3' },
+      { path: 'data/day=2026-05-14/data-005-compacted.parquet', type: 'new', icon: '🗃️', id: 'data005_compact' },
+      { path: 'metadata/m0-snap1.avro', type: 'reused', icon: '📊', id: 'manifest_m0_compact' },
+      { path: 'data/day=2026-05-12/data-001-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data001_compact' },
+      { path: 'data/day=2026-05-13/data-002-uuid.parquet', type: 'existing', icon: '🗃️', id: 'data002_compact' },
+      { path: 'data/day=2026-05-14/data-003-uuid.parquet', type: 'deleted', icon: '🗃️', id: 'data003_compact' },
+      { path: 'data/day=2026-05-14/data-004-uuid.parquet', type: 'deleted', icon: '🗃️', id: 'data004_compact' },
+      { path: 'data/day=2026-05-14/data-003-uuid.puffin', type: 'deleted', icon: '💾', id: 'puffin_003_compact' },
+      { path: 'data/day=2026-05-14/data-004-uuid.puffin', type: 'deleted', icon: '💾', id: 'puffin_004_compact' },
+    ],
+    selectedFile: 'manifest_m3'
+  }
+],
+
+compact: [
+  {
+    title: "Before: accumulated debt",
+    explain: {
+      title: "The problem compaction solves",
+      text: "After many writes and deletes the table has accumulated: <strong>small data files</strong> (each streaming microbatch wrote one), <strong>delete files / DVs</strong> (MOR deletes piling up), and <strong>many snapshots</strong>. Reads are slow — every scan opens many small files and applies many deletes. Planning is slow — the manifest list has hundreds of rows. Storage is growing even though logical row count is stable."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v8.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_pre_compact' },
+      { path: 'metadata/v8.metadata.json', type: 'existing', icon: '📋', id: 'meta_v8' },
+      { path: 'metadata/snap-7-list.avro', type: 'existing', icon: '📋', id: 'mflist_pre' },
+      { path: 'metadata/m0.avro', type: 'existing', icon: '📊', id: 'm0_pre' },
+      { path: 'metadata/m1.avro', type: 'existing', icon: '📊', id: 'm1_pre' },
+      { path: 'metadata/m2.avro', type: 'existing', icon: '📊', id: 'm2_pre' },
+      { path: 'metadata/m3-deletes.avro', type: 'existing', icon: '📊', id: 'm3_pre' },
+      { path: 'metadata/m4-deletes.avro', type: 'existing', icon: '📊', id: 'm4_pre' },
+      { path: 'data/day=2026-05-14/data-001-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny001' },
+      { path: 'data/day=2026-05-14/data-002-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny002' },
+      { path: 'data/day=2026-05-14/data-003-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny003' },
+      { path: 'data/day=2026-05-14/data-004-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny004' },
+      { path: 'data/day=2026-05-14/data-005-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny005' },
+      { path: 'data/day=2026-05-14/data-003-uuid.puffin', type: 'existing', icon: '💾', id: 'puffin_pre1' },
+      { path: 'data/day=2026-05-14/data-005-uuid.puffin', type: 'existing', icon: '💾', id: 'puffin_pre2' },
+    ],
+    selectedFile: 'meta_v8',
+    compactBeforeViz: true
+  },
+  {
+    title: "Step 1 — rewrite_data_files: read phase",
+    explain: {
+      title: "Engine reads all files it plans to rewrite — data + deletes together",
+      text: "<code>rewrite_data_files</code> selects candidate files based on size (too small = below <code>write.target-file-size-bytes</code>) and delete ratio (too many deleted rows). It reads each candidate data file and materialises all applicable delete artifacts against it — producing a clean in-memory stream of live rows. Nothing is written yet."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v8.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_read' },
+      { path: '── READ: data-001-tiny.parquet (seq=1, 8MB)', type: 'existing', icon: '📖', id: 'read001' },
+      { path: '── READ: data-002-tiny.parquet (seq=2, 6MB)', type: 'existing', icon: '📖', id: 'read002' },
+      { path: '── READ: data-003-tiny.parquet (seq=3, 9MB)', type: 'existing', icon: '📖', id: 'read003' },
+      { path: '── READ: data-004-tiny.parquet (seq=4, 7MB)', type: 'existing', icon: '📖', id: 'read004' },
+      { path: '── READ: data-005-tiny.parquet (seq=5, 5MB)', type: 'existing', icon: '📖', id: 'read005' },
+      { path: '── READ: data-003-uuid.puffin (DV — apply bitmap to data-003)', type: 'existing', icon: '📖', id: 'read_dv1' },
+      { path: '── READ: data-005-uuid.puffin (DV — apply bitmap to data-005)', type: 'existing', icon: '📖', id: 'read_dv2' },
+    ],
+    selectedFile: 'read_dv1',
+    compactReadViz: true
+  },
+  {
+    title: "Step 2 — rewrite_data_files: write new clean files",
+    explain: {
+      title: "Engine bins live rows into right-sized sorted Parquet files",
+      text: "The clean row stream is written into new Parquet files sized to <code>write.target-file-size-bytes</code> (typically 512MB). If a sort order is defined, rows are sorted before writing — this tightens min/max stats so future pruning is more effective. Delete artifacts are <strong>not written</strong> — they are baked into the new files. New files are invisible until the metadata commit."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v8.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_write' },
+      { path: 'data/day=2026-05-14/data-compacted-A.parquet', type: 'new', icon: '🗃️', id: 'compacted_A' },
+      { path: 'data/day=2026-05-14/data-compacted-B.parquet', type: 'new', icon: '🗃️', id: 'compacted_B' },
+      { path: 'data/day=2026-05-14/data-001-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny001_w' },
+      { path: 'data/day=2026-05-14/data-002-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny002_w' },
+      { path: 'data/day=2026-05-14/data-003-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny003_w' },
+      { path: 'data/day=2026-05-14/data-004-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny004_w' },
+      { path: 'data/day=2026-05-14/data-005-tiny.parquet', type: 'existing', icon: '🗃️', id: 'tiny005_w' },
+    ],
+    selectedFile: 'compacted_A',
+    compactWriteViz: true
+  },
+  {
+    title: "Step 3 — metadata commit (operation: replace)",
+    explain: {
+      title: "New manifest + manifest list + metadata.json + CAS — same as any commit",
+      text: "Compaction commits like any other write: new manifest listing old files as DELETED and new files as ADDED, new manifest list, new metadata.json with snapshot operation <code>replace</code>, catalog CAS. The old files are now <strong>logically deleted</strong> in the current snapshot but <strong>physically still on disk</strong> — older snapshots still reference them."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v9.metadata.json', type: 'new', icon: '🔗', id: 'catalog_compact2' },
+      { path: 'metadata/v9.metadata.json', type: 'new', icon: '📋', id: 'meta_v9' },
+      { path: 'metadata/snap-8-list.avro', type: 'new', icon: '📋', id: 'mflist_compact' },
+      { path: 'metadata/m5-compacted.avro', type: 'new', icon: '📊', id: 'm5_compact' },
+      { path: 'data/day=2026-05-14/data-compacted-A.parquet', type: 'new', icon: '🗃️', id: 'compacted_A2' },
+      { path: 'data/day=2026-05-14/data-compacted-B.parquet', type: 'new', icon: '🗃️', id: 'compacted_B2' },
+      { path: 'data/day=2026-05-14/data-001-tiny.parquet', type: 'deleted', icon: '🗃️', id: 'tiny001_del' },
+      { path: 'data/day=2026-05-14/data-002-tiny.parquet', type: 'deleted', icon: '🗃️', id: 'tiny002_del' },
+      { path: 'data/day=2026-05-14/data-003-tiny.parquet', type: 'deleted', icon: '🗃️', id: 'tiny003_del' },
+      { path: 'data/day=2026-05-14/data-004-tiny.parquet', type: 'deleted', icon: '🗃️', id: 'tiny004_del' },
+      { path: 'data/day=2026-05-14/data-005-tiny.parquet', type: 'deleted', icon: '🗃️', id: 'tiny005_del' },
+      { path: 'data/day=2026-05-14/data-003-uuid.puffin', type: 'deleted', icon: '💾', id: 'puffin_del1' },
+      { path: 'data/day=2026-05-14/data-005-uuid.puffin', type: 'deleted', icon: '💾', id: 'puffin_del2' },
+    ],
+    selectedFile: 'm5_compact',
+    compactCommitViz: true
+  },
+  {
+    title: "Step 4 — expire_snapshots",
+    explain: {
+      title: "The ONLY operation that actually frees storage",
+      text: "<code>expire_snapshots(older_than='2026-05-13')</code> drops old snapshot entries from the metadata. Once a snapshot is expired, no metadata points at its files anymore — they become orphans eligible for GC. <strong>Until you run this, every old file is still billable.</strong> Compaction alone does not free storage."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v10.metadata.json', type: 'new', icon: '🔗', id: 'catalog_expire' },
+      { path: 'metadata/v10.metadata.json', type: 'new', icon: '📋', id: 'meta_v10' },
+      { path: 'metadata/snap-8-list.avro (snap 8 — current, retained)', type: 'existing', icon: '📋', id: 'snap8_retain' },
+      { path: 'metadata/snap-1-list.avro (EXPIRED — no longer referenced)', type: 'deleted', icon: '📋', id: 'snap1_expired' },
+      { path: 'metadata/snap-2-list.avro (EXPIRED)', type: 'deleted', icon: '📋', id: 'snap2_expired' },
+      { path: 'metadata/snap-7-list.avro (EXPIRED)', type: 'deleted', icon: '📋', id: 'snap7_expired' },
+      { path: 'data/day=2026-05-14/data-compacted-A.parquet (referenced by snap 8)', type: 'existing', icon: '🗃️', id: 'compacted_retain' },
+      { path: 'data/day=2026-05-14/data-001-tiny.parquet (NOW ORPHAN — no snapshot points here)', type: 'deleted', icon: '🗃️', id: 'tiny001_orphan' },
+      { path: 'data/day=2026-05-14/data-002-tiny.parquet (NOW ORPHAN)', type: 'deleted', icon: '🗃️', id: 'tiny002_orphan' },
+      { path: 'data/day=2026-05-14/data-003-tiny.parquet (NOW ORPHAN)', type: 'deleted', icon: '🗃️', id: 'tiny003_orphan' },
+      { path: 'data/day=2026-05-14/data-003-uuid.puffin (NOW ORPHAN)', type: 'deleted', icon: '💾', id: 'puffin_orphan' },
+    ],
+    selectedFile: 'meta_v10',
+    compactExpireViz: true
+  },
+  {
+    title: "Step 5 — remove_orphan_files",
+    explain: {
+      title: "GC sweep — physically delete files with no metadata reference",
+      text: "<code>remove_orphan_files</code> lists all files in the table's storage location, then lists all files referenced by any current metadata. Files in storage but not in metadata = orphans → deleted. This is the step that actually calls <code>DELETE</code> on object storage. <strong>Run after expire_snapshots, never concurrently with in-flight commits</strong> — a commit that just wrote a data file but hasn't committed the metadata yet would look like an orphan."
+    },
+    files: [
+      { path: 'CATALOG: events → metadata/v10.metadata.json', type: 'existing', icon: '🔗', id: 'catalog_gc' },
+      { path: 'metadata/v10.metadata.json', type: 'existing', icon: '📋', id: 'meta_v10_gc' },
+      { path: 'data/day=2026-05-14/data-compacted-A.parquet ✓ referenced', type: 'existing', icon: '🗃️', id: 'compacted_gc' },
+      { path: 'data/day=2026-05-14/data-compacted-B.parquet ✓ referenced', type: 'existing', icon: '🗃️', id: 'compacted_gc2' },
+      { path: 'data/day=2026-05-14/data-001-tiny.parquet ✗ DELETED from storage', type: 'deleted', icon: '🗃️', id: 'tiny_gc1' },
+      { path: 'data/day=2026-05-14/data-002-tiny.parquet ✗ DELETED from storage', type: 'deleted', icon: '🗃️', id: 'tiny_gc2' },
+      { path: 'data/day=2026-05-14/data-003-tiny.parquet ✗ DELETED from storage', type: 'deleted', icon: '🗃️', id: 'tiny_gc3' },
+      { path: 'data/day=2026-05-14/data-004-tiny.parquet ✗ DELETED from storage', type: 'deleted', icon: '🗃️', id: 'tiny_gc4' },
+      { path: 'data/day=2026-05-14/data-005-tiny.parquet ✗ DELETED from storage', type: 'deleted', icon: '🗃️', id: 'tiny_gc5' },
+      { path: 'data/day=2026-05-14/data-003-uuid.puffin ✗ DELETED from storage', type: 'deleted', icon: '💾', id: 'puffin_gc' },
+    ],
+    selectedFile: 'meta_v10_gc',
+    compactGCViz: true
+  }
+]
+};
+
+// ─── FILE CONTENT DATABASE ──────────────────────────────────────────────────
+const FILE_CONTENT = {
+  meta_v1_create: { label: 'metadata/v1.metadata.json', content: `<span class="json-comment">// v1.metadata.json — written at CREATE TABLE time
+// Engine writes this BEFORE touching the catalog</span>
+{
+  <span class="json-key">"format-version"</span>: <span class="json-num">1</span>,
+  <span class="json-key">"table-uuid"</span>: <span class="json-str">"a1b2c3d4-e5f6-7890-abcd-ef1234567890"</span>,
+  <span class="json-key">"location"</span>: <span class="json-str">"s3://warehouse/events"</span>,
+  <span class="json-key">"last-updated-ms"</span>: <span class="json-num">1747123200000</span>,
+  <span class="json-key">"last-column-id"</span>: <span class="json-num">4</span>,
+
+  <span class="json-comment">// Schema: columns keyed by stable INTEGER ID, not name.
+  // Renaming "payload" later is metadata-only — the ID stays 4.</span>
+  <span class="json-key">"schemas"</span>: [{
+    <span class="json-key">"schema-id"</span>: <span class="json-num">0</span>,
+    <span class="json-key">"fields"</span>: [
+      { <span class="json-key">"id"</span>: <span class="json-num">1</span>, <span class="json-key">"name"</span>: <span class="json-str">"id"</span>,      <span class="json-key">"type"</span>: <span class="json-str">"long"</span> },
+      { <span class="json-key">"id"</span>: <span class="json-num">2</span>, <span class="json-key">"name"</span>: <span class="json-str">"ts"</span>,      <span class="json-key">"type"</span>: <span class="json-str">"timestamptz"</span> },
+      { <span class="json-key">"id"</span>: <span class="json-num">3</span>, <span class="json-key">"name"</span>: <span class="json-str">"user_id"</span>, <span class="json-key">"type"</span>: <span class="json-str">"long"</span> },
+      { <span class="json-key">"id"</span>: <span class="json-num">4</span>, <span class="json-key">"name"</span>: <span class="json-str">"payload"</span>, <span class="json-key">"type"</span>: <span class="json-str">"string"</span> }
+    ]
+  }],
+  <span class="json-key">"current-schema-id"</span>: <span class="json-num">0</span>,
+
+  <span class="json-comment">// Partition spec: "day(ts)" is a TRANSFORM on column id=2.
+  // Users never see a partition column — it's hidden.</span>
+  <span class="json-key">"partition-specs"</span>: [{
+    <span class="json-key">"spec-id"</span>: <span class="json-num">0</span>,
+    <span class="json-key">"fields"</span>: [{
+      <span class="json-key">"source-id"</span>: <span class="json-num">2</span>,
+      <span class="json-key">"field-id"</span>: <span class="json-num">1000</span>,
+      <span class="json-key">"name"</span>: <span class="json-str">"ts_day"</span>,
+      <span class="json-key">"transform"</span>: <span class="json-str">"day"</span>
+    }]
+  }],
+  <span class="json-key">"default-spec-id"</span>: <span class="json-num">0</span>,
+
+  <span class="json-key">"current-snapshot-id"</span>: <span class="json-num">-1</span>,  <span class="json-comment">// ← no data yet</span>
+  <span class="json-key">"snapshots"</span>: [],
+  <span class="json-key">"snapshot-log"</span>: [],
+  <span class="json-key">"metadata-log"</span>: []
+}` },
+
+  meta_v1_create2: { label: 'metadata/v1.metadata.json', content: `<span class="json-comment">// Same file — now the catalog points here.
+// current-snapshot-id: -1 means empty table.</span>
+{ "format-version": 1, "current-snapshot-id": -1, ... }` },
+
+  catalog_create: { label: 'CATALOG entry', content: `<span class="json-comment">// The catalog is the ONLY mutable thing in Iceberg.
+// Before CREATE: no entry for "events"
+// After CAS succeeds:</span>
+
+<span class="json-key">table identifier</span>: <span class="json-str">"default.events"</span>
+<span class="json-key">metadata pointer</span>: <span class="json-str">"s3://warehouse/events/metadata/v1.metadata.json"</span>
+
+<span class="json-comment">// Implementation varies by catalog type:
+//
+// JDBC catalog:
+//   UPDATE iceberg_tables
+//   SET metadata_location = 'v1.metadata.json'
+//   WHERE table_name = 'events'
+//   AND metadata_location IS NULL   ← the compare part
+//
+// AWS Glue:
+//   Atomic PutTable with expected version = null
+//
+// REST catalog:
+//   POST /v1/namespaces/default/tables
+//   body: { "metadata-location": "...", "requirements": [] }
+//
+// If CAS fails → orphaned v1.metadata.json file.
+// Cleaned later by remove_orphan_files.</span>` },
+
+  meta_v1_pre: { label: 'metadata/v1.metadata.json', content: `<span class="json-comment">// Table exists, no data yet.
+// current-snapshot-id: -1</span>
+{
+  <span class="json-key">"format-version"</span>: <span class="json-num">1</span>,
+  <span class="json-key">"current-snapshot-id"</span>: <span class="json-num">-1</span>,
+  <span class="json-key">"snapshots"</span>: [],
+  <span class="json-key">"schemas"</span>: [{ <span class="json-comment">/* id, ts, user_id, payload — column IDs 1-4 */</span> }],
+  <span class="json-key">"partition-specs"</span>: [{ <span class="json-key">"transform"</span>: <span class="json-str">"day"</span>, <span class="json-key">"source-id"</span>: <span class="json-num">2</span> }]
+}` },
+
+  data001: { label: 'data-001-uuid.parquet (day=2026-05-12)', content: `<span class="json-comment">// Parquet file — immutable, write-once.
+// Internal Parquet structure:</span>
+
+<span class="json-key">Row group 0</span> (~128MB each):
+  <span class="json-key">column chunk: id</span>       [min=1, max=50000, null=0]
+  <span class="json-key">column chunk: ts</span>       [min=2026-05-12T00:00, max=2026-05-12T23:59]
+  <span class="json-key">column chunk: user_id</span>  [min=1, max=99999, null=0]
+  <span class="json-key">column chunk: payload</span>  [min="aardvark", max="zymurgy"]
+  <span class="json-key">row count</span>: <span class="json-num">2,500,000</span>
+
+<span class="json-comment">// Note: column IDs are embedded in the Parquet metadata
+// (Iceberg-specific column ID mapping).
+// If you rename "payload" → "body" in the schema,
+// the Parquet file is UNCHANGED — readers look up ID=4.</span>
+
+<span class="json-comment">// Parquet provides a second pruning layer:
+// row-group footer stats → prune row groups within a file
+// Iceberg manifest stats → prune whole files
+// Both layers reinforce each other.</span>` },
+
+  manifest_m0: { label: 'metadata/m0-snap1.avro (manifest)', content: `<span class="json-comment">// Avro file. One record per data file.
+// This is what makes planning fast at scale.</span>
+
+<span class="json-key">Manifest entry 1:</span>
+  status: <span class="json-str">"ADDED"</span>   <span class="json-comment">// ADDED | EXISTING | DELETED</span>
+  snapshot_id: <span class="json-num">1</span>
+  sequence_number: <span class="json-num">1</span>
+  data_file: {
+    file_path: <span class="json-str">"s3://.../data-001-uuid.parquet"</span>
+    file_format: <span class="json-str">"PARQUET"</span>
+    partition: { ts_day: <span class="json-num">20589</span> }  <span class="json-comment">// days since epoch = 2026-05-12</span>
+    record_count: <span class="json-num">2500000</span>
+    file_size_in_bytes: <span class="json-num">524288000</span>
+    <span class="json-comment">// Per-column stats keyed by column ID (not name!):</span>
+    column_sizes:    { <span class="json-num">1</span>: <span class="json-num">20MB</span>, <span class="json-num">2</span>: <span class="json-num">20MB</span>, <span class="json-num">3</span>: <span class="json-num">20MB</span>, <span class="json-num">4</span>: <span class="json-num">460MB</span> }
+    value_counts:    { <span class="json-num">1</span>: <span class="json-num">2500000</span>, <span class="json-num">2</span>: <span class="json-num">2500000</span>, ... }
+    null_value_counts: { <span class="json-num">1</span>: <span class="json-num">0</span>, <span class="json-num">2</span>: <span class="json-num">0</span>, <span class="json-num">3</span>: <span class="json-num">0</span>, <span class="json-num">4</span>: <span class="json-num">0</span> }
+    lower_bounds:    { <span class="json-num">1</span>: <span class="json-num">1</span>,     <span class="json-num">3</span>: <span class="json-num">1</span> }
+    upper_bounds:    { <span class="json-num">1</span>: <span class="json-num">50000</span>, <span class="json-num">3</span>: <span class="json-num">99999</span> }
+  }
+
+<span class="json-key">Manifest entry 2:</span>  <span class="json-comment">/* data-002, day=2026-05-13 */</span>
+<span class="json-key">Manifest entry 3:</span>  <span class="json-comment">/* data-003, day=2026-05-14 */</span>
+
+<span class="json-comment">// WHY THIS MATTERS:
+// "WHERE user_id = 999" on data-002?
+// lower_bound[3] ≤ 999 ≤ upper_bound[3] → must scan.
+// But if user_id range is 50000-99999 → skip entire file.
+// No file is opened. Zero I/O.</span>` },
+
+  mflist_snap1: { label: 'snap-1-list-uuid.avro (manifest list)', content: `<span class="json-comment">// Avro file. One row per manifest.
+// This is the TABLE OF CONTENTS for snapshot 1.
+// The query planner reads THIS before deciding which
+// manifests to even open.</span>
+
+<span class="json-key">Row 1 (only manifest in snap 1):</span>
+  manifest_path: <span class="json-str">"s3://.../m0-snap1.avro"</span>
+  manifest_length: <span class="json-num">4096</span>
+  partition_spec_id: <span class="json-num">0</span>
+  content: <span class="json-num">0</span>  <span class="json-comment">// 0=DATA files, 1=DELETE files</span>
+  sequence_number: <span class="json-num">1</span>
+  added_files_count: <span class="json-num">3</span>
+  existing_files_count: <span class="json-num">0</span>
+  deleted_files_count: <span class="json-num">0</span>
+  added_rows_count: <span class="json-num">7500000</span>
+
+  <span class="json-comment">// PARTITION FIELD SUMMARIES — the first pruning gate.
+  // Covers all partition values across all entries in m0:</span>
+  partitions: [{
+    contains_null: <span class="json-bool">false</span>,
+    lower_bound: <span class="json-str">"2026-05-12"</span>,  <span class="json-comment">// ← min day in this manifest</span>
+    upper_bound: <span class="json-str">"2026-05-14"</span>   <span class="json-comment">// ← max day in this manifest</span>
+  }]
+
+<span class="json-comment">// A query "WHERE ts >= '2026-05-15'" can skip this ENTIRE
+// manifest just from these bounds — before opening m0.avro.</span>` },
+
+  meta_v2_a4: { label: 'metadata/v2.metadata.json', content: `<span class="json-comment">// Written BEFORE the CAS.
+// Once the catalog pointer flips to this file,
+// snapshot 1 becomes visible to all readers atomically.</span>
+{
+  <span class="json-key">"format-version"</span>: <span class="json-num">1</span>,
+  <span class="json-key">"last-updated-ms"</span>: <span class="json-num">1747123260000</span>,
+  <span class="json-key">"current-snapshot-id"</span>: <span class="json-num">1</span>,
+
+  <span class="json-key">"snapshots"</span>: [{
+    <span class="json-key">"snapshot-id"</span>: <span class="json-num">1</span>,
+    <span class="json-key">"parent-snapshot-id"</span>: <span class="json-num">-1</span>,  <span class="json-comment">// first snapshot</span>
+    <span class="json-key">"sequence-number"</span>: <span class="json-num">1</span>,
+    <span class="json-key">"timestamp-ms"</span>: <span class="json-num">1747123260000</span>,
+    <span class="json-key">"manifest-list"</span>: <span class="json-str">"s3://.../snap-1-list-uuid.avro"</span>,
+    <span class="json-key">"schema-id"</span>: <span class="json-num">0</span>,
+    <span class="json-key">"summary"</span>: {
+      <span class="json-key">"operation"</span>: <span class="json-str">"append"</span>,
+      <span class="json-key">"added-files-count"</span>: <span class="json-str">"3"</span>,
+      <span class="json-key">"added-records"</span>: <span class="json-str">"7500000"</span>,
+      <span class="json-key">"total-records"</span>: <span class="json-str">"7500000"</span>
+    }
+  }],
+
+  <span class="json-key">"snapshot-log"</span>: [
+    { <span class="json-key">"timestamp-ms"</span>: <span class="json-num">1747123260000</span>, <span class="json-key">"snapshot-id"</span>: <span class="json-num">1</span> }
+  ],
+  <span class="json-key">"metadata-log"</span>: [
+    { <span class="json-key">"timestamp-ms"</span>: <span class="json-num">1747123200000</span>, <span class="json-key">"metadata-file"</span>: <span class="json-str">"v1.metadata.json"</span> }
+  ]
+}` },
+
+  catalog_a4: { label: 'CATALOG entry (after commit 1)', content: `<span class="json-comment">// Before: events → v1.metadata.json
+// After CAS succeeds:</span>
+
+<span class="json-key">table identifier</span>: <span class="json-str">"default.events"</span>
+<span class="json-key">metadata pointer</span>: <span class="json-str">"s3://warehouse/events/metadata/v2.metadata.json"</span>
+
+<span class="json-comment">// All 3 data files (+ manifests) were written BEFORE this.
+// From this instant → all 3 files atomically visible.
+// No reader ever saw partial state.</span>` },
+
+  mflist_snap2: { label: 'snap-2-list-uuid.avro (manifest list)', content: `<span class="json-comment">// Snapshot 2 manifest list — TWO manifest rows.
+// m0 is REUSED by reference — never rewritten.</span>
+
+<span class="json-key">Row 1 — m0 (reused):</span>
+  manifest_path: <span class="json-str">"s3://.../m0-snap1.avro"</span>  <span class="json-comment">// ← same file as snap 1!</span>
+  added_files_count: <span class="json-num">0</span>    <span class="json-comment">// no new files in this snapshot via m0</span>
+  existing_files_count: <span class="json-num">3</span>  <span class="json-comment">// the 3 original files still here</span>
+  partitions: [{ lower: <span class="json-str">"2026-05-12"</span>, upper: <span class="json-str">"2026-05-14"</span> }]
+
+<span class="json-key">Row 2 — m1 (new):</span>
+  manifest_path: <span class="json-str">"s3://.../m1-snap2.avro"</span>
+  added_files_count: <span class="json-num">1</span>    <span class="json-comment">// data-004</span>
+  partitions: [{ lower: <span class="json-str">"2026-05-14"</span>, upper: <span class="json-str">"2026-05-14"</span> }]
+
+<span class="json-comment">// KEY INSIGHT: Commit cost = O(change), not O(table).
+// The second append wrote 1 data file + 1 manifest + this list.
+// m0 (3 files, 2.5M rows each) was never touched.</span>` },
+
+  meta_v3_q: { label: 'metadata/v3.metadata.json', content: `<span class="json-comment">// Query planner starts here.
+// 1. Read current metadata → get current-snapshot-id = 2
+// 2. Get manifest-list path for snapshot 2
+// 3. Planning proceeds entirely on metadata — no data opened yet</span>
+{
+  <span class="json-key">"current-snapshot-id"</span>: <span class="json-num">2</span>,
+  <span class="json-key">"snapshots"</span>: [
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">1</span>, <span class="json-key">"sequence-number"</span>: <span class="json-num">1</span>, ... },
+    {
+      <span class="json-key">"snapshot-id"</span>: <span class="json-num">2</span>,
+      <span class="json-key">"sequence-number"</span>: <span class="json-num">2</span>,
+      <span class="json-key">"manifest-list"</span>: <span class="json-str">"s3://.../snap-2-list-uuid.avro"</span>,
+      <span class="json-key">"summary"</span>: { <span class="json-key">"operation"</span>: <span class="json-str">"append"</span>, <span class="json-key">"total-records"</span>: <span class="json-str">"10000000"</span> }
+    }
+  ]
+}` },
+
+  mflist_q: { label: 'snap-2-list-uuid.avro (manifest list)', content: `<span class="json-comment">// PRUNING GATE 1: manifest-level partition pruning.
+// Query: WHERE ts >= '2026-05-14'
+// → derived partition predicate: ts_day >= 20590 (2026-05-14)
+
+// m0 covers days 2026-05-12 to 2026-05-14 → upper_bound ≥ 20590 → KEEP</span>
+<span class="json-key">Row 1 (m0):</span> lower=<span class="json-str">"2026-05-12"</span>, upper=<span class="json-str">"2026-05-14"</span> → <span style="color:var(--green)">✓ read this manifest</span>
+
+<span class="json-comment">// m1 covers day 2026-05-14 only → KEEP</span>
+<span class="json-key">Row 2 (m1):</span> lower=<span class="json-str">"2026-05-14"</span>, upper=<span class="json-str">"2026-05-14"</span> → <span style="color:var(--green)">✓ read this manifest</span>
+
+<span class="json-comment">// If there were a manifest covering only 2026-05-10 to 2026-05-11
+// → upper_bound < 20590 → skip entire manifest, don't even open it.</span>` },
+
+  manifest_m0_q: { label: 'm0-snap1.avro — file-level pruning', content: `<span class="json-comment">// PRUNING GATE 2: file-level predicate pruning using per-file stats.
+// Query: WHERE ts >= '2026-05-14'
+
+// data-001 (day=2026-05-12): upper_bound[ts] = 2026-05-12T23:59 < 2026-05-14</span>
+<span class="json-key">data-001:</span> partition=<span class="json-str">"2026-05-12"</span> → <span style="color:var(--red)">✗ SKIP — entire day before query range</span>
+
+<span class="json-comment">// data-002 (day=2026-05-13): upper_bound < 2026-05-14</span>
+<span class="json-key">data-002:</span> partition=<span class="json-str">"2026-05-13"</span> → <span style="color:var(--red)">✗ SKIP</span>
+
+<span class="json-comment">// data-003 (day=2026-05-14): partition matches</span>
+<span class="json-key">data-003:</span> partition=<span class="json-str">"2026-05-14"</span> → <span style="color:var(--green)">✓ SCAN</span>` },
+
+  manifest_m1_q: { label: 'm1-snap2.avro — file-level pruning', content: `<span class="json-comment">// data-004 (day=2026-05-14): partition matches</span>
+<span class="json-key">data-004:</span> partition=<span class="json-str">"2026-05-14"</span> → <span style="color:var(--green)">✓ SCAN</span>
+
+<span class="json-comment">// RESULT: 2 files scanned out of 4 total.
+// Planning touched: 1 metadata file + 1 manifest list + 2 manifests.
+// Zero data files opened during planning.
+//
+// Within the 2 surviving files, Parquet's own row-group footer
+// stats provide a THIRD pruning layer — skipping row groups
+// where ts is outside the query range.
+//
+// SELECT COUNT(*) with no WHERE clause?
+// → total-records in the snapshot summary = 10,000,000
+// → METADATA-ONLY answer, no files opened at all.</span>` },
+
+  data005_cow: { label: 'data-005-rewritten.parquet (COW rewrite)', content: `<span class="json-comment">// Copy-on-write UPDATE:
+// Engine read data-003 + data-004 in full,
+// applied the update (payload changed for user_id=42),
+// wrote this new clean file.
+//
+// Write amplification: 1 changed row → entire partition rewritten.</span>
+
+<span class="json-key">Contents:</span>
+  All rows from data-003 + data-004
+  EXCEPT: rows where user_id=42 have updated payload value
+  record_count: <span class="json-num">5000000</span>  <span class="json-comment">// same as before</span>
+
+<span class="json-comment">// data-003 and data-004 are marked DELETED in the new manifest.
+// They physically still exist — referenced by snapshots 1 and 2.
+// Time travel AS OF snapshot 2 → sees the original rows.
+//
+// expire_snapshots → eventually old files become orphans → GC.</span>` },
+
+  eq_delete_file: { label: 'deletes/eq-delete-user42.avro (equality delete)', content: `<span class="json-comment">// v2 MOR equality delete file.
+// Records the predicate — NOT the positions.
+// Cheap to write, expensive to apply on read.</span>
+
+<span class="json-key">Schema:</span> { user_id: long }
+<span class="json-key">Row 1:</span> { user_id: <span class="json-num">42</span> }
+
+<span class="json-comment">// sequence_number of this delete file = 3 (seq at time of commit).
+//
+// HOW IT'S APPLIED ON READ:
+// For every candidate data file (where data_seq ≤ 3):
+//   anti-join: discard any row where user_id IN (42)
+// This is an O(rows) operation against EVERY file in range.
+//
+// If 100 more equality deletes accumulate → 100 anti-joins per scan.
+// This is the v2 MOR performance failure mode.</span>
+
+<span class="json-comment">// The new updated row lives in data-005-new-row.parquet
+// with sequence_number=3 → the equality delete does NOT
+// apply to it (data_seq=3 = delete_seq=3... actually:
+// delete applies to data_seq &lt; delete_seq only, so seq=3
+// data is safe — it's the UPDATE's new version).</span>` },
+
+  eq_delete_manifest: { label: 'm-eq-delete.avro (delete manifest)', content: `<span class="json-comment">// Delete manifests have content=1 (DELETE files).
+// Listed separately in the manifest list from data manifests.</span>
+
+<span class="json-key">content</span>: <span class="json-num">1</span>  <span class="json-comment">// 1 = DELETE manifest</span>
+<span class="json-key">sequence_number</span>: <span class="json-num">3</span>
+
+<span class="json-key">Entry:</span>
+  file_path: <span class="json-str">"s3://.../eq-delete-user42.avro"</span>
+  content: <span class="json-num">2</span>  <span class="json-comment">// EQUALITY_DELETES</span>
+  partition: <span class="json-comment">/* null — equality delete covers all partitions */</span>
+  sequence_number: <span class="json-num">3</span>` },
+
+  puffin_dv3: { label: 'data-003-uuid.puffin (Deletion Vector — v3)', content: `<span class="json-comment">// Puffin file format: a small container for auxiliary blobs.
+// One Puffin file per data file that has deletions.
+// Contains exactly ONE blob: the deletion vector bitmap.</span>
+
+<span class="json-key">Puffin magic bytes</span>: 0x50 0x46 0x41 0x31  <span class="json-comment">// "PFA1"</span>
+
+<span class="json-key">Blob 1:</span>
+  type: <span class="json-str">"deletion-vector-v1"</span>
+  fields:
+    referenced_data_file: <span class="json-str">"s3://.../data-003-uuid.parquet"</span>
+  data: <span class="json-comment">/* Roaring bitmap (compressed bitset) */</span>
+    <span class="json-comment">// Row 0:     LIVE  (bit=0)</span>
+    <span class="json-comment">// Row 1:     LIVE  (bit=0)</span>
+    <span class="json-comment">// Row 247:   DEAD  (bit=1) ← user_id=42 row</span>
+    <span class="json-comment">// Row 248:   LIVE  (bit=0)</span>
+    <span class="json-comment">// Row 8819:  DEAD  (bit=1) ← another user_id=42 row</span>
+    <span class="json-comment">// ... (sparse → Roaring bitmap very compact)</span>
+  cardinality: <span class="json-num">2</span>  <span class="json-comment">// 2 rows deleted in this file</span>
+
+<span class="json-comment">// ON READ:
+// Engine loads bitmap. Per-row check = O(1) bit lookup.
+// No anti-join. No separate file to open per delete operation.
+//
+// SECOND DELETE against same file?
+// → merges bits into THIS SAME bitmap (spec mandate).
+// Never creates a second Puffin file for the same data file.</span>` },
+
+  puffin_dv4: { label: 'data-004-uuid.puffin (Deletion Vector — v3)', content: `<span class="json-comment">// Same structure as data-003.puffin but for data-004.</span>
+<span class="json-key">Blob:</span> deletion-vector-v1
+  referenced_data_file: <span class="json-str">"s3://.../data-004-uuid.parquet"</span>
+  cardinality: <span class="json-num">1</span>  <span class="json-comment">// 1 row deleted (user_id=999 appeared once here)</span>
+  <span class="json-comment">// Row bitmap: bit set at position of the deleted row</span>` },
+
+  pos_del_003: { label: 'deletes/pos-delete-003-uuid.avro (v2 positional delete)', content: `<span class="json-comment">// v2 positional delete file.
+// Contains (file_path, pos) pairs — exact row positions to skip.
+// Cheap to APPLY on read (no anti-join, just skip positions).
+// Expensive to WRITE: engine must scan data file to find positions.</span>
+
+<span class="json-key">Schema:</span> { file_path: string, pos: long }
+
+<span class="json-key">Row 1:</span> {
+  file_path: <span class="json-str">"s3://.../data-003-uuid.parquet"</span>,
+  pos: <span class="json-num">247</span>   <span class="json-comment">// ← row at position 247 in data-003 has user_id=999</span>
+}
+<span class="json-key">Row 2:</span> {
+  file_path: <span class="json-str">"s3://.../data-003-uuid.parquet"</span>,
+  pos: <span class="json-num">8819</span>
+}
+
+<span class="json-comment">// sequence_number of this file = 3
+// Applies only to data files with data_sequence_number ≤ 3.
+// New rows written at seq 4+ are immune — they can't be "pre-deleted".</span>
+
+<span class="json-comment">// THE SPRAWL PROBLEM (v2):
+// 100 delete operations → up to 100 separate positional delete files
+// per data file. Every read must open and merge ALL of them.
+// v2 spec did not mandate write-time consolidation.
+// This is the failure mode v3 DVs fix structurally.</span>` },
+
+  pos_del_004: { label: 'deletes/pos-delete-004-uuid.avro (v2 positional delete)', content: `<span class="json-key">Row 1:</span> {
+  file_path: <span class="json-str">"s3://.../data-004-uuid.parquet"</span>,
+  pos: <span class="json-num">1337</span>   <span class="json-comment">// ← user_id=999 row in data-004</span>
+}` },
+
+  puffin_003: { label: 'data-003-uuid.puffin (Deletion Vector)', content: `<span class="json-comment">// v3 DV for data-003. Roaring bitmap.
+// Bits set at positions of user_id=999 rows.</span>
+<span class="json-key">cardinality</span>: <span class="json-num">2</span>
+<span class="json-key">deleted positions</span>: [247, 8819]
+<span class="json-comment">// Same encoding as Delta Lake deletion vectors.</span>` },
+
+  puffin_004: { label: 'data-004-uuid.puffin (Deletion Vector)', content: `<span class="json-key">cardinality</span>: <span class="json-num">1</span>
+<span class="json-key">deleted positions</span>: [1337]` },
+
+  manifest_m3: { label: 'm3-compacted.avro (compaction manifest)', content: `<span class="json-comment">// Compaction result manifest.
+// operation in snapshot summary: "replace"</span>
+
+<span class="json-key">Entry 1 (DELETED):</span>  data-003-uuid.parquet
+<span class="json-key">Entry 2 (DELETED):</span>  data-004-uuid.parquet
+<span class="json-key">Entry 3 (ADDED):</span>   data-005-compacted.parquet
+  record_count: <span class="json-num">4999997</span>  <span class="json-comment">// 5M rows minus the 3 deleted rows</span>
+  <span class="json-comment">// No associated Puffin DV — clean file, nothing deleted yet.</span>
+  lower_bounds: { <span class="json-num">3</span>: <span class="json-num">1</span> }       <span class="json-comment">// user_id min (999 is gone)</span>
+  upper_bounds: { <span class="json-num">3</span>: <span class="json-num">99998</span> }   <span class="json-comment">// user_id max</span>
+
+<span class="json-comment">// data-003 and data-004 physically still exist on disk.
+// They are referenced by snapshots 1, 2, 3 → valid for time travel.
+// Only expire_snapshots will drop those snapshot references.
+// Only then are the old files eligible for GC via remove_orphan_files.</span>` },
+
+  meta_v4_del2: { label: 'metadata/v4.metadata.json (after delete commit)', content: `{
+  <span class="json-key">"current-snapshot-id"</span>: <span class="json-num">3</span>,
+  <span class="json-key">"snapshots"</span>: [
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">1</span>, ... },
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">2</span>, ... },
+    {
+      <span class="json-key">"snapshot-id"</span>: <span class="json-num">3</span>,
+      <span class="json-key">"parent-snapshot-id"</span>: <span class="json-num">2</span>,
+      <span class="json-key">"sequence-number"</span>: <span class="json-num">3</span>,
+      <span class="json-key">"manifest-list"</span>: <span class="json-str">"s3://.../snap-3-list-uuid.avro"</span>,
+      <span class="json-key">"summary"</span>: {
+        <span class="json-key">"operation"</span>: <span class="json-str">"delete"</span>,
+        <span class="json-key">"added-delete-files"</span>: <span class="json-str">"2"</span>,
+        <span class="json-key">"added-position-deletes"</span>: <span class="json-str">"3"</span>,
+        <span class="json-key">"total-records"</span>: <span class="json-str">"10000000"</span>  <span class="json-comment">// logical count not adjusted yet</span>
+      }
+    }
+  ]
+}` },
+
+  meta_v8: { label: 'metadata/v8.metadata.json — the accumulated state', content: `<span class="json-comment">// 7 snapshots deep. Metadata file grows on every commit.</span>
+{
+  <span class="json-key">"current-snapshot-id"</span>: <span class="json-num">7</span>,
+  <span class="json-key">"snapshots"</span>: [
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">1</span>, <span class="json-key">"summary"</span>: { <span class="json-key">"operation"</span>: <span class="json-str">"append"</span> } },
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">2</span>, <span class="json-key">"summary"</span>: { <span class="json-key">"operation"</span>: <span class="json-str">"append"</span> } },
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">3</span>, <span class="json-key">"summary"</span>: { <span class="json-key">"operation"</span>: <span class="json-str">"append"</span> } },
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">4</span>, <span class="json-key">"summary"</span>: { <span class="json-key">"operation"</span>: <span class="json-str">"delete"</span> } },
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">5</span>, <span class="json-key">"summary"</span>: { <span class="json-key">"operation"</span>: <span class="json-str">"append"</span> } },
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">6</span>, <span class="json-key">"summary"</span>: { <span class="json-key">"operation"</span>: <span class="json-str">"delete"</span> } },
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">7</span>, <span class="json-key">"summary"</span>: { <span class="json-key">"operation"</span>: <span class="json-str">"append"</span> } }
+  ],
+  <span class="json-comment">// Every commit rewrites this entire JSON.
+  // 7 snapshots = manageable. 7000 snapshots = real overhead.</span>
+}` },
+
+  m5_compact: { label: 'm5-compacted.avro — the compaction manifest', content: `<span class="json-comment">// A single manifest listing both what was removed and what was added.
+// This is what makes compaction an atomic commit —
+// readers see either the old files OR the new file, never both.</span>
+
+<span class="json-key">entry 0</span> status=<span style="color:var(--red)">DELETED</span>  data-001-tiny.parquet  seq=1
+<span class="json-key">entry 1</span> status=<span style="color:var(--red)">DELETED</span>  data-002-tiny.parquet  seq=2
+<span class="json-key">entry 2</span> status=<span style="color:var(--red)">DELETED</span>  data-003-tiny.parquet  seq=3
+<span class="json-key">entry 3</span> status=<span style="color:var(--red)">DELETED</span>  data-004-tiny.parquet  seq=4
+<span class="json-key">entry 4</span> status=<span style="color:var(--red)">DELETED</span>  data-005-tiny.parquet  seq=5
+
+<span class="json-key">entry 5</span> status=<span style="color:var(--green)">ADDED</span>    data-compacted-A.parquet  seq=8
+  record_count: <span class="json-num">6200000</span>
+  lower_bounds: { <span class="json-num">3</span>: <span class="json-num">1</span> }      <span class="json-comment">// user_id min — tight because rows are sorted</span>
+  upper_bounds: { <span class="json-num">3</span>: <span class="json-num">50000</span> }  <span class="json-comment">// user_id max — tight half of range</span>
+
+<span class="json-key">entry 6</span> status=<span style="color:var(--green)">ADDED</span>    data-compacted-B.parquet  seq=8
+  record_count: <span class="json-num">3797000</span>
+  lower_bounds: { <span class="json-num">3</span>: <span class="json-num">50001</span> }
+  upper_bounds: { <span class="json-num">3</span>: <span class="json-num">99999</span> }
+
+<span class="json-comment">// The DELETED entries are what make the old files invisible in snap 8.
+// They physically still exist — snap 1-7 still reference them.
+// Note: deleted rows (user_id=999) simply do not appear in the new files.
+// No DV needed on data-compacted-A/B — they are born clean.</span>` },
+
+  meta_v9: { label: 'metadata/v9.metadata.json — compaction commit', content: `{
+  <span class="json-key">"current-snapshot-id"</span>: <span class="json-num">8</span>,
+  <span class="json-key">"snapshots"</span>: [
+    <span class="json-comment">// snaps 1-7 still here — time travel still works</span>
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">1</span>, ... },
+    <span class="json-comment">// ...</span>
+    {
+      <span class="json-key">"snapshot-id"</span>: <span class="json-num">8</span>,
+      <span class="json-key">"sequence-number"</span>: <span class="json-num">8</span>,
+      <span class="json-key">"summary"</span>: {
+        <span class="json-key">"operation"</span>: <span class="json-str">"replace"</span>,  <span class="json-comment">// ← distinct from append/delete</span>
+        <span class="json-key">"replaced-data-files-count"</span>: <span class="json-str">"5"</span>,
+        <span class="json-key">"added-data-files-count"</span>: <span class="json-str">"2"</span>,
+        <span class="json-key">"removed-delete-files-count"</span>: <span class="json-str">"2"</span>,
+        <span class="json-key">"total-records"</span>: <span class="json-str">"9997000"</span>  <span class="json-comment">// now accurate — deletes materialised</span>
+      }
+    }
+  ]
+}` },
+
+  meta_v10: { label: 'metadata/v10.metadata.json — after expire_snapshots', content: `<span class="json-comment">// expire_snapshots(older_than='2026-05-13T00:00:00')
+// Drops snapshots 1-7 from the list.
+// This is itself a metadata-only commit.</span>
+{
+  <span class="json-key">"current-snapshot-id"</span>: <span class="json-num">8</span>,
+  <span class="json-key">"snapshots"</span>: [
+    <span class="json-comment">// snaps 1-7 GONE from this list</span>
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">8</span>, <span class="json-key">"summary"</span>: { <span class="json-key">"operation"</span>: <span class="json-str">"replace"</span> } }
+  ],
+  <span class="json-key">"snapshot-log"</span>: [
+    <span class="json-comment">// history trimmed to retention window</span>
+    { <span class="json-key">"snapshot-id"</span>: <span class="json-num">8</span>, <span class="json-key">"timestamp-ms"</span>: <span class="json-num">1747209600000</span> }
+  ]
+}
+
+<span class="json-comment">// After this commit:
+// - data-001 through data-005-tiny.parquet have NO snapshot referencing them
+// - Their manifest entries only existed in snaps 1-7 (now expired)
+// - They are now ORPHANS — in storage but unreachable via any metadata
+// - remove_orphan_files will physically delete them</span>` },
+
+  compacted_A: { label: 'data-compacted-A.parquet — clean sorted file', content: `<span class="json-comment">// Born clean — no deletes ever apply to this file.
+// Sorted by user_id (if sort order defined) → tight stats.</span>
+
+<span class="json-key">record_count</span>: <span class="json-num">6,200,000</span>  <span class="json-comment">// half the live rows</span>
+<span class="json-key">file_size</span>: <span class="json-num">~512MB</span>       <span class="json-comment">// right-sized (target file size)</span>
+
+<span class="json-key">Row group 0</span> (128MB):
+  user_id min=<span class="json-num">1</span>     max=<span class="json-num">12500</span>   <span class="json-comment">// tight range — rows are sorted</span>
+<span class="json-key">Row group 1</span>:
+  user_id min=<span class="json-num">12501</span>  max=<span class="json-num">25000</span>
+<span class="json-key">Row group 2</span>:
+  user_id min=<span class="json-num">25001</span>  max=<span class="json-num">37500</span>
+<span class="json-key">Row group 3</span>:
+  user_id min=<span class="json-num">37501</span>  max=<span class="json-num">50000</span>
+
+<span class="json-comment">// Before compaction: 5 unsorted tiny files, each with
+// user_id ranging across the full 1-99999 domain.
+// Every query had to scan all 5.
+//
+// After compaction: query "WHERE user_id BETWEEN 1 AND 12500"
+// → manifest prunes to compacted-A only
+// → Parquet prunes to row group 0 only
+// → 128MB scanned instead of 5 × 5-9MB = 35MB but 0% pruning</span>` },
+
+  read_dv1: { label: 'Reading DV during compaction read phase', content: `<span class="json-comment">// compaction reads a data file + its DV together
+// and produces a clean stream of live rows.
+
+// For data-003-tiny.parquet + data-003-uuid.puffin:</span>
+
+<span class="json-key">Step 1:</span> open data-003-tiny.parquet
+<span class="json-key">Step 2:</span> load data-003-uuid.puffin → deserialise Roaring bitmap
+         deleted_positions = {247, 8819}
+
+<span class="json-key">Step 3:</span> iterate rows:
+  row 0   → bitmap.get(0) = 0 → emit
+  row 1   → bitmap.get(1) = 0 → emit
+  ...
+  row 247 → bitmap.get(247) = 1 → <span style="color:var(--red)">SKIP (deleted row — not written to new file)</span>
+  ...
+  row 8819 → bitmap.get(8819) = 1 → <span style="color:var(--red)">SKIP</span>
+  ...
+
+<span class="json-comment">// Output: clean row stream with deleted rows absent.
+// This stream is fed directly into the new Parquet writer.
+// The new file data-compacted-A.parquet will never have
+// these rows — no DV needed on it.</span>` },
+
+  meta_v10_gc: { label: 'After remove_orphan_files', content: `<span class="json-comment">// remove_orphan_files algorithm:
+//
+// 1. LIST all files under table location in object storage
+//    → [data-001-tiny.parquet, data-002-tiny.parquet, ...,
+//       data-compacted-A.parquet, data-compacted-B.parquet,
+//       v1.metadata.json ... v10.metadata.json,
+//       snap-1-list.avro ... snap-8-list.avro, ...]
+//
+// 2. Walk ALL metadata files still reachable from catalog
+//    → collect every file path referenced anywhere
+//    → [data-compacted-A.parquet, data-compacted-B.parquet,
+//       v10.metadata.json, snap-8-list.avro, m5-compacted.avro, ...]
+//
+// 3. Files in (1) but not in (2) = ORPHANS → DELETE
+
+<span class="json-key">Deleted from storage:</span>
+  data-001-tiny.parquet   ← was in snap 1-7, now expired
+  data-002-tiny.parquet
+  data-003-tiny.parquet
+  data-004-tiny.parquet
+  data-005-tiny.parquet
+  data-003-uuid.puffin    ← DV for a now-deleted data file
+  data-005-uuid.puffin
+  snap-1-list.avro ... snap-7-list.avro  ← expired manifest lists
+  m0.avro ... m4.avro                    ← manifests only in expired snaps
+  v1.metadata.json ... v8.metadata.json  ← old metadata versions
+
+<span class="json-comment">// SAFETY WARNING: never run remove_orphan_files with a
+// retention window shorter than your longest running write job.
+// A writer that took 10 min to write data files before committing
+// looks like an orphan during those 10 min.
+// Default safe retention: older_than = now - 24h</span>` },
+};
+
+// ─── STATE ──────────────────────────────────────────────────────────────────
+let currentOp = 'create';
+let currentStep = 0;
+let selectedFileId = null;
+
+// ─── RENDER ─────────────────────────────────────────────────────────────────
+function renderOpTabs() {
+  const container = document.getElementById('opTabs');
+  container.innerHTML = OPS.map(op => `
+    <div class="op-tab ${op.id === currentOp ? 'active' : ''}"
+         onclick="switchOp('${op.id}')">${op.label}</div>
+  `).join('');
+}
+
+function renderSteps() {
+  const steps = STEPS[currentOp];
+  const container = document.getElementById('stepsList');
+  container.innerHTML = steps.map((s, i) => `
+    <div class="step-item ${i === currentStep ? 'active' : ''} ${i < currentStep ? 'done' : ''}"
+         onclick="goToStep(${i})">
+      <div class="step-num">${i < currentStep ? '✓' : i + 1}</div>
+      <div class="step-title">${s.title}</div>
+    </div>
+  `).join('');
+}
+
+function renderDisk() {
+  const step = STEPS[currentOp][currentStep];
+  const body = document.getElementById('diskBody');
+
+  let html = '';
+
+  // Explanation box
+  if (step.explain) {
+    html += `<div class="explain-box">
+      <div class="explain-title">${step.explain.title}</div>
+      <div class="explain-text">${step.explain.text}</div>
+    </div>`;
+  }
+
+  // Query visualization
+  if (step.queryViz) {
+    html += renderQueryViz();
+  }
+
+  // Compaction visualizations
+  if (step.compactBeforeViz)  html += renderCompactBefore();
+  if (step.compactReadViz)    html += renderCompactRead();
+  if (step.compactWriteViz)   html += renderCompactWrite();
+  if (step.compactCommitViz)  html += renderCompactCommit();
+  if (step.compactExpireViz)  html += renderCompactExpire();
+  if (step.compactGCViz)      html += renderCompactGC();
+
+  // MOR v3 read visualization
+  if (step.morV3ReadViz) {
+    html += renderMorV3Read();
+  }
+
+  // MOR v2 read visualization
+  if (step.morV2ReadViz) {
+    html += renderMorV2Read();
+  }
+
+  // Pointer chain visualization
+  if (step.pointerChainViz) {
+    html += renderPointerChain();
+  }
+
+  // DV visualization
+  if (step.dvViz) {
+    html += renderDVViz();
+  }
+
+  // File tree
+  if (step.files.length === 0) {
+    html += `<div style="color:var(--muted);font-size:12px;padding:16px;text-align:center;">No files on disk yet</div>`;
+  } else {
+    html += `<div class="file-tree">`;
+    const groups = groupFiles(step.files);
+    for (const [group, files] of Object.entries(groups)) {
+      html += `<div class="tree-section">
+        <div class="tree-section-label">${group}</div>`;
+      for (const f of files) {
+        const cls = [
+          'tree-node',
+          f.type === 'new' ? 'highlight-new' : '',
+          f.type === 'deleted' ? 'highlight-del' : '',
+          f.type === 'reused' ? '' : '',
+          selectedFileId === f.id ? 'selected' : '',
+        ].filter(Boolean).join(' ');
+        const tag = f.type === 'new' ? '<span class="tree-tag tag-new">NEW</span>' :
+                    f.type === 'deleted' ? '<span class="tree-tag tag-del">LOGICALLY DELETED</span>' :
+                    f.type === 'reused' ? '<span class="tree-tag tag-reuse">REUSED</span>' : '';
+        const shortName = f.path.split('/').pop();
+        html += `<div class="${cls}" onclick="selectFile('${f.id}')">
+          <span class="tree-icon">${f.icon}</span>
+          <span class="tree-name" title="${f.path}">${f.path}</span>
+          ${tag}
+        </div>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  body.innerHTML = html;
+  document.getElementById('stepInfo').textContent = `Step ${currentStep + 1} of ${STEPS[currentOp].length}`;
+  document.getElementById('prevBtn').disabled = currentStep === 0;
+  document.getElementById('nextBtn').disabled = currentStep === STEPS[currentOp].length - 1;
+
+  // Auto-select
+  if (step.selectedFile) selectFile(step.selectedFile);
+}
+
+function groupFiles(files) {
+  const groups = {};
+  for (const f of files) {
+    let g = 'Other';
+    if (f.path.startsWith('CATALOG')) g = 'Catalog';
+    else if (f.path.startsWith('metadata/')) g = 'Metadata Layer';
+    else if (f.path.startsWith('data/')) g = 'Data Files';
+    else if (f.path.startsWith('deletes/')) g = 'Delete Files (v2)';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(f);
+  }
+  return groups;
+}
+
+function renderCompactBefore() {
+  return `<div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--orange)">The accumulated debt — why compaction is needed</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0">
+      <div style="background:rgba(168,72,60,0.08);border:1px solid rgba(168,72,60,0.35);border-radius:6px;padding:10px">
+        <div style="color:var(--red);font-weight:600;font-size:11px;margin-bottom:6px">🗃️ Small files</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.6">
+          5 data files × ~7MB = 35MB total<br>
+          Target size = 512MB<br>
+          <strong style="color:var(--red)">Too many file opens per scan</strong><br>
+          Too many manifest entries<br>
+          Poor Parquet row-group pruning
+        </div>
+      </div>
+      <div style="background:rgba(168,72,60,0.08);border:1px solid rgba(168,72,60,0.35);border-radius:6px;padding:10px">
+        <div style="color:var(--red);font-weight:600;font-size:11px;margin-bottom:6px">💾 Delete artifacts</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.6">
+          2 Puffin DVs still applying<br>
+          Every scan loads bitmaps<br>
+          <strong style="color:var(--red)">Logical row count drifts</strong><br>
+          COUNT(*) needs DV adjustment<br>
+          Storage for deleted rows still billed
+        </div>
+      </div>
+      <div style="background:rgba(168,72,60,0.08);border:1px solid rgba(168,72,60,0.35);border-radius:6px;padding:10px">
+        <div style="color:var(--red);font-weight:600;font-size:11px;margin-bottom:6px">📋 Snapshot bloat</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.6">
+          7 snapshots in metadata<br>
+          Metadata JSON grows each commit<br>
+          <strong style="color:var(--red)">Old files never GC'd</strong><br>
+          Storage cost keeps rising<br>
+          Planning reads larger manifests
+        </div>
+      </div>
+    </div>
+    <div style="padding:8px 10px;background:rgba(107,143,168,0.10);border-radius:6px;border:1px solid rgba(107,143,168,0.22);font-size:11px;color:var(--muted)">
+      <strong style="color:var(--accent)">Compaction is the cure for all three.</strong> rewrite_data_files fixes small files + deletes.
+      expire_snapshots + remove_orphan_files fixes storage bloat. Each is a separate operation.
+    </div>
+  </div>`;
+}
+
+function renderCompactRead() {
+  return `<div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--teal)">Read phase — what the engine ingests</div>
+    <div class="chain-section">
+      <div class="chain-section-label">File selection criteria</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="scan-step pass"><span class="scan-icon">✓</span>data-001-tiny (8MB &lt; 512MB target) → selected for rewrite</div>
+        <div class="scan-step pass"><span class="scan-icon">✓</span>data-002-tiny (6MB) → selected</div>
+        <div class="scan-step pass"><span class="scan-icon">✓</span>data-003-tiny (9MB + has DV with 2 deleted rows) → selected</div>
+        <div class="scan-step pass"><span class="scan-icon">✓</span>data-004-tiny (7MB) → selected</div>
+        <div class="scan-step pass"><span class="scan-icon">✓</span>data-005-tiny (5MB + has DV with 1 deleted row) → selected</div>
+      </div>
+    </div>
+    <div class="chain-section" style="margin-top:8px">
+      <div class="chain-section-label">Delete artifact materialisation per file</div>
+      <div class="chain-node">
+        <div class="chain-node-fields">
+          data-001 → no DV → all rows emitted as-is<br>
+          data-002 → no DV → all rows emitted as-is<br>
+          data-003 → <span style="color:var(--teal)">load data-003.puffin</span> → skip positions {247, 8819} → <span style="color:var(--green)">emit remaining rows</span><br>
+          data-004 → no DV → all rows emitted as-is<br>
+          data-005 → <span style="color:var(--teal)">load data-005.puffin</span> → skip position {1337} → <span style="color:var(--green)">emit remaining rows</span>
+        </div>
+      </div>
+    </div>
+    <div style="padding:6px 10px;background:rgba(74,119,111,0.09);border-radius:6px;border:1px solid rgba(74,119,111,0.22);font-size:11px;color:var(--muted);margin-top:6px">
+      Output: a single clean stream of <strong style="color:var(--text)">9,997,000 live rows</strong> (10M - 3 deleted). No deletes, no gaps. Fed directly into the Parquet writer.
+    </div>
+  </div>`;
+}
+
+function renderCompactWrite() {
+  return `<div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--green)">Write phase — bin-pack into right-sized sorted files</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0">
+      <div class="chain-node" style="border-color:var(--green)">
+        <div class="chain-node-title">data-compacted-A.parquet</div>
+        <div class="chain-node-fields">
+          rows: <span style="color:var(--text)">6,200,000</span><br>
+          size: <span style="color:var(--text)">~512MB</span><br>
+          sorted by: <span style="color:var(--teal)">user_id ASC</span><br>
+          user_id range: <span style="color:var(--text)">1 → 50,000</span><br>
+          <span style="color:var(--green)">→ tight min/max per row group</span>
+        </div>
+      </div>
+      <div class="chain-node" style="border-color:var(--green)">
+        <div class="chain-node-title">data-compacted-B.parquet</div>
+        <div class="chain-node-fields">
+          rows: <span style="color:var(--text)">3,797,000</span><br>
+          size: <span style="color:var(--text)">~314MB</span><br>
+          sorted by: <span style="color:var(--teal)">user_id ASC</span><br>
+          user_id range: <span style="color:var(--text)">50,001 → 99,999</span><br>
+          <span style="color:var(--green)">→ tight min/max per row group</span>
+        </div>
+      </div>
+    </div>
+    <div class="chain-section">
+      <div class="chain-section-label">Why sorting dramatically improves future queries</div>
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <div class="scan-step pass"><span class="scan-icon">⚡</span>Before: "WHERE user_id=42" → must scan all 5 tiny files (user_id spread across all)</div>
+        <div class="scan-step pass"><span class="scan-icon">⚡</span>After: manifest prunes to compacted-A (range 1-50000) → Parquet prunes to 1 row group → ~128MB vs ~35MB, but with actual pruning</div>
+        <div class="scan-step pass"><span class="scan-icon">⚡</span>No DV bitmaps to load — deleted rows simply don't exist in new files</div>
+      </div>
+    </div>
+    <div style="padding:6px 10px;background:rgba(107,143,168,0.10);border-radius:6px;border:1px solid rgba(107,143,168,0.22);font-size:11px;color:var(--muted);margin-top:6px">
+      <strong style="color:var(--accent)">These files are invisible to readers until the metadata commit.</strong> They sit in storage unreferenced — they look like orphans right now. This is the window where remove_orphan_files must not run.
+    </div>
+  </div>`;
+}
+
+function renderCompactCommit() {
+  return `<div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--accent2)">Commit — same protocol as any write</div>
+    <div class="scan-flow">
+      <div class="scan-step pass"><span class="scan-icon">1</span>Write m5-compacted.avro: DELETED entries for 5 old files, ADDED entries for 2 new files</div>
+      <div class="scan-step pass"><span class="scan-icon">2</span>Write snap-8-list.avro: references m5 (new) + m0 (reused for other partitions)</div>
+      <div class="scan-step pass"><span class="scan-icon">3</span>Write v9.metadata.json: snapshot 8, operation="replace", current-snapshot-id=8</div>
+      <div class="scan-step pass"><span class="scan-icon">4</span>CAS catalog: v8.metadata.json → v9.metadata.json</div>
+    </div>
+    <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div style="background:rgba(94,126,79,0.10);border:1px solid rgba(94,126,79,0.30);border-radius:6px;padding:8px;font-size:11px">
+        <div style="color:var(--green);font-weight:600;margin-bottom:4px">Readers after CAS</div>
+        <div style="color:var(--muted);line-height:1.6">See snap 8 → 2 clean compacted files. No DVs. Fast pruning. Accurate COUNT(*).</div>
+      </div>
+      <div style="background:rgba(168,72,60,0.08);border:1px solid rgba(168,72,60,0.30);border-radius:6px;padding:8px;font-size:11px">
+        <div style="color:var(--red);font-weight:600;margin-bottom:4px">Old files physically still exist</div>
+        <div style="color:var(--muted);line-height:1.6">Snaps 1-7 still reference the tiny files. Time travel still works. Storage not freed yet.</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderCompactExpire() {
+  return `<div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--yellow)">expire_snapshots — the only thing that frees storage</div>
+    <div class="explain-text" style="margin-bottom:8px">
+      <code>expire_snapshots(older_than=timestamp, retain_last=N)</code><br>
+      Drops snapshot entries from the metadata whose timestamp is older than the cutoff AND that are not needed for the retain_last count.
+    </div>
+    <div class="chain-section">
+      <div class="chain-section-label">What gets dropped vs retained</div>
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <div class="scan-step skip"><span class="scan-icon">✗</span>Snapshots 1-7 → expired (older than cutoff) → removed from snapshots[] array</div>
+        <div class="scan-step pass"><span class="scan-icon">✓</span>Snapshot 8 (current) → retained always</div>
+      </div>
+    </div>
+    <div class="chain-section" style="margin-top:8px">
+      <div class="chain-section-label">What becomes an orphan as a result</div>
+      <div class="chain-node" style="border-color:var(--yellow)">
+        <div class="chain-node-fields">
+          data-001/002/003/004/005-tiny.parquet → <span style="color:var(--red)">no snapshot references them → ORPHAN</span><br>
+          data-003/005-uuid.puffin → <span style="color:var(--red)">ORPHAN</span><br>
+          snap-1 through snap-7 manifest lists → <span style="color:var(--red)">ORPHAN</span><br>
+          m0 through m4 manifests → <span style="color:var(--red)">ORPHAN</span><br>
+          v1 through v8 metadata files → <span style="color:var(--red)">ORPHAN</span>
+        </div>
+      </div>
+    </div>
+    <div style="padding:8px 10px;background:rgba(168,132,47,0.10);border-radius:6px;border:1px solid rgba(168,132,47,0.30);font-size:11px;color:var(--muted);margin-top:6px">
+      <strong style="color:var(--yellow)">Orphans are not deleted yet.</strong> They sit in storage unreferenced. remove_orphan_files is the separate GC step that actually calls DELETE on object storage. expire_snapshots just updates the metadata pointer chain so nothing references the old files anymore.
+    </div>
+  </div>`;
+}
+
+function renderCompactGC() {
+  return `<div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--pink)">remove_orphan_files — physical GC from object storage</div>
+    <div class="chain-section">
+      <div class="chain-section-label">The algorithm</div>
+      <div class="scan-flow">
+        <div class="scan-step pass"><span class="scan-icon">1</span>LIST everything under s3://warehouse/events/ → set A (all physical files)</div>
+        <div class="scan-step pass"><span class="scan-icon">2</span>Walk all metadata reachable from catalog → set B (all referenced files)</div>
+        <div class="scan-step pass"><span class="scan-icon">3</span>Orphans = A − B → call object storage DELETE on each</div>
+      </div>
+    </div>
+    <div class="chain-section" style="margin-top:8px">
+      <div class="chain-section-label">The critical safety window</div>
+      <div class="chain-node" style="border-color:var(--pink)">
+        <div class="chain-node-fields">
+          <span style="color:var(--yellow)">Problem:</span> a writer takes 8 min to write data files, then commits metadata.<br>
+          During those 8 min, the data files exist in storage but no metadata points at them.<br>
+          → They look like orphans.<br><br>
+          <span style="color:var(--green)">Fix:</span> run remove_orphan_files with <code>older_than = now - 24h</code><br>
+          Only files older than 24h AND unreferenced are deleted.<br>
+          An 8-min in-flight write is safe — its files are less than 24h old.
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:8px;padding:8px 10px;background:rgba(159,110,124,0.10);border-radius:6px;border:1px solid rgba(159,110,124,0.30);font-size:11px;color:var(--muted)">
+      <strong style="color:var(--pink)">Full compaction lifecycle summary:</strong><br>
+      rewrite_data_files → <em>fixes read performance, materialises deletes</em><br>
+      expire_snapshots → <em>makes old files unreachable (orphans)</em><br>
+      remove_orphan_files → <em>physically deletes orphans from storage</em><br>
+      <strong style="color:var(--text)">All three are needed. None can be skipped indefinitely.</strong>
+    </div>
+  </div>`;
+}
+
+function renderMorV3Read() {
+  return `
+  <div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--teal)">How MOR v3 deletion vectors are applied at read time</div>
+    <div class="explain-text" style="margin-bottom:10px">
+      Same query: <code>SELECT * FROM events WHERE ts >= '2026-05-14'</code> — after the DV commit at seq=3.
+      Compare each step to the v2 flow above to see exactly what changed.
+    </div>
+
+    <!-- Step 1: Planning -->
+    <div class="chain-section">
+      <div class="chain-section-label">① Planning — planner reads manifest list, finds DV manifest</div>
+      <div class="chain-node" style="border-color:var(--teal)">
+        <div class="chain-node-title">snap-3-list-uuid.avro (manifest list)</div>
+        <div class="chain-node-fields">
+          <span style="color:var(--dim)">row 0:</span> manifest_path=<span style="color:var(--accent2)">m0-snap1.avro</span> &nbsp; content=<span style="color:var(--green)">0 (DATA)</span><br>
+          <span style="color:var(--dim)">row 1:</span> manifest_path=<span style="color:var(--accent2)">m1-snap2.avro</span> &nbsp; content=<span style="color:var(--green)">0 (DATA)</span><br>
+          <span style="color:var(--dim)">row 2:</span> manifest_path=<span style="color:var(--teal)">m-dv.avro</span> &nbsp; content=<span style="color:var(--teal)">1 (DELETE — DV type)</span>
+        </div>
+      </div>
+      <div style="padding:3px 12px;font-size:10px;color:var(--muted)">↓ same manifest list structure as v2. The difference is what's inside the delete manifest.</div>
+    </div>
+
+    <!-- Step 2: DV manifest — pairing is 1:1 -->
+    <div class="chain-section">
+      <div class="chain-section-label">② DV manifest — each entry is paired to exactly one data file</div>
+      <div class="chain-node" style="border-color:var(--teal)">
+        <div class="chain-node-title">m-dv.avro (delete manifest)</div>
+        <div class="chain-node-fields">
+          <span style="color:var(--dim)">entry 0:</span><br>
+          &nbsp;&nbsp;content = <span style="color:var(--teal)">3 (DELETION_VECTOR)</span><br>
+          &nbsp;&nbsp;file_path = <span style="color:var(--teal)">s3://.../data-003-uuid.puffin</span><br>
+          &nbsp;&nbsp;<span style="color:var(--green);font-weight:600">referenced_data_file = s3://.../data-003-uuid.parquet</span>  <span style="color:var(--dim)">← direct 1:1 pairing</span><br>
+          &nbsp;&nbsp;sequence_number = <span style="color:var(--orange)">3</span><br>
+          <br>
+          <span style="color:var(--dim)">entry 1:</span><br>
+          &nbsp;&nbsp;file_path = <span style="color:var(--teal)">s3://.../data-004-uuid.puffin</span><br>
+          &nbsp;&nbsp;<span style="color:var(--green);font-weight:600">referenced_data_file = s3://.../data-004-uuid.parquet</span><br>
+          &nbsp;&nbsp;sequence_number = <span style="color:var(--orange)">3</span>
+        </div>
+      </div>
+      <div style="padding:3px 12px;font-size:10px;color:var(--muted)">
+        ↓ key difference from v2: each DV entry carries a <code>referenced_data_file</code> field — the pairing is explicit and 1:1. No fan-out. No "which delete files apply to this data file?" join needed.
+      </div>
+    </div>
+
+    <!-- Step 3: scan task construction -->
+    <div class="chain-section">
+      <div class="chain-section-label">③ Scan task construction — each task = data file + its single Puffin file</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="scan-step pass" style="flex-direction:column;align-items:flex-start;gap:3px">
+          <div style="font-weight:600;color:var(--text)">Task A: data-003.parquet</div>
+          <div style="font-size:10px;color:var(--muted)">+ <span style="color:var(--teal)">data-003-uuid.puffin</span> (its deletion vector — exactly one, always)</div>
+          <div style="font-size:10px;color:var(--muted)">Engine loads the Puffin blob, deserialises the Roaring bitmap into memory. Done. No anti-join.</div>
+        </div>
+        <div class="scan-step pass" style="flex-direction:column;align-items:flex-start;gap:3px">
+          <div style="font-weight:600;color:var(--text)">Task B: data-004.parquet</div>
+          <div style="font-size:10px;color:var(--muted)">+ <span style="color:var(--teal)">data-004-uuid.puffin</span> (its own separate bitmap — not shared with Task A)</div>
+          <div style="font-size:10px;color:var(--muted)">Each data file has its own DV. Tasks are fully independent, no shared state.</div>
+        </div>
+        <div class="scan-step pass" style="flex-direction:column;align-items:flex-start;gap:3px">
+          <div style="font-weight:600;color:var(--text)">Task C: data-005-new-row.parquet</div>
+          <div style="font-size:10px;color:var(--muted)">No Puffin file. No DV entry in the manifest. <span style="color:var(--green)">Zero delete overhead.</span></div>
+        </div>
+      </div>
+      <div style="padding:3px 12px;font-size:10px;color:var(--muted)">↓ 50 more deletes later? data-003 still has exactly ONE Puffin file — the bitmap was updated in place (merged). Task A still loads one file.</div>
+    </div>
+
+    <!-- Step 4: bitmap check -->
+    <div class="chain-section">
+      <div class="chain-section-label">④ Bitmap check — O(1) per row, no anti-join</div>
+      <div class="chain-node" style="border-color:var(--teal)">
+        <div class="chain-node-title">For each row in data-003.parquet:</div>
+        <div style="display:flex;flex-direction:column;gap:3px;margin-top:6px;font-family:monospace;font-size:11px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="color:var(--muted);width:60px">row pos 0</span>
+            <span style="color:var(--dim)">bitmap.get(0)?</span>
+            <span style="color:var(--green);font-weight:600">0 (not set) → EMIT ✓</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="color:var(--muted);width:60px">row pos 1</span>
+            <span style="color:var(--dim)">bitmap.get(1)?</span>
+            <span style="color:var(--green);font-weight:600">0 (not set) → EMIT ✓</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="color:var(--muted);width:60px">row pos 247</span>
+            <span style="color:var(--dim)">bitmap.get(247)?</span>
+            <span style="color:var(--red);font-weight:600">1 (set) → SKIP ✗</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="color:var(--muted);width:60px">row pos 248</span>
+            <span style="color:var(--dim)">bitmap.get(248)?</span>
+            <span style="color:var(--green);font-weight:600">0 (not set) → EMIT ✓</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="color:var(--muted);width:60px">row pos 8819</span>
+            <span style="color:var(--dim)">bitmap.get(8819)?</span>
+            <span style="color:var(--red);font-weight:600">1 (set) → SKIP ✗</span>
+          </div>
+          <div style="color:var(--dim);font-size:10px;margin-top:2px">... 2,499,995 more rows — each is a single integer lookup into an in-memory bitmap</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- v2 vs v3 comparison -->
+    <div class="chain-section">
+      <div class="chain-section-label">v2 vs v3 — side by side</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="background:rgba(168,72,60,0.07);border:1px solid rgba(168,72,60,0.30);border-radius:6px;padding:8px;font-size:11px;line-height:1.7">
+          <div style="color:var(--red);font-weight:600;margin-bottom:4px">v2 equality delete</div>
+          <div style="color:var(--muted)">Delete files: <strong style="color:var(--text)">N (one per delete op)</strong></div>
+          <div style="color:var(--muted)">Per-row check: <strong style="color:var(--text)">hash lookup in delete set</strong></div>
+          <div style="color:var(--muted)">Shared across files: <strong style="color:var(--text)">yes — same file opened per task</strong></div>
+          <div style="color:var(--muted)">Cost after 50 deletes: <strong style="color:var(--red)">50 anti-joins per file</strong></div>
+          <div style="color:var(--muted)">Sequence gating: <strong style="color:var(--text)">by seq number</strong></div>
+        </div>
+        <div style="background:rgba(74,119,111,0.08);border:1px solid rgba(74,119,111,0.30);border-radius:6px;padding:8px;font-size:11px;line-height:1.7">
+          <div style="color:var(--teal);font-weight:600;margin-bottom:4px">v3 deletion vector</div>
+          <div style="color:var(--muted)">Delete files: <strong style="color:var(--text)">1 per data file (always)</strong></div>
+          <div style="color:var(--muted)">Per-row check: <strong style="color:var(--text)">O(1) bitmap.get(pos)</strong></div>
+          <div style="color:var(--muted)">Shared across files: <strong style="color:var(--text)">no — each file has its own DV</strong></div>
+          <div style="color:var(--muted)">Cost after 50 deletes: <strong style="color:var(--green)">still 1 bitmap per file</strong></div>
+          <div style="color:var(--muted)">Sequence gating: <strong style="color:var(--text)">by seq number (same rule)</strong></div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderMorV2Read() {
+  return `
+  <div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--orange)">How MOR v2 equality deletes are applied at read time</div>
+    <div class="explain-text" style="margin-bottom:10px">
+      Query: <code>SELECT * FROM events WHERE ts >= '2026-05-14'</code> — run <em>after</em> the equality delete for <code>user_id=42</code> was committed at seq=3.
+      The engine must reconcile data files with delete files on every scan.
+    </div>
+
+    <!-- Step 1: Planning -->
+    <div class="chain-section">
+      <div class="chain-section-label">① Planning — planner discovers both data manifests AND the delete manifest</div>
+      <div class="chain-node" style="border-color:var(--accent2)">
+        <div class="chain-node-title">snap-3-list-uuid.avro (manifest list)</div>
+        <div class="chain-node-fields">
+          <span style="color:var(--dim)">row 0:</span> manifest_path=<span style="color:var(--accent2)">m0-snap1.avro</span> &nbsp; content=<span style="color:var(--green)">0 (DATA)</span><br>
+          <span style="color:var(--dim)">row 1:</span> manifest_path=<span style="color:var(--accent2)">m1-snap2.avro</span> &nbsp; content=<span style="color:var(--green)">0 (DATA)</span><br>
+          <span style="color:var(--dim)">row 2:</span> manifest_path=<span style="color:var(--orange)">m-eq-delete.avro</span> &nbsp; content=<span style="color:var(--red)">1 (DELETE)</span>
+        </div>
+      </div>
+      <div style="padding:3px 12px;font-size:10px;color:var(--muted)">↓ planner reads ALL manifests — data AND delete. It pairs each surviving data file with any delete files that apply to it.</div>
+    </div>
+
+    <!-- Step 2: Sequence number gating -->
+    <div class="chain-section">
+      <div class="chain-section-label">② Sequence number gating — which delete applies to which data file?</div>
+      <div class="chain-node" style="border-color:var(--yellow)">
+        <div class="chain-node-title">The rule: a delete file applies to a data file only if data_sequence_number ≤ delete_sequence_number</div>
+        <div class="chain-node-fields" style="margin-top:4px">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:4px">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:6px;font-size:10px">
+              <div style="color:var(--muted);margin-bottom:2px">data-001.parquet</div>
+              <div>data_seq = <span style="color:var(--accent)">1</span></div>
+              <div>delete_seq = <span style="color:var(--orange)">3</span></div>
+              <div style="color:var(--red);margin-top:3px;font-weight:600">1 ≤ 3 → DELETE APPLIES ✗</div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:6px;font-size:10px">
+              <div style="color:var(--muted);margin-bottom:2px">data-003.parquet</div>
+              <div>data_seq = <span style="color:var(--accent)">1</span></div>
+              <div>delete_seq = <span style="color:var(--orange)">3</span></div>
+              <div style="color:var(--red);margin-top:3px;font-weight:600">1 ≤ 3 → DELETE APPLIES ✗</div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:6px;font-size:10px">
+              <div style="color:var(--muted);margin-bottom:2px">data-005-new-row.parquet</div>
+              <div>data_seq = <span style="color:var(--accent)">3</span></div>
+              <div>delete_seq = <span style="color:var(--orange)">3</span></div>
+              <div style="color:var(--green);margin-top:3px;font-weight:600">3 ≤ 3 → APPLIES... but see below ↓</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="padding:3px 12px;font-size:10px;color:var(--muted)">↓ equality deletes use ≤ not &lt;, but the new row written at seq=3 carries the <em>updated</em> user_id — so it won't match the delete predicate anyway. The seq rule protects future inserts (seq=4+) from being pre-deleted.</div>
+    </div>
+
+    <!-- Step 3: scan task construction -->
+    <div class="chain-section">
+      <div class="chain-section-label">③ Scan task construction — each task = data file + its applicable delete files</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="scan-step pass" style="flex-direction:column;align-items:flex-start;gap:3px">
+          <div style="font-weight:600;color:var(--text)">Task A: data-003.parquet</div>
+          <div style="font-size:10px;color:var(--muted)">+ <span style="color:var(--orange)">eq-delete-user42.avro</span> (seq 3 applies to seq 1 data)</div>
+          <div style="font-size:10px;color:var(--muted)">Engine reads data file, loads equality delete set <code>{user_id: 42}</code> into memory, anti-joins every row</div>
+        </div>
+        <div class="scan-step pass" style="flex-direction:column;align-items:flex-start;gap:3px">
+          <div style="font-weight:600;color:var(--text)">Task B: data-004.parquet</div>
+          <div style="font-size:10px;color:var(--muted)">+ <span style="color:var(--orange)">eq-delete-user42.avro</span> (same delete file, loaded again)</div>
+          <div style="font-size:10px;color:var(--muted)">Engine reads data file, re-applies anti-join for <code>user_id=42</code></div>
+        </div>
+        <div class="scan-step pass" style="flex-direction:column;align-items:flex-start;gap:3px">
+          <div style="font-weight:600;color:var(--text)">Task C: data-005-new-row.parquet</div>
+          <div style="font-size:10px;color:var(--muted)">+ <span style="color:var(--orange)">eq-delete-user42.avro</span> (seq 3 ≤ seq 3, technically applies)</div>
+          <div style="font-size:10px;color:var(--muted)">Contains the <em>updated</em> row — user_id is still 42 here but payload is new value. Row survives because this is the replacement row written alongside the delete.</div>
+        </div>
+      </div>
+      <div style="padding:3px 12px;font-size:10px;color:var(--muted)">↓ notice: the same delete file is opened and applied for <strong>every</strong> candidate data file — O(files × delete_rows)</div>
+    </div>
+
+    <!-- Step 4: The actual anti-join -->
+    <div class="chain-section">
+      <div class="chain-section-label">④ Anti-join execution — row by row through each data file</div>
+      <div class="chain-node" style="border-color:var(--orange)">
+        <div class="chain-node-title">For each row in data-003.parquet:</div>
+        <div style="display:flex;flex-direction:column;gap:3px;margin-top:6px;font-family:monospace;font-size:11px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="color:var(--muted);width:200px">{ id:1, user_id:<span style="color:var(--text)">100</span>, ... }</span>
+            <span style="color:var(--dim)">100 ∈ {42}?</span>
+            <span style="color:var(--green);font-weight:600">No → EMIT ✓</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="color:var(--muted);width:200px">{ id:2, user_id:<span style="color:var(--red)">42</span>, ... }</span>
+            <span style="color:var(--dim)">42 ∈ {42}?</span>
+            <span style="color:var(--red);font-weight:600">Yes → SUPPRESS ✗</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="color:var(--muted);width:200px">{ id:3, user_id:<span style="color:var(--text)">777</span>, ... }</span>
+            <span style="color:var(--dim)">777 ∈ {42}?</span>
+            <span style="color:var(--green);font-weight:600">No → EMIT ✓</span>
+          </div>
+          <div style="color:var(--dim);font-size:10px;margin-top:2px">... 2,499,997 more rows checked the same way</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- The failure mode -->
+    <div style="margin-top:8px;padding:8px 10px;background:rgba(168,72,60,0.08);border-radius:6px;border:1px solid rgba(168,72,60,0.30);font-size:11px;color:var(--muted);line-height:1.6">
+      <strong style="color:var(--red)">The v2 failure mode:</strong> after 50 more deletes, there are 51 equality delete files. Every scan task must open and apply <strong>all 51</strong> — 51 anti-joins per data file, per query. No compaction → readers drown. This is exactly what v3 deletion vectors fix by collapsing all deletes for a file into one bitmap.
+    </div>
+  </div>`;
+}
+
+function renderPointerChain() {
+  return `
+  <div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--accent2)">How the three files reference each other</div>
+    <div class="explain-text" style="margin-bottom:10px">
+      Each layer holds a <strong>pointer (a file path string)</strong> to the next layer down. There are no foreign keys, no joins — just paths embedded in file content.
+      The chain is: <code>CATALOG</code> → <code>v2.metadata.json</code> → <code>snap-1-list-uuid.avro</code> → <code>m0-snap1.avro</code> → <code>data files</code>
+    </div>
+
+    <!-- Layer 1: CATALOG -->
+    <div class="chain-section">
+      <div class="chain-section-label">① Catalog (only mutable thing)</div>
+      <div class="chain-node highlight" style="border-color:var(--yellow)">
+        <div class="chain-node-title">CATALOG ENTRY</div>
+        <div class="chain-node-name">default.events</div>
+        <div class="chain-node-fields">
+          <span class="chain-field-key">pointer → </span><span class="chain-field-ptr">s3://.../metadata/v2.metadata.json</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 12px;font-size:10px;color:var(--green)">
+        ↓ <span style="color:var(--muted)">catalog stores this path. reader fetches this file next.</span>
+      </div>
+    </div>
+
+    <!-- Layer 2: metadata file -->
+    <div class="chain-section">
+      <div class="chain-section-label">② v2.metadata.json — table identity + snapshot list</div>
+      <div class="chain-node highlight" style="border-color:var(--accent2)">
+        <div class="chain-node-title">v2.metadata.json</div>
+        <div class="chain-node-name">JSON file</div>
+        <div class="chain-node-fields">
+          <span class="chain-field-key">current-snapshot-id: </span><span class="chain-field-val">1</span><br>
+          <span class="chain-field-key">snapshots[0].snapshot-id: </span><span class="chain-field-val">1</span><br>
+          <span class="chain-field-key">snapshots[0].manifest-list → </span><span class="chain-field-ptr">s3://.../snap-1-list-uuid.avro</span>
+        </div>
+      </div>
+      <div style="padding:3px 12px;font-size:10px;color:var(--muted)">
+        ↓ <span style="color:var(--green)">snapshots[current-snapshot-id].manifest-list</span> gives the path to the manifest list
+      </div>
+    </div>
+
+    <!-- Layer 3: manifest list -->
+    <div class="chain-section">
+      <div class="chain-section-label">③ snap-1-list-uuid.avro — manifest list (one row per manifest)</div>
+      <div class="chain-node highlight" style="border-color:var(--teal)">
+        <div class="chain-node-title">snap-1-list-uuid.avro</div>
+        <div class="chain-node-name">Avro file — rows are manifest entries</div>
+        <div class="chain-node-fields">
+          <span style="color:var(--dim)">row 0:</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">manifest_path → </span><span class="chain-field-ptr">s3://.../m0-snap1.avro</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">content: </span><span class="chain-field-val">0</span><span style="color:var(--dim)"> (DATA manifest)</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">partitions[0].lower_bound: </span><span class="chain-field-val">2026-05-12</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">partitions[0].upper_bound: </span><span class="chain-field-val">2026-05-14</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">added_files_count: </span><span class="chain-field-val">3</span>
+        </div>
+      </div>
+      <div style="padding:3px 12px;font-size:10px;color:var(--muted)">
+        ↓ <span style="color:var(--green)">row.manifest_path</span> gives the path to each manifest file. The planner reads partition bounds <em>here</em> before deciding whether to open the manifest at all.
+      </div>
+    </div>
+
+    <!-- Layer 4: manifest -->
+    <div class="chain-section">
+      <div class="chain-section-label">④ m0-snap1.avro — manifest (one row per data file)</div>
+      <div class="chain-node highlight" style="border-color:var(--green)">
+        <div class="chain-node-title">m0-snap1.avro</div>
+        <div class="chain-node-name">Avro file — rows are data file entries</div>
+        <div class="chain-node-fields">
+          <span style="color:var(--dim)">row 0 (data-001):</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">data_file.file_path → </span><span class="chain-field-ptr">s3://.../data-001-uuid.parquet</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">data_file.partition: </span><span class="chain-field-val">{ ts_day: 20587 }</span><span style="color:var(--dim)"> (2026-05-12)</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">data_file.record_count: </span><span class="chain-field-val">2,500,000</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">data_file.lower_bounds[col 3]: </span><span class="chain-field-val">1</span><span style="color:var(--dim)"> (user_id min)</span><br>
+          &nbsp;&nbsp;<span class="chain-field-key">data_file.upper_bounds[col 3]: </span><span class="chain-field-val">99999</span><span style="color:var(--dim)"> (user_id max)</span><br>
+          <span style="color:var(--dim)">row 1 (data-002) … row 2 (data-003)</span>
+        </div>
+      </div>
+      <div style="padding:3px 12px;font-size:10px;color:var(--muted)">
+        ↓ <span style="color:var(--green)">row.data_file.file_path</span> gives the actual Parquet path. Per-column stats here drive file-level pruning.
+      </div>
+    </div>
+
+    <!-- Layer 5: data file -->
+    <div class="chain-section">
+      <div class="chain-section-label">⑤ data-001-uuid.parquet — immutable data</div>
+      <div class="chain-node" style="border-color:var(--border)">
+        <div class="chain-node-title">data-001-uuid.parquet</div>
+        <div class="chain-node-name">Parquet file — the actual rows</div>
+        <div class="chain-node-fields" style="color:var(--dim)">
+          No pointers outward. This is the leaf. Immutable since birth.
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:8px;padding:8px 10px;background:rgba(107,143,168,0.10);border-radius:6px;border:1px solid rgba(107,143,168,0.22);font-size:11px;color:var(--muted);line-height:1.6">
+      <strong style="color:var(--accent)">Key insight:</strong> Every arrow is just a <strong style="color:var(--text)">file path string</strong> embedded in the parent file's content. The chain is resolved by the engine fetching each file in turn. <strong style="color:var(--text)">Only the catalog pointer is mutable</strong> — swap it atomically and the entire chain below becomes visible or invisible to readers in one operation.
+    </div>
+  </div>`;
+}
+
+function renderQueryViz() {
+  return `<div class="explain-box" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--yellow)">Partition Elimination in Action</div>
+    <div class="explain-text" style="margin-bottom:8px">Query: <code>WHERE ts >= '2026-05-14'</code> → derived partition predicate: <code>day(ts) >= 2026-05-14</code></div>
+    <div class="partition-grid">
+      <div class="partition-box skip">
+        <div class="p-label">✗ SKIPPED</div>
+        <div class="p-val">day=2026-05-12</div>
+        <div class="p-files">data-001 • 2.5M rows</div>
+      </div>
+      <div class="partition-box skip">
+        <div class="p-label">✗ SKIPPED</div>
+        <div class="p-val">day=2026-05-13</div>
+        <div class="p-files">data-002 • 2.5M rows</div>
+      </div>
+      <div class="partition-box hit">
+        <div class="p-label">✓ SCANNED</div>
+        <div class="p-val">day=2026-05-14</div>
+        <div class="p-files">data-003 + data-004 • 5M rows</div>
+      </div>
+    </div>
+    <div class="scan-flow" style="margin-top:8px">
+      <div class="scan-step pass"><span class="scan-icon">🔗</span>1. Resolve snapshot → snap-2 (current)</div>
+      <div class="scan-step pass"><span class="scan-icon">📋</span>2. Read metadata.json → get manifest-list path</div>
+      <div class="scan-step pass"><span class="scan-icon">📋</span>3. Read manifest list → 2 manifest rows</div>
+      <div class="scan-step pass"><span class="scan-icon">📊</span>4. Prune manifests by partition summary → both survive (m0 covers 05-12→05-14, m1 covers 05-14)</div>
+      <div class="scan-step skip"><span class="scan-icon">🗃️</span>5. Prune files in m0: data-001 (05-12) ✗ skip, data-002 (05-13) ✗ skip</div>
+      <div class="scan-step pass"><span class="scan-icon">🗃️</span>5. data-003 (05-14) ✓ scan, data-004 (05-14) ✓ scan</div>
+      <div class="scan-step pass"><span class="scan-icon">⚡</span>6. Build 2 scan tasks → engine reads + Parquet prunes row groups</div>
+    </div>
+  </div>`;
+}
+
+function renderDVViz() {
+  const bits = [];
+  const deadPositions = new Set([3, 7, 15]); // illustrative
+  for (let i = 0; i < 24; i++) {
+    bits.push(`<div class="dv-bit ${deadPositions.has(i) ? 'dead' : 'live'}" title="row ${i}">${deadPositions.has(i) ? '1' : '0'}</div>`);
+  }
+  return `<div class="explain-box dv-viz" style="margin-bottom:10px">
+    <div class="explain-title" style="color:var(--teal)">Deletion Vector — Roaring Bitmap (illustrative)</div>
+    <div class="explain-text" style="margin-bottom:6px">Each bit = one row position in the data file. <span style="color:var(--red)">Red=1 (deleted)</span>, <span style="color:var(--accent)">Blue=0 (live)</span></div>
+    <div class="dv-row">${bits.join('')}</div>
+    <div class="explain-text" style="margin-top:6px;color:var(--muted)">Real table: millions of rows → Roaring bitmap stays compact for sparse deletes. Read cost = O(1) bitmap check per row. No anti-join, no separate file per delete batch.</div>
+  </div>`;
+}
+
+function selectFile(id) {
+  selectedFileId = id;
+  const content = FILE_CONTENT[id];
+  const header = document.getElementById('contentHeader');
+  const body = document.getElementById('contentBody');
+
+  if (content) {
+    header.innerHTML = `<span>📄</span><span style="color:var(--accent2)">${content.label}</span>`;
+    body.innerHTML = `<pre class="file-content">${content.content}</pre>`;
+  } else {
+    // Generate a generic description
+    const step = STEPS[currentOp][currentStep];
+    const file = step.files.find(f => f.id === id);
+    if (file) {
+      header.innerHTML = `<span>${file.icon}</span><span style="color:var(--accent2)">${file.path.split('/').pop()}</span>`;
+      body.innerHTML = `<div class="content-empty" style="text-align:left;padding:16px">
+        <div style="color:var(--muted);margin-bottom:8px;font-size:11px;text-transform:uppercase;letter-spacing:0.07em">${file.path}</div>
+        <div style="color:var(--text);font-size:12px;line-height:1.7">
+          Type: <strong style="color:var(--accent)">${file.type.toUpperCase()}</strong><br>
+          ${file.type === 'reused' ? 'This file was written in a previous snapshot and is <strong>referenced by pointer</strong> — not rewritten.' : ''}
+          ${file.type === 'existing' ? 'This file continues to exist from a previous snapshot. Immutable — never edited.' : ''}
+          ${file.type === 'deleted' ? 'Logically deleted in this snapshot\'s manifests. <strong>Physically still on disk</strong> — referenced by older snapshots for time travel.' : ''}
+        </div>
+      </div>`;
+    }
+  }
+
+  // Update tree selection
+  document.querySelectorAll('.tree-node').forEach(n => n.classList.remove('selected'));
+  // Re-render to update selection state
+  const nodes = document.querySelectorAll('.tree-node');
+  // Simple approach: re-render disk with selection
+  renderDiskSelection();
+}
+
+function renderDiskSelection() {
+  document.querySelectorAll('.tree-node').forEach(node => {
+    const onclick = node.getAttribute('onclick');
+    if (onclick) {
+      const match = onclick.match(/selectFile\('(.+?)'\)/);
+      if (match && match[1] === selectedFileId) {
+        node.classList.add('selected');
+      } else {
+        node.classList.remove('selected');
+      }
+    }
+  });
+}
+
+function switchOp(op) {
+  currentOp = op;
+  currentStep = 0;
+  selectedFileId = null;
+  renderOpTabs();
+  renderSteps();
+  renderDisk();
+}
+
+function goToStep(i) {
+  currentStep = i;
+  selectedFileId = null;
+  renderSteps();
+  renderDisk();
+}
+
+function navigate(dir) {
+  const max = STEPS[currentOp].length - 1;
+  currentStep = Math.max(0, Math.min(max, currentStep + dir));
+  selectedFileId = null;
+  renderSteps();
+  renderDisk();
+}
+
+// ─── INIT ───────────────────────────────────────────────────────────────────
+renderOpTabs();
+renderSteps();
+renderDisk();
+</script>
+</body>
+</html>

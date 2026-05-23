@@ -236,6 +236,64 @@
       <h3>Connector SPI</h3>
       <p>Every data source is a plugin exposing three SPI facets to the coordinator and workers: <strong>metadata</strong> (list schemas, list tables, column types, table statistics), <strong>data location</strong> (enumerate splits the coordinator can distribute to workers), and <strong>data streaming</strong> (workers read and write pages via ConnectorPageSource / ConnectorPageSink). The SPI decouples the core engine from source-specific details entirely. Connectors also declare pushdown capabilities: a connector that implements <code>ConnectorMetadata.applyFilter()</code> will receive the predicate from the planner and can push it to the source, reducing data transfer.</p>
 
+      <h3>Building a connector: what you implement</h3>
+      <p>The Connector SPI has four moving parts. Three do real work; one wires them together.</p>
+      <p><strong><code>Connector</code> — the factory.</strong> The entry point Trino instantiates first. It holds shared resources (connection pool, config, HTTP client) constructed once and passed into all three real implementations. It does no work itself — it just returns the other three when Trino asks for them. Think of it as the plug on the cable.</p>
+      <p><strong><code>ConnectorMetadata</code> — the Librarian.</strong> Answers structural questions before any data moves: what schemas exist, what tables are in each schema, what columns and types does each table have, and optionally what statistics are available (row counts, column cardinalities). Every <code>SHOW TABLES</code> call and every query plan starts here.</p>
+      <p><strong><code>ConnectorSplitManager</code> — the Splitter.</strong> Breaks a table into independent chunks — splits — that workers can read in parallel. What a split looks like is source-specific: a file path for object storage, a predicate range (<code>WHERE id BETWEEN 0 AND 1M</code>) for JDBC, a topic-partition for Kafka. This is also where predicate pushdown happens — if Trino filters <code>WHERE country = 'US'</code>, you inspect the predicate and return only splits containing US data, skipping the rest before a single byte is read.</p>
+      <p><strong><code>ConnectorPageSource</code> — the Reader.</strong> Workers call it per split to stream actual data as Pages — Trino's columnar in-memory format (batches of rows stored column-by-column, similar to Apache Arrow). You open the connection, execute the query or read the file, and convert results into typed columnar blocks, returning Pages until the split is exhausted.</p>
+
+      <pre style="background:var(--code-bg,#f6f8fa);border:1px solid var(--border,#d8dde8);border-radius:6px;padding:14px 18px;font-size:13px;line-height:1.6;overflow-x:auto;"><code>public class MyConnector implements Connector {
+    // shared resources constructed once, injected into all three implementations
+    private final MyConfig config;
+    private final MyConnectionPool pool;
+
+    @Override
+    public ConnectorMetadata getMetadata(...)  { return new MyMetadata(pool); }
+
+    @Override
+    public ConnectorSplitManager getSplitManager()  { return new MySplitManager(config); }
+
+    @Override
+    public ConnectorPageSourceProvider getPageSourceProvider()  { return new MyPageSourceProvider(pool); }
+}</code></pre>
+
+      <figure style="margin:28px 0;">
+        <div class="mermaid" style="background:transparent;">
+sequenceDiagram
+    participant CO as Coordinator
+    participant MD as ConnectorMetadata
+    participant SM as ConnectorSplitManager
+    participant W1 as Worker 1
+    participant W2 as Worker 2
+    participant PS as ConnectorPageSource
+
+    Note over CO: Query: SELECT name FROM orders WHERE country='US'
+
+    CO->>MD: getTableHandle("orders")
+    MD-->>CO: TableHandle
+    CO->>MD: getTableMetadata() → columns, types
+    CO->>MD: getTableStatistics() → row count, NDVs
+
+    CO->>SM: getSplits(predicate: country='US')
+    SM-->>CO: [split-1, split-2, split-3, split-4]
+    Note over SM: Predicate pushdown — only splits<br/>containing US data returned
+
+    CO->>W1: assign split-1, split-2
+    CO->>W2: assign split-3, split-4
+
+    W1->>PS: open(split-1)
+    PS-->>W1: Page {name:[...], ...}
+    PS-->>W1: Page {name:[...], ...}
+    PS-->>W1: null (done)
+
+    W2->>PS: open(split-3)
+    PS-->>W2: Page {name:[...], ...}
+    PS-->>W2: null (done)
+        </div>
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure C1.</b> Connector SPI call sequence for a filtered query. The coordinator calls ConnectorMetadata to plan, ConnectorSplitManager to partition work (applying predicate pushdown to skip irrelevant splits), and workers call ConnectorPageSource independently per split to stream columnar pages.</figcaption>
+      </figure>
+
       <figure>
         <div class="diagram">
           <svg viewBox="0 0 880 520" xmlns="http://www.w3.org/2000/svg"
@@ -511,6 +569,82 @@
       <div class="callout amber">
         <span class="tag">2025 status: Credential vending</span>
         <p>As of mid-2025, Trino's Iceberg connector supports <code>iceberg.rest-catalog.vended-credentials-enabled=true</code>, but there are known issues: the client does not always invoke the <code>/credentials</code> refresh endpoint, falling back to re-fetching via <code>oauth/tokens</code>. Spark's Iceberg implementation honors <code>LoadTableResponse</code> vended credentials more reliably. Track GitHub issues #25827 and #27416 before relying on this in production.</p>
+      </div>
+
+      <h3>IRC catalog — connection string</h3>
+      <p>A catalog is defined by a single properties file dropped into <code>/etc/trino/catalog/</code>. The filename becomes the catalog name in SQL. For an IRC-backed Iceberg catalog:</p>
+      <pre style="background:var(--code-bg,#f6f8fa);border:1px solid var(--border,#d8dde8);border-radius:6px;padding:14px 18px;font-size:13px;line-height:1.6;overflow-x:auto;"><code># /etc/trino/catalog/iceberg.properties
+connector.name=iceberg
+iceberg.catalog.type=rest
+iceberg.rest-catalog.uri=https://catalog.example.com
+iceberg.rest-catalog.warehouse=s3://my-bucket/warehouse
+iceberg.rest-catalog.security=OAUTH2
+iceberg.rest-catalog.oauth2.token=&lt;token&gt;
+iceberg.rest-catalog.vended-credentials-enabled=true</code></pre>
+      <p>Trino calls the IRC server only for metadata (loadTable, listNamespaces). Data never flows through the catalog — workers read Parquet directly from S3 using vended credentials.</p>
+
+      <h3>JDBC connector mechanics</h3>
+      <p>With a JDBC connector, Trino's role is fundamentally different: the database is compute, storage, and format all in one. The coordinator calls the connector's metadata SPI to introspect schema and statistics from the RDBMS's <code>information_schema</code>. At execution time, the JDBC connector generates a SQL fragment in the target dialect, pushes predicates and — where supported — aggregations and joins down into the database, and opens a JDBC result-set stream. Workers pull rows over that stream and convert them into Trino pages for any remaining computation (cross-catalog joins, aggregations that couldn't be pushed). There is no object storage, no manifest file, no credential vending — the RDBMS is the single control point for both data and security.</p>
+      <pre style="background:var(--code-bg,#f6f8fa);border:1px solid var(--border,#d8dde8);border-radius:6px;padding:14px 18px;font-size:13px;line-height:1.6;overflow-x:auto;"><code># /etc/trino/catalog/postgres.properties
+connector.name=postgresql
+connection-url=jdbc:postgresql://db-host:5432/mydb
+connection-user=trino
+connection-password=secret</code></pre>
+
+      <h3>Catalog type comparison: IRC vs JDBC</h3>
+      <p>Both catalog types appear identical to the SQL writer — the difference is entirely in what happens underneath:</p>
+      <pre style="background:var(--code-bg,#f6f8fa);border:1px solid var(--border,#d8dde8);border-radius:6px;padding:14px 18px;font-size:13px;line-height:1.6;overflow-x:auto;"><code>-- IRC catalog: data is Parquet on S3, Trino workers do the scan
+SELECT * FROM iceberg.sales.orders;
+
+-- JDBC catalog: data is in Postgres, RDBMS does the scan
+SELECT * FROM postgres.public.users;
+
+-- Cross-catalog join: Trino federates both transparently
+SELECT u.name, o.total
+FROM   postgres.public.users u
+JOIN   iceberg.sales.orders o ON u.id = o.user_id;</code></pre>
+      <div style="overflow-x:auto;margin:20px 0;">
+        <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
+          <thead>
+            <tr style="background:var(--surface2,#f6f7f9);border-bottom:2px solid var(--border,#d8dde8);">
+              <th style="text-align:left;padding:10px 14px;font-weight:700;color:var(--ink,#1a1d24);">Dimension</th>
+              <th style="text-align:left;padding:10px 14px;font-weight:700;color:#432068;">IRC Catalog (Iceberg)</th>
+              <th style="text-align:left;padding:10px 14px;font-weight:700;color:#3A4252;">JDBC Catalog (RDBMS)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);">
+              <td style="padding:10px 14px;font-weight:600;">Connection string</td>
+              <td style="padding:10px 14px;font-family:monospace;font-size:12px;">iceberg.rest-catalog.uri=https://…</td>
+              <td style="padding:10px 14px;font-family:monospace;font-size:12px;">jdbc:postgresql://host:5432/db</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);background:var(--surface2,#f6f7f9);">
+              <td style="padding:10px 14px;font-weight:600;">Where data lives</td>
+              <td style="padding:10px 14px;">Files in object storage (S3 / GCS / ADLS)</td>
+              <td style="padding:10px 14px;">Inside the RDBMS engine</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);">
+              <td style="padding:10px 14px;font-weight:600;">Who does the scan</td>
+              <td style="padding:10px 14px;">Trino workers read files directly from S3</td>
+              <td style="padding:10px 14px;">RDBMS executes scan; Trino streams results</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);background:var(--surface2,#f6f7f9);">
+              <td style="padding:10px 14px;font-weight:600;">Trino's role</td>
+              <td style="padding:10px 14px;">Full compute engine</td>
+              <td style="padding:10px 14px;">Thin client + post-processing layer</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);">
+              <td style="padding:10px 14px;font-weight:600;">Metadata source</td>
+              <td style="padding:10px 14px;">IRC server (Polaris, Nessie, Unity…)</td>
+              <td style="padding:10px 14px;">RDBMS <code>information_schema</code> via JDBC</td>
+            </tr>
+            <tr style="background:var(--surface2,#f6f7f9);">
+              <td style="padding:10px 14px;font-weight:600;">Security control point</td>
+              <td style="padding:10px 14px;">IRC catalog (credential vending, RBAC)</td>
+              <td style="padding:10px 14px;">RDBMS (connection credentials, DB roles)</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <h3>Worked example: join + aggregation</h3>
@@ -835,6 +969,239 @@ sequenceDiagram
       </div>
     </section>
 
+    <!-- 5b. GOVERNANCE INTEGRATION -->
+    <section id="governance">
+      <h2>Governance integration: lineage and policy enforcement (L7)</h2>
+      <p>Trino sits at the centre of a two-way relationship with governance catalogs (DataHub, Atlan, Purview). The two directions are completely independent in mechanism but together they close the data-governance loop: every query is observed and recorded, and every classification decision is enforced.</p>
+
+      <h3>Direction 1 — Trino → Governance catalog (lineage harvest)</h3>
+      <p>At query completion, Trino knows exactly which tables were read, which were written, and which columns were projected or filtered. There are two ways to get this information into a governance catalog:</p>
+      <p>The primary path is the <strong>OpenLineage event listener plugin</strong>. OpenLineage is an open standard (SPEC + JSON schema) for expressing data lineage — "this query read from table A and B, wrote to table C, touched columns x, y, z." You configure Trino with an OpenLineage-compatible listener JAR; on every <code>queryCompleted</code> event it emits a structured JSON payload to an HTTP endpoint. DataHub, Atlan, Marquez, and most modern governance tools have native OpenLineage ingestors. Lineage is near-real-time and column-level.</p>
+      <p>The fallback path is <strong>polling <code>system.runtime.queries</code></strong>. Trino exposes a built-in system table containing recent query history — SQL text, input tables, output tables, user, timing. A governance tool can poll this table on a schedule as a simpler integration, at the cost of latency and loss of column-level detail.</p>
+
+      <h3>Direction 2 — Governance catalog → Trino (policy enforcement)</h3>
+      <p>A data steward in DataHub or Purview can tag a column: <code>PII</code>, <code>SENSITIVE</code>, <code>RESTRICTED</code>. That tag is a business-level classification — it means nothing to Trino on its own. The bridge is <strong>Ranger or OPA</strong>:</p>
+      <p>The governance catalog syncs its tag-based policies into Ranger (or expresses them as Rego in OPA). Trino's access control plugin calls the policy engine on every query. The policy engine returns a decision: allow, deny, or allow-with-masking. Column masking is the common outcome — the tagged column's value is replaced with a masked expression (e.g. <code>NULL</code>, <code>'****'</code>, or a format-preserving token) transparently, before results leave Trino. The analyst sees masked data; the steward's classification is enforced without any change to the query or the underlying table.</p>
+
+      <div class="callout note">
+        <span class="tag">Key insight</span>
+        <p>Trino has no awareness of business-level tags like PII. It only enforces what Ranger/OPA tells it. The governance catalog is where human judgment lives; Ranger/OPA translates that judgment into an access decision; Trino is the enforcement point. Each layer does one thing.</p>
+      </div>
+
+      <h3>Lineage harvest flow</h3>
+      <figure style="margin:28px 0;">
+        <div class="mermaid" style="background:transparent;">
+sequenceDiagram
+    participant U as User / Agent
+    participant TR as Trino
+    participant OL as OpenLineage Listener
+    participant GC as Governance Catalog<br/>(DataHub / Atlan)
+    participant ST as Data Steward
+
+    U->>TR: SQL query
+    TR->>TR: Execute query<br/>(reads orders, customers)
+    TR->>OL: queryCompleted event
+    OL->>GC: POST /api/v1/lineage<br/>{ inputs: [orders, customers],<br/>  outputs: [report],<br/>  columnLineage: [...] }
+    GC->>GC: Update lineage graph
+    ST->>GC: Views lineage in UI
+        </div>
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure L1.</b> OpenLineage event listener emits a structured lineage event on every query completion. The governance catalog ingests it and updates the lineage graph in near-real-time. Column-level lineage is included when Trino can resolve it from the query plan.</figcaption>
+      </figure>
+
+      <h3>Policy enforcement flow</h3>
+      <figure style="margin:28px 0;">
+        <div class="mermaid" style="background:transparent;">
+sequenceDiagram
+    participant ST as Data Steward
+    participant GC as Governance Catalog<br/>(DataHub / Purview)
+    participant RO as Ranger / OPA
+    participant TR as Trino
+    participant U as Analyst
+
+    ST->>GC: Tags orders.amount as PII
+    GC->>RO: Sync policy:<br/>mask orders.amount<br/>for role=analyst
+    RO->>RO: Store masking rule
+
+    U->>TR: SELECT amount FROM orders
+    TR->>RO: Access check:<br/>{ user: analyst,<br/>  table: orders,<br/>  column: amount }
+    RO-->>TR: ALLOW with mask:<br/>{ amount → '****' }
+    TR-->>U: Returns masked result
+        </div>
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure L2.</b> A steward's tag in the governance catalog becomes an enforced column mask in Trino via Ranger/OPA. The analyst's query is unchanged — the masking is applied transparently at the Trino access control layer before results are returned.</figcaption>
+      </figure>
+
+      <h3>The closed governance loop</h3>
+      <figure style="margin:28px 0;">
+        <div class="mermaid" style="background:transparent;">
+flowchart LR
+    subgraph TRINO ["Trino (L4)"]
+        T1["Execute query"]
+        T2["Enforce policy\n(mask / deny)"]
+    end
+
+    subgraph GOV ["Governance Catalog (L7)\nDataHub · Atlan · Purview"]
+        G1["Lineage graph"]
+        G2["Column classifications\nPII · SENSITIVE · RESTRICTED"]
+    end
+
+    subgraph POLICY ["Policy Engine (L8)\nRanger · OPA"]
+        P1["Masking &amp; access rules"]
+    end
+
+    subgraph STEWARD ["Data Steward"]
+        S1["Reviews lineage\nApplies tags"]
+    end
+
+    T1 -->|"OpenLineage event\n(inputs, outputs, columns)"| G1
+    G1 --> S1
+    S1 -->|"Tags column"| G2
+    G2 -->|"Sync policies"| P1
+    P1 -->|"mask / deny decision\nper access check"| T2
+
+    style TRINO fill:#DCE8FB,stroke:#3B73C4,color:#1E3A6B
+    style GOV fill:#DEEFD9,stroke:#4A9A3C,color:#234D1A
+    style POLICY fill:#FAD9DC,stroke:#C8425A,color:#6E1626
+    style STEWARD fill:#FBF0CF,stroke:#C99A1E,color:#6B4E06
+        </div>
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure L3.</b> The closed governance loop. Trino emits lineage outward; a steward applies classifications in the governance catalog; those classifications flow into Ranger/OPA as masking rules; Trino enforces them on the next query. Each component does one job.</figcaption>
+      </figure>
+
+      <h3>Next-generation L7: GCP Knowledge Catalog</h3>
+      <p><em>A semantic index of your entire data estate — tables, columns, relationships, and business meaning — built so AI agents can find the right data and generate accurate queries without hallucinating. Think of it as the enterprise's long-term memory that agents consult before they write a single line of SQL.</em></p>
+      <p>Google Cloud Knowledge Catalog (announced April 2026, evolving Dataplex) represents a generational shift in what an L7 catalog does. Traditional governance catalogs — DataHub, Atlan — are built for <em>human data stewards</em>: lineage graphs, classification tags, policy sync. GCP Knowledge Catalog is built for <em>AI agents</em>: its three pillars are aggregation, enrichment, and semantic search, all oriented toward grounding agents with trusted enterprise context rather than governing human analysts.</p>
+
+      <div class="callout note">
+        <span class="tag">Core distinction</span>
+        <p>Traditional catalog (DataHub/Atlan): bidirectional — lineage flows out of Trino, masking rules flow back in via Ranger/OPA. GCP Knowledge Catalog: primarily upstream — it provides context <em>before</em> a query is written, not enforcement <em>after</em> it runs. Policy enforcement back into Trino still requires Ranger or OPA as the bridge.</p>
+      </div>
+
+      <h3>How GCP Knowledge Catalog relates to Trino</h3>
+      <p>GCP Knowledge Catalog has no direct Trino connector. Its native integrations are Google-first — BigQuery, AlloyDB, Spanner, Cloud SQL. The connection to Trino comes through two paths:</p>
+      <p><strong>Indirect lineage via partner catalogs.</strong> GCP Knowledge Catalog explicitly federates from DataHub, Atlan, and Collibra. If your org already runs Trino → OpenLineage → DataHub, that lineage flows into GCP Knowledge Catalog through DataHub as a metadata source. Trino contributes lineage, just not directly.</p>
+      <p><strong>The agentic query path (the important one).</strong> GCP Knowledge Catalog provides verified SQL patterns, auto-generated business glossaries, and high-precision semantic search so AI agents can find the right tables and generate accurate SQL without hallucinating joins. That SQL has to execute somewhere — if your compute layer is Trino, the Knowledge Catalog sits <em>upstream</em> of every agent-generated query, grounding it before it hits the engine.</p>
+
+      <figure style="margin:28px 0;">
+        <div class="mermaid" style="background:transparent;">
+flowchart TD
+    subgraph KC ["GCP Knowledge Catalog (L7+)"]
+        KC1["Semantic search\n(hybrid: BM25 + vector)"]
+        KC2["Business glossary\n& verified SQL patterns"]
+        KC3["Aggregated metadata\n(BigQuery, DataHub, Atlan…)"]
+        KC1 --- KC2 --- KC3
+    end
+
+    subgraph AGENT ["AI Agent"]
+        A1["Receives prompt:\n'Show me order totals by region'"]
+        A2["Generates grounded SQL"]
+    end
+
+    subgraph TRINO ["Trino (L4)"]
+        T1["Executes SQL\nacross catalogs"]
+    end
+
+    subgraph LINEAGE ["Lineage path (indirect)"]
+        OL["OpenLineage → DataHub"]
+    end
+
+    A1 -->|"semantic search:\n'what table has order totals?'"| KC1
+    KC2 -->|"verified context\n+ SQL guardrails"| A2
+    A2 -->|"grounded SQL"| T1
+    T1 -->|"result set"| AGENT
+    T1 -->|"OpenLineage event"| OL
+    OL -->|"DataHub feeds\nKC aggregation"| KC3
+
+    style KC fill:#DEEFD9,stroke:#4A9A3C,color:#234D1A
+    style AGENT fill:#FBF0CF,stroke:#C99A1E,color:#6B4E06
+    style TRINO fill:#DCE8FB,stroke:#3B73C4,color:#1E3A6B
+    style LINEAGE fill:#E8EBF0,stroke:#8A94A6,color:#3A4252
+        </div>
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure L4.</b> GCP Knowledge Catalog in the agentic query path. It sits upstream of Trino — grounding the agent before a query is written — rather than wrapping around Trino as a policy enforcer. Lineage flows back into it indirectly via DataHub/Atlan federation.</figcaption>
+      </figure>
+
+      <h3>Traditional catalog vs Knowledge Catalog — what changes for Trino</h3>
+      <figure style="margin:28px 0;">
+        <div class="mermaid" style="background:transparent;">
+flowchart LR
+    subgraph OLD ["Traditional L7 (DataHub / Atlan)"]
+        direction TB
+        O1["Steward tags column → Ranger\n→ Trino masks at query time"]
+        O2["Trino → OpenLineage\n→ lineage graph"]
+        O1 ~~~ O2
+    end
+
+    subgraph NEW ["Next-gen L7 (GCP Knowledge Catalog)"]
+        direction TB
+        N1["Agent queries KC for context\nbefore SQL is written"]
+        N2["Access-aware search:\nagent only sees\nassets it can access"]
+        N3["Trino → OpenLineage → DataHub\n→ KC aggregates from DataHub"]
+        N1 ~~~ N2 ~~~ N3
+    end
+
+    subgraph UNCHANGED ["Still needed regardless"]
+        U1["Ranger / OPA\n→ Trino policy enforcement"]
+    end
+
+    OLD -->|"still required"| UNCHANGED
+    NEW -->|"still requires"| UNCHANGED
+
+    style OLD fill:#DCE8FB,stroke:#3B73C4,color:#1E3A6B
+    style NEW fill:#DEEFD9,stroke:#4A9A3C,color:#234D1A
+    style UNCHANGED fill:#FAD9DC,stroke:#C8425A,color:#6E1626
+        </div>
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure L5.</b> What changes with GCP Knowledge Catalog vs traditional governance catalogs, from Trino's perspective. The policy enforcement path (Ranger/OPA → Trino) is unchanged regardless of which catalog generation you use.</figcaption>
+      </figure>
+
+      <h3>What GCP Knowledge Catalog adds that traditional catalogs don't</h3>
+      <div style="overflow-x:auto;margin:20px 0;">
+        <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
+          <thead>
+            <tr style="background:var(--surface2,#f6f7f9);border-bottom:2px solid var(--border,#d8dde8);">
+              <th style="text-align:left;padding:10px 14px;font-weight:700;">Capability</th>
+              <th style="text-align:left;padding:10px 14px;font-weight:700;color:#3B73C4;">DataHub / Atlan</th>
+              <th style="text-align:left;padding:10px 14px;font-weight:700;color:#4A9A3C;">GCP Knowledge Catalog</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);">
+              <td style="padding:10px 14px;font-weight:600;">Primary audience</td>
+              <td style="padding:10px 14px;">Human data stewards</td>
+              <td style="padding:10px 14px;">AI agents</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);background:var(--surface2,#f6f7f9);">
+              <td style="padding:10px 14px;font-weight:600;">Lineage from Trino</td>
+              <td style="padding:10px 14px;">Direct (OpenLineage ingestor)</td>
+              <td style="padding:10px 14px;">Indirect (via DataHub/Atlan federation)</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);">
+              <td style="padding:10px 14px;font-weight:600;">Policy enforcement to Trino</td>
+              <td style="padding:10px 14px;">Via Ranger / OPA sync</td>
+              <td style="padding:10px 14px;">Via Ranger / OPA (same path)</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);background:var(--surface2,#f6f7f9);">
+              <td style="padding:10px 14px;font-weight:600;">Semantic search</td>
+              <td style="padding:10px 14px;">Basic text search</td>
+              <td style="padding:10px 14px;">Hybrid BM25 + vector, sub-second, access-aware</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border,#d8dde8);">
+              <td style="padding:10px 14px;font-weight:600;">Agent grounding</td>
+              <td style="padding:10px 14px;">Not built-in</td>
+              <td style="padding:10px 14px;">Verified SQL patterns, business glossary, guardrails</td>
+            </tr>
+            <tr style="background:var(--surface2,#f6f7f9);">
+              <td style="padding:10px 14px;font-weight:600;">Trino native connector</td>
+              <td style="padding:10px 14px;">Yes (OpenLineage listener)</td>
+              <td style="padding:10px 14px;">No — Google-first (BigQuery, AlloyDB, Spanner)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout amber">
+        <span class="tag">Architectural implication</span>
+        <p>In an agentic stack where AI agents generate SQL that runs on Trino, GCP Knowledge Catalog prevents hallucinated table names and bad joins <em>before</em> the query is written. Ranger/OPA prevents unauthorized access <em>after</em> the query arrives. You need both layers — they are not substitutes for each other.</p>
+      </div>
+    </section>
+
     <!-- 6. TRADE-OFFS -->
     <section id="tradeoffs">
       <h2><span class="num">6</span>Trade-offs, failure modes &amp; when (not) to use it</h2>
@@ -858,6 +1225,11 @@ sequenceDiagram
         <li><strong>Catalog vended-credential maturity:</strong> The IRC credential-vending path (the preferred security model) has known bugs in Trino's client-side implementation as of 2025. Organizations relying on short-lived credentials must test renewal behavior under load.</li>
         <li><strong>No streaming:</strong> Trino's execution model is bounded queries. Real-time or continuous queries belong in Flink or Kafka Streams.</li>
       </ul>
+
+      <div class="callout note">
+        <span class="tag">FTE decision rule</span>
+        <p>Default mode is all-or-nothing: one task failure = full query restart. FTE checkpoints stage outputs to object storage (S3/GCS) so only the failed task re-runs — a 3-hour job that fails at hour 2.9 loses minutes, not hours. The cost is checkpoint I/O on every stage boundary, which adds measurable overhead to fast queries. <strong>Rule of thumb: leave FTE off for sub-minute interactive OLAP; enable it only for long-running batch ETL.</strong> See the <a href="#execution">execution section</a> for the full mechanism.</p>
+      </div>
 
       <h3>When (not) to use Trino</h3>
       <div class="tbl-wrap">
@@ -908,6 +1280,8 @@ sequenceDiagram
         <dd>Short-lived, path-scoped object-storage credentials (e.g., STS temporary AWS credentials) that the catalog returns alongside table metadata. Engines use these to read/write storage without holding long-lived keys. The catalog becomes the central security control point.</dd>
         <dt>CBO (Cost-Based Optimizer)</dt>
         <dd>Trino's query planner component that uses table statistics (row counts, column cardinalities, NDVs, histograms from connectors) to estimate query costs and pick an optimal plan — primarily join ordering and join distribution strategy (broadcast vs. partitioned).</dd>
+        <dt>NDV (Number of Distinct Values) / Cardinality</dt>
+        <dd>The count of unique values in a column — used interchangeably with cardinality in the context of join planning. A <code>country</code> column might have NDV = 195; a <code>user_id</code> column might have NDV = 800M. The CBO uses NDV to estimate join output size, which drives two decisions: join order (smaller estimated output side first) and join strategy (broadcast if one side is small enough to replicate to all workers; partitioned if both sides are large). Stale or missing NDVs cause the CBO to fall back to heuristics and risk catastrophically bad plans — e.g., broadcasting a 500 GB table because old stats said it had 1,000 rows. Run <code>ANALYZE</code> to refresh.</dd>
         <dt>FTE (Fault-Tolerant Execution)</dt>
         <dd>An execution mode that spills stage outputs to an external exchange manager (e.g., S3 bucket) so individual task failures trigger task-level retry rather than full query abort. Also enables adaptive plan re-optimization at runtime.</dd>
         <dt>Pushdown</dt>
