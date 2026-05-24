@@ -110,7 +110,7 @@
       </div>
       <h1 class="dd-title">OAuth2 + JWT — How They Connect</h1>
       <div class="dd-meta">
-        Eight diagrams covering grant types, token flows, JWKS key distribution, and key rotation
+        Twelve diagrams covering grant types, token flows, JWKS key distribution, key rotation, and OIDC vs OAuth2
       </div>
     </div>
   </header>
@@ -364,6 +364,118 @@ sequenceDiagram
         API->>API: Verify access_token<br/>(also a JWT, signed by AS)
         API-->>C: 200 OK — protected data
     end
+      </div>
+    </div>
+
+    <!-- ── OIDC SECTION ── -->
+
+    <!-- Diagram 9: The openid Scope — What Triggers OIDC -->
+    <div class="diagram-block">
+      <h2>9. The <code>openid</code> Scope — What Triggers OIDC</h2>
+      <p>OAuth2 and OIDC use the same <code>/token</code> endpoint. The presence of <code>scope=openid</code> is the switch that flips OAuth2 into OIDC — and the only meaningful difference in what comes back is the ID Token.</p>
+      <div class="mermaid">
+flowchart TD
+    A["Authorization / Token Request"] --> B{"scope includes\n'openid'?"}
+
+    B -->|"No — plain OAuth2"| C["Returns:\naccess_token only"]
+    B -->|"Yes — OIDC"| D["Returns:\naccess_token  +  id_token"]
+
+    C --> E["Access Token\n───────────────\nsub = client / service ID\nscope = what it can do\nNo human identity claims"]
+    D --> F["Access Token  (same as left)\n+\nID Token  ← always a JWT\n───────────────\nsub = stable human user ID\nemail, name, email_verified\nauth_time, nonce\nWho the human IS"]
+
+    style B fill:#fef3c7,stroke:#d97706,color:#78350f
+    style C fill:#dce8fb,stroke:#2f6fb8,color:#1a1d24
+    style D fill:#d1fae5,stroke:#10b981,color:#065f46
+    style E fill:#f0f5ff,stroke:#2f6fb8,color:#1a1d24
+    style F fill:#ecfdf5,stroke:#10b981,color:#065f46
+      </div>
+    </div>
+
+    <!-- Diagram 10: ID Token vs Access Token — Different Questions -->
+    <div class="diagram-block">
+      <h2>10. ID Token vs Access Token — Two Different Questions</h2>
+      <p>Scopes answer <em>what can this token do?</em> — that's authorization. ID Token claims answer <em>who is the human behind this?</em> — that's authentication. They coexist but are never the same thing.</p>
+      <div class="mermaid">
+flowchart LR
+    subgraph AT ["Access Token (OAuth2)"]
+        direction TB
+        A1["Question answered:\n'What is permitted?'"]
+        A2["Key claims:\nscope = read:data write:reports\nsub = service-account-42\niss = auth server\nexp = short TTL"]
+        A1 --- A2
+    end
+
+    subgraph IT ["ID Token (OIDC only — always a JWT)"]
+        direction TB
+        I1["Question answered:\n'Who is the human?'"]
+        I2["Key claims:\nsub = user-abc123\nemail = alice@example.com\nname = Alice Smith\nemail_verified = true\nauth_time = when they logged in\nnonce = replay protection"]
+        I1 --- I2
+    end
+
+    AT -->|"both returned\ntogether in OIDC"| IT
+
+    style AT fill:#dce8fb,stroke:#2f6fb8,color:#1a1d24
+    style IT fill:#fef3c7,stroke:#d97706,color:#78350f
+    style A1 fill:#bfdbfe,stroke:#2f6fb8,color:#1e3a8a
+    style I1 fill:#fde68a,stroke:#d97706,color:#78350f
+      </div>
+    </div>
+
+    <!-- Diagram 11: RFC 7523 in the M2M vs Human Landscape -->
+    <div class="diagram-block">
+      <h2>11. RFC 7523 (JWT Bearer) in the Full Landscape — M2M vs Human</h2>
+      <p>RFC 7523 is designed for machine-to-machine scenarios where no human is present. OIDC is designed for human authentication. The two axes — <em>how the client authenticates</em> and <em>whether a human is present</em> — are orthogonal.</p>
+      <div class="mermaid">
+flowchart TD
+    ROOT["Requesting an Access Token"] --> HU{"Human\npresent?"}
+
+    HU -->|"Yes — user in browser"| AC["Authorization Code Flow\n(browser redirect + login screen)"]
+    HU -->|"No — machine / service"| M2M["Machine-to-Machine (M2M)"]
+
+    AC -->|"+ scope=openid"| OIDC["OIDC\nReturns access_token + id_token\nApp knows WHO the user is"]
+    AC -->|"no openid scope"| OA2["Plain OAuth2\nReturns access_token only\nDelegated access, no identity"]
+
+    M2M --> CC["Client Credentials\ncredential = client_secret\n(shared password — weaker)"]
+    M2M --> JB["JWT Bearer — RFC 7523 ✦\ncredential = signed JWT assertion\n(asymmetric key — stronger)\nService accounts, CI/CD, microservices"]
+
+    JB --> WHY["Why stronger?\nPrivate key never leaves client\nAuth server stores public key only\nNo shared secret to leak"]
+
+    style OIDC fill:#d1fae5,stroke:#10b981,color:#065f46
+    style JB fill:#2f6fb8,color:#fff,stroke:#1a4d8f
+    style WHY fill:#dce8fb,stroke:#2f6fb8,color:#1a1d24
+    style CC fill:#f6f7f9,stroke:#9ca3af,color:#374151
+    style OA2 fill:#f6f7f9,stroke:#9ca3af,color:#374151
+      </div>
+    </div>
+
+    <!-- Diagram 12: OIDC Authorization Code Flow — Full Sequence -->
+    <div class="diagram-block">
+      <h2>12. OIDC Authorization Code Flow — Full Sequence</h2>
+      <p>The typical human login flow. Compare with Diagram 2 (JWT Bearer): there the client signs its own JWT assertion; here the <em>auth server</em> signs an ID Token about the user after they authenticate interactively.</p>
+      <div class="mermaid">
+sequenceDiagram
+    participant U as User (Browser)
+    participant App as Client App
+    participant AS as Auth Server (OIDC Provider)
+    participant API as Resource API
+
+    App->>U: Redirect to /authorize<br/>scope=openid email profile<br/>response_type=code<br/>nonce=xyz
+
+    U->>AS: Follow redirect
+    AS->>U: Show login screen
+    U->>AS: Enter credentials / MFA
+
+    AS->>U: Redirect back to app<br/>with authorization code
+
+    U->>App: Deliver authorization code
+
+    App->>AS: POST /token<br/>grant_type=authorization_code<br/>code=&lt;code&gt;<br/>client_secret=...
+
+    AS-->>App: 200 OK<br/>{ access_token, id_token, refresh_token }
+
+    Note over App: Verify id_token signature<br/>using AS's JWKS endpoint.<br/>Extract sub, email, name —<br/>now knows WHO the user is.
+
+    App->>API: GET /data<br/>Authorization: Bearer &lt;access_token&gt;
+    API-->>App: 200 OK — protected data
       </div>
     </div>
 

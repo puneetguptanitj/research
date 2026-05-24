@@ -215,9 +215,399 @@
       <h3>Data Layer</h3>
       <p>The data layer contains <strong>data files</strong> and <strong>delete files</strong>. Data files store actual rows in a columnar format — Parquet (by far the most common), ORC, or Avro. Iceberg is file-format agnostic; the format in use is recorded per-file in the manifest, not globally. Parquet is dominant because its row-group statistics (per-column min/max, null counts) feed directly into Iceberg's pruning chain: the engine reads column statistics from the manifest file first, opens the Parquet footer only if the manifest passes, and reads individual row groups only if the footer passes. Three independent filter stages on the way to reading a byte.</p>
 
+      <figure style="margin:2rem 0;background:#f8f9fb;border:1px solid var(--rule-strong);border-radius:10px;padding:1.5rem 1rem 1rem;">
+        <figcaption style="font-size:0.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1rem;text-align:center;">Iceberg → Parquet three-stage pruning chain</figcaption>
+        <svg viewBox="0 0 780 600" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:780px;display:block;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <defs>
+            <marker id="arr" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0,9 3.5,0 7" fill="#6b7280"/>
+            </marker>
+            <marker id="arr-skip" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0,9 3.5,0 7" fill="#C8425A"/>
+            </marker>
+            <marker id="arr-pass" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0,9 3.5,0 7" fill="#1F9E8F"/>
+            </marker>
+          </defs>
+
+          <!-- ── Query input ── -->
+          <rect x="215" y="14" width="350" height="52" rx="8" fill="#2f6fb8" />
+          <text x="390" y="35" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Query predicate</text>
+          <text x="390" y="54" text-anchor="middle" fill="#c9ddf7" font-size="11.5">e.g.  date &gt; '2025-01-01'  AND  region = 'us-east'</text>
+
+          <!-- down arrow → stage 1 -->
+          <line x1="390" y1="66" x2="390" y2="96" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr)"/>
+
+          <!-- ── STAGE 1 : Manifest statistics ── -->
+          <rect x="155" y="96" width="470" height="70" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.5"/>
+          <text x="175" y="118" fill="#1a1d24" font-size="12" font-weight="700">① Manifest file — column statistics</text>
+          <text x="175" y="136" fill="#444b59" font-size="11">Per-column: lower_bound, upper_bound, null_count, nan_count</text>
+          <text x="175" y="152" fill="#444b59" font-size="11">Cost: read only the Avro manifest — no data file I/O</text>
+
+          <!-- down arrow → decision 1 -->
+          <line x1="390" y1="166" x2="390" y2="194" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr)"/>
+
+          <!-- diamond 1 -->
+          <polygon points="390,194 500,222 390,250 280,222" fill="#fff" stroke="#6b7280" stroke-width="1.5"/>
+          <text x="390" y="218" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">Predicate overlaps</text>
+          <text x="390" y="234" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">manifest stats?</text>
+
+          <!-- NO → skip right -->
+          <line x1="500" y1="222" x2="610" y2="222" stroke="#C8425A" stroke-width="1.8" marker-end="url(#arr-skip)"/>
+          <text x="549" y="214" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">NO</text>
+          <rect x="610" y="196" width="160" height="52" rx="6" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.2"/>
+          <text x="690" y="217" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">SKIP manifest</text>
+          <text x="690" y="234" text-anchor="middle" fill="#8B2035" font-size="10.5">All data files within</text>
+          <text x="690" y="248" text-anchor="middle" fill="#8B2035" font-size="10.5">this manifest pruned</text>
+
+          <!-- YES → down -->
+          <line x1="390" y1="250" x2="390" y2="280" stroke="#1F9E8F" stroke-width="1.8" marker-end="url(#arr-pass)"/>
+          <text x="402" y="269" fill="#1F9E8F" font-size="11" font-weight="700">YES</text>
+
+          <!-- ── STAGE 2 : Parquet footer ── -->
+          <rect x="155" y="280" width="470" height="70" rx="8" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
+          <text x="175" y="302" fill="#1a1d24" font-size="12" font-weight="700">② Parquet footer — row-group statistics</text>
+          <text x="175" y="320" fill="#444b59" font-size="11">Per column per row-group: min, max, null_count (ColumnChunkMetaData)</text>
+          <text x="175" y="336" fill="#444b59" font-size="11">Cost: read only the Parquet footer (last few KB of the file)</text>
+
+          <!-- down arrow → decision 2 -->
+          <line x1="390" y1="350" x2="390" y2="378" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr)"/>
+
+          <!-- diamond 2 -->
+          <polygon points="390,378 500,406 390,434 280,406" fill="#fff" stroke="#6b7280" stroke-width="1.5"/>
+          <text x="390" y="402" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">Predicate overlaps</text>
+          <text x="390" y="418" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">row-group ranges?</text>
+
+          <!-- NO → skip right -->
+          <line x1="500" y1="406" x2="610" y2="406" stroke="#C8425A" stroke-width="1.8" marker-end="url(#arr-skip)"/>
+          <text x="549" y="398" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">NO</text>
+          <rect x="610" y="380" width="160" height="52" rx="6" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.2"/>
+          <text x="690" y="401" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">SKIP row group(s)</text>
+          <text x="690" y="418" text-anchor="middle" fill="#8B2035" font-size="10.5">Seek to next row group;</text>
+          <text x="690" y="432" text-anchor="middle" fill="#8B2035" font-size="10.5">no data bytes read</text>
+
+          <!-- YES → down -->
+          <line x1="390" y1="434" x2="390" y2="464" stroke="#1F9E8F" stroke-width="1.8" marker-end="url(#arr-pass)"/>
+          <text x="402" y="453" fill="#1F9E8F" font-size="11" font-weight="700">YES</text>
+
+          <!-- ── STAGE 3 : read row-group bytes ── -->
+          <rect x="155" y="464" width="470" height="70" rx="8" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.5"/>
+          <text x="175" y="486" fill="#1a1d24" font-size="12" font-weight="700">③ Read row-group data bytes</text>
+          <text x="175" y="504" fill="#444b59" font-size="11">Decompress column chunks, apply late-materialisation (vector filter)</text>
+          <text x="175" y="520" fill="#444b59" font-size="11">First actual data I/O — only after passing both prior stages</text>
+
+          <!-- down arrow → result -->
+          <line x1="390" y1="534" x2="390" y2="562" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr)"/>
+
+          <!-- result -->
+          <rect x="250" y="562" width="280" height="34" rx="8" fill="#2f6fb8"/>
+          <text x="390" y="584" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="700">Return matching rows to engine</text>
+        </svg>
+      </figure>
+
       <p><strong>Delete files</strong> record which rows have been logically removed without rewriting the data file they belong to — this is the merge-on-read (MOR) strategy. The Iceberg v2 spec defines two kinds. <em>Positional delete files</em> identify a deleted row by <code>(file_path, row_position)</code> — a fast lookup but tightly coupled to the physical file. <em>Equality delete files</em> identify rows by the values of one or more columns (e.g., <code>order_id = 1234</code>) — more flexible, but at read time the engine must join every data file with every relevant equality delete file, causing scan amplification that grows with write frequency. <strong>Sequence numbers</strong> (a monotonically increasing counter per snapshot) prevent equality delete files from accidentally deleting a row added after the delete was written: an equality delete with sequence number <em>N</em> only applies to data files with sequence number < <em>N</em>.</p>
 
+      <div class="callout note">
+        <span class="tag">Sequence number — per snapshot, not per file</span>
+        <p>The sequence number is assigned at the <strong>snapshot level</strong> — every commit increments a single monotonic counter and every data file or delete file written in that commit inherits that number. Comparing file sequence numbers is really comparing <em>which snapshot committed them</em>. Two files written in the same snapshot share the same sequence number; a delete written in that same snapshot does not apply to files from that snapshot either (seq is not strictly less than itself).</p>
+        <p>The rule "an equality delete with seq <em>N</em> only applies to data files with seq &lt; <em>N</em>" therefore means: the delete only touches rows committed in an <em>earlier</em> snapshot. A row written in a <em>later</em> snapshot is causally newer than the delete and survives — even if it matches the delete predicate exactly.</p>
+      </div>
+
+      <figure style="margin:2rem 0;background:#f8f9fb;border:1px solid var(--rule-strong);border-radius:10px;padding:1.5rem 1rem 1.2rem;">
+        <figcaption style="font-size:0.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1rem;text-align:center;">Sequence number scoping — which files an equality delete applies to</figcaption>
+        <svg viewBox="0 0 780 278" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:780px;display:block;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <defs>
+            <marker id="sq-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#1F9E8F"/></marker>
+            <marker id="sq-gl" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#1F9E8F"/></marker>
+            <marker id="sq-r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#C8425A"/></marker>
+          </defs>
+
+          <!-- Background zones -->
+          <rect x="0"   y="0" width="328" height="278" rx="0" fill="#D6F0EE" opacity="0.30"/>
+          <rect x="328" y="0" width="136" height="278" rx="0" fill="#FBF0CF" opacity="0.40"/>
+          <rect x="464" y="0" width="316" height="278" rx="0" fill="#FBE9EC" opacity="0.30"/>
+
+          <!-- Zone header labels -->
+          <text x="164" y="20" text-anchor="middle" fill="#0d5c54" font-size="11" font-weight="700">in scope for E1</text>
+          <text x="164" y="34" text-anchor="middle" fill="#0d5c54" font-size="10">seq &lt; 5</text>
+          <text x="396" y="20" text-anchor="middle" fill="#8a6800" font-size="11" font-weight="700">E1 commit</text>
+          <text x="396" y="34" text-anchor="middle" fill="#8a6800" font-size="10">seq = 5</text>
+          <text x="622" y="20" text-anchor="middle" fill="#8B2035" font-size="11" font-weight="700">out of scope</text>
+          <text x="622" y="34" text-anchor="middle" fill="#8B2035" font-size="10">seq ≥ 5</text>
+
+          <!-- Vertical boundary lines -->
+          <line x1="328" y1="44" x2="328" y2="278" stroke="#C99A1E" stroke-width="1.2" stroke-dasharray="5,3"/>
+          <line x1="464" y1="44" x2="464" y2="278" stroke="#C99A1E" stroke-width="1.2" stroke-dasharray="5,3"/>
+
+          <!-- Snapshot group labels -->
+          <text x="164" y="58" text-anchor="middle" fill="#3B73C4" font-size="11" font-weight="700">Snapshot 3</text>
+          <text x="396" y="58" text-anchor="middle" fill="#b8860b" font-size="11" font-weight="700">Snapshot 5</text>
+          <text x="622" y="58" text-anchor="middle" fill="#8B2035" font-size="11" font-weight="700">Snapshot 7</text>
+
+          <!-- D1 box -->
+          <rect x="22"  y="70" width="118" height="68" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+          <text x="81"  y="92"  text-anchor="middle" fill="#1a1d24" font-size="12" font-weight="700">D1</text>
+          <text x="81"  y="108" text-anchor="middle" fill="#444b59" font-size="10.5">data file</text>
+          <text x="81"  y="124" text-anchor="middle" fill="#3B73C4" font-size="11" font-weight="700">seq = 3</text>
+
+          <!-- D2 box -->
+          <rect x="152" y="70" width="118" height="68" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+          <text x="211" y="92"  text-anchor="middle" fill="#1a1d24" font-size="12" font-weight="700">D2</text>
+          <text x="211" y="108" text-anchor="middle" fill="#444b59" font-size="10.5">data file</text>
+          <text x="211" y="124" text-anchor="middle" fill="#3B73C4" font-size="11" font-weight="700">seq = 3</text>
+
+          <!-- E1 box (equality delete) -->
+          <rect x="336" y="60" width="120" height="88" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.6"/>
+          <text x="396" y="82"  text-anchor="middle" fill="#1a1d24" font-size="12" font-weight="700">E1</text>
+          <text x="396" y="98"  text-anchor="middle" fill="#444b59" font-size="10">equality delete</text>
+          <text x="396" y="113" text-anchor="middle" fill="#444b59" font-size="10">order_id = 42</text>
+          <text x="396" y="130" text-anchor="middle" fill="#D9772E" font-size="11" font-weight="700">seq = 5</text>
+
+          <!-- D3 box -->
+          <rect x="472" y="70" width="118" height="68" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+          <text x="531" y="92"  text-anchor="middle" fill="#1a1d24" font-size="12" font-weight="700">D3</text>
+          <text x="531" y="108" text-anchor="middle" fill="#444b59" font-size="10.5">data file</text>
+          <text x="531" y="124" text-anchor="middle" fill="#8A94A6" font-size="11" font-weight="700">seq = 7</text>
+
+          <!-- Arrow: E1 → D2 (applies) -->
+          <line x1="336" y1="97" x2="270" y2="97" stroke="#1F9E8F" stroke-width="1.8" marker-end="url(#sq-gl)"/>
+          <!-- Arrow: E1 → D1 (applies, offset slightly) -->
+          <line x1="336" y1="113" x2="140" y2="113" stroke="#1F9E8F" stroke-width="1.8" marker-end="url(#sq-gl)"/>
+
+          <!-- Arrow: E1 → D3 (excluded) -->
+          <line x1="456" y1="105" x2="472" y2="105" stroke="#C8425A" stroke-width="1.8" marker-end="url(#sq-r)"/>
+          <!-- Block X on the arrow -->
+          <text x="464" y="99" text-anchor="middle" fill="#C8425A" font-size="13" font-weight="700">✗</text>
+
+          <!-- Apply labels -->
+          <text x="164" y="168" text-anchor="middle" fill="#1F9E8F" font-size="11" font-weight="700">applies ✓ — seq 3 &lt; 5</text>
+          <text x="164" y="183" text-anchor="middle" fill="#444b59" font-size="10.5">D1 and D2 committed before E1</text>
+          <text x="164" y="197" text-anchor="middle" fill="#444b59" font-size="10.5">rows matching order_id=42 are suppressed</text>
+
+          <!-- Exclude label -->
+          <text x="614" y="168" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">excluded ✗ — seq 7 ≥ 5</text>
+          <text x="614" y="183" text-anchor="middle" fill="#444b59" font-size="10.5">D3 committed after E1</text>
+          <text x="614" y="197" text-anchor="middle" fill="#444b59" font-size="10.5">row survives even if order_id=42</text>
+
+          <!-- Bottom explanation -->
+          <rect x="40" y="220" width="700" height="46" rx="7" fill="#fff" stroke="#d5d9e0" stroke-width="1.2"/>
+          <text x="390" y="239" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="700">Sequence number = snapshot commit order, not a per-file counter</text>
+          <text x="390" y="257" text-anchor="middle" fill="#6b7280" font-size="10.5">D1 and D2 share seq=3 (same snapshot). A delete in that same snapshot would not apply to them either (3 is not &lt; 3).</text>
+        </svg>
+      </figure>
+
       <p>The Iceberg v3 spec replaces both v2 delete-file types with <strong>deletion vectors</strong>: a compact bitmap (one bit per row in a data file) stored as a Puffin blob attached to the data file. Deletion vectors eliminate the equality-delete join entirely — a reader ANDs the bitmap with the row data in a single pass. AWS announced support for Iceberg v3 deletion vectors in November 2025; Databricks Runtime 18.0+ and Snowflake's open catalog are also in public preview as of early 2026.</p>
+
+      <div class="callout note">
+        <span class="tag">Positional delete vs. deletion vector — what actually differs</span>
+        <p>Both strategies suppress rows by position, so they feel similar. The differences are in structure, I/O pattern, and operational behavior. A <strong>positional delete file</strong> is a separate Avro file containing a sorted list of <code>(file_path, row_position)</code> tuples — it can cover multiple data files in one object. At read time the engine opens that file and does a sorted-merge join against the data file's row stream: two file handles, one join. Storage cost scales with the <em>number of deleted rows</em>. A <strong>deletion vector</strong> is a compressed bitmap (one bit per row) stored as a Puffin blob that is 1:1 with a single data file. It is referenced from the metadata file, so it is fetched as part of the normal metadata walk — no second file open. The reader does a bitwise AND with the decoded row indices in a single pass. Storage cost scales with the <em>total rows in the file</em>, which makes it more compact at high delete rates and far more predictable in size.</p>
+        <p>The other key difference is accumulation. Positional delete files pile up as separate objects in storage and must be explicitly removed by compaction jobs. Deletion vectors replace each other in place: when more rows are deleted from a file, the bitmap blob is updated in a new snapshot, so there is never a growing pile of stale delete files to manage.</p>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th>v2 Positional Delete</th>
+              <th>v3 Deletion Vector</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Storage format</strong></td>
+              <td>Separate Avro file — sorted <code>(file_path, row_pos)</code> tuples</td>
+              <td>Compressed bitmap blob (RoaringBitmap) inside a Puffin file</td>
+            </tr>
+            <tr>
+              <td><strong>File scope</strong></td>
+              <td>One delete file can reference many data files</td>
+              <td>One bitmap per data file — strictly 1:1</td>
+            </tr>
+            <tr>
+              <td><strong>Read-time I/O</strong></td>
+              <td>Open delete file + sorted-merge join with data file stream</td>
+              <td>Blob already fetched in metadata walk; bitwise AND in one pass</td>
+            </tr>
+            <tr>
+              <td><strong>Storage cost</strong></td>
+              <td>O(deleted rows) — grows with delete frequency</td>
+              <td>O(total rows / 8) bytes — fixed per file regardless of deletes</td>
+            </tr>
+            <tr>
+              <td><strong>File accumulation</strong></td>
+              <td>Pile up; require explicit compaction to remove</td>
+              <td>Replaced in-place per snapshot; no pile-up</td>
+            </tr>
+            <tr>
+              <td><strong>Compaction impact</strong></td>
+              <td>Invalidated when data file is rewritten (file_path changes)</td>
+              <td>Dropped with old data file; new file gets fresh (empty) bitmap</td>
+            </tr>
+            <tr>
+              <td><strong>Spec version</strong></td>
+              <td>Iceberg v2+</td>
+              <td>Iceberg v3 only</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <figure style="margin:2rem 0;background:#f8f9fb;border:1px solid var(--rule-strong);border-radius:10px;padding:1.5rem 1rem 1rem;">
+        <figcaption style="font-size:0.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1rem;text-align:center;">MOR read-time: how each delete strategy is resolved</figcaption>
+        <svg viewBox="0 0 900 640" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px;display:block;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <defs>
+            <marker id="da" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <polygon points="0 0,8 3,0 6" fill="#6b7280"/>
+            </marker>
+            <marker id="da-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <polygon points="0 0,8 3,0 6" fill="#1F9E8F"/>
+            </marker>
+            <marker id="da-o" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <polygon points="0 0,8 3,0 6" fill="#D9772E"/>
+            </marker>
+            <marker id="da-b" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <polygon points="0 0,8 3,0 6" fill="#3B73C4"/>
+            </marker>
+          </defs>
+
+          <!-- ══ COMMON SETUP ══ -->
+          <!-- Step 1: Engine read -->
+          <rect x="250" y="12" width="400" height="44" rx="8" fill="#2f6fb8"/>
+          <text x="450" y="30" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Engine begins MOR read — snapshot N</text>
+          <text x="450" y="48" text-anchor="middle" fill="#c9ddf7" font-size="11">Table has unflushed deletes; copy-on-write not yet run</text>
+
+          <line x1="450" y1="56" x2="450" y2="80" stroke="#6b7280" stroke-width="1.8" marker-end="url(#da)"/>
+
+          <!-- Step 2: Manifest scan -->
+          <rect x="155" y="80" width="590" height="50" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+          <text x="450" y="100" text-anchor="middle" fill="#1a1d24" font-size="12" font-weight="700">Manifest scan — collect data files + delete files for snapshot N</text>
+          <text x="450" y="118" text-anchor="middle" fill="#444b59" font-size="11">Delete manifests are flagged content=deletes; separate from data manifests</text>
+
+          <line x1="450" y1="130" x2="450" y2="154" stroke="#6b7280" stroke-width="1.8" marker-end="url(#da)"/>
+
+          <!-- Step 3: Seq number guard (amber callout) -->
+          <rect x="155" y="154" width="590" height="50" rx="8" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.4"/>
+          <text x="450" y="174" text-anchor="middle" fill="#1a1d24" font-size="12" font-weight="700">Sequence number guard applied</text>
+          <text x="450" y="192" text-anchor="middle" fill="#5a4000" font-size="11">Equality delete seq N → only applied to data files with seq &lt; N (prevents phantom deletes)</text>
+
+          <!-- fan-out arrows to three columns -->
+          <line x1="450" y1="204" x2="450" y2="222" stroke="#6b7280" stroke-width="1.5"/>
+          <line x1="450" y1="222" x2="148" y2="222" stroke="#6b7280" stroke-width="1.5"/>
+          <line x1="450" y1="222" x2="752" y2="222" stroke="#6b7280" stroke-width="1.5"/>
+          <line x1="148" y1="222" x2="148" y2="244" stroke="#3B73C4" stroke-width="1.5" marker-end="url(#da-b)"/>
+          <line x1="450" y1="222" x2="450" y2="244" stroke="#D9772E" stroke-width="1.5" marker-end="url(#da-o)"/>
+          <line x1="752" y1="222" x2="752" y2="244" stroke="#1F9E8F" stroke-width="1.5" marker-end="url(#da-g)"/>
+
+          <!-- column labels -->
+          <text x="148" y="238" text-anchor="middle" fill="#3B73C4" font-size="11" font-weight="700">v2 Positional Delete</text>
+          <text x="450" y="238" text-anchor="middle" fill="#D9772E" font-size="11" font-weight="700">v2 Equality Delete</text>
+          <text x="752" y="238" text-anchor="middle" fill="#1F9E8F" font-size="11" font-weight="700">v3 Deletion Vector</text>
+
+          <!-- ══ COL 1: v2 Positional ══ -->
+          <!-- what's stored -->
+          <rect x="20" y="248" width="256" height="62" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.3"/>
+          <text x="148" y="268" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="700">What's stored</text>
+          <text x="148" y="285" text-anchor="middle" fill="#444b59" font-size="11">(file_path, row_position) tuples</text>
+          <text x="148" y="301" text-anchor="middle" fill="#444b59" font-size="11">Sorted by file_path + position</text>
+
+          <line x1="148" y1="310" x2="148" y2="332" stroke="#3B73C4" stroke-width="1.5" marker-end="url(#da-b)"/>
+
+          <!-- read mechanism -->
+          <rect x="20" y="332" width="256" height="76" rx="7" fill="#eef4fb" stroke="#3B73C4" stroke-width="1.3"/>
+          <text x="148" y="352" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="700">Read-time mechanism</text>
+          <text x="148" y="370" text-anchor="middle" fill="#444b59" font-size="11">Sorted-merge join on</text>
+          <text x="148" y="386" text-anchor="middle" fill="#444b59" font-size="11">(file_path, row_position)</text>
+          <text x="148" y="402" text-anchor="middle" fill="#444b59" font-size="11">Point lookup per row — O(1)</text>
+
+          <line x1="148" y1="408" x2="148" y2="430" stroke="#3B73C4" stroke-width="1.5" marker-end="url(#da-b)"/>
+
+          <!-- limitation -->
+          <rect x="20" y="430" width="256" height="62" rx="7" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.2"/>
+          <text x="148" y="450" text-anchor="middle" fill="#C8425A" font-size="11.5" font-weight="700">Limitation</text>
+          <text x="148" y="468" text-anchor="middle" fill="#8B2035" font-size="11">Tightly coupled to physical file</text>
+          <text x="148" y="484" text-anchor="middle" fill="#8B2035" font-size="11">Invalidated by compaction / rewrite</text>
+
+          <line x1="148" y1="492" x2="148" y2="514" stroke="#3B73C4" stroke-width="1.5" marker-end="url(#da-b)"/>
+
+          <!-- cost badge col 1 -->
+          <rect x="68" y="514" width="160" height="34" rx="17" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.3"/>
+          <text x="148" y="527" text-anchor="middle" fill="#1a4480" font-size="11" font-weight="700">Write cost: LOW</text>
+          <text x="148" y="542" text-anchor="middle" fill="#1a4480" font-size="11">Read cost: LOW</text>
+
+          <!-- ══ COL 2: v2 Equality ══ -->
+          <!-- what's stored -->
+          <rect x="322" y="248" width="256" height="62" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.3"/>
+          <text x="450" y="268" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="700">What's stored</text>
+          <text x="450" y="285" text-anchor="middle" fill="#444b59" font-size="11">Column values (e.g. order_id=1234)</text>
+          <text x="450" y="301" text-anchor="middle" fill="#444b59" font-size="11">Predicate over 1+ equality columns</text>
+
+          <line x1="450" y1="310" x2="450" y2="332" stroke="#D9772E" stroke-width="1.5" marker-end="url(#da-o)"/>
+
+          <!-- read mechanism -->
+          <rect x="322" y="332" width="256" height="76" rx="7" fill="#fff8f3" stroke="#D9772E" stroke-width="1.3"/>
+          <text x="450" y="352" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="700">Read-time mechanism</text>
+          <text x="450" y="370" text-anchor="middle" fill="#444b59" font-size="11">Hash join: every data file ✕</text>
+          <text x="450" y="386" text-anchor="middle" fill="#444b59" font-size="11">every relevant eq-delete file</text>
+          <text x="450" y="402" text-anchor="middle" fill="#D9772E" font-size="11" font-weight="600">O(D × E) scan amplification</text>
+
+          <line x1="450" y1="408" x2="450" y2="430" stroke="#D9772E" stroke-width="1.5" marker-end="url(#da-o)"/>
+
+          <!-- limitation -->
+          <rect x="322" y="430" width="256" height="62" rx="7" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.2"/>
+          <text x="450" y="450" text-anchor="middle" fill="#C8425A" font-size="11.5" font-weight="700">Limitation</text>
+          <text x="450" y="468" text-anchor="middle" fill="#8B2035" font-size="11">Read cost grows with write frequency</text>
+          <text x="450" y="484" text-anchor="middle" fill="#8B2035" font-size="11">Compaction mandatory at scale</text>
+
+          <line x1="450" y1="492" x2="450" y2="514" stroke="#D9772E" stroke-width="1.5" marker-end="url(#da-o)"/>
+
+          <!-- cost badge col 2 -->
+          <rect x="370" y="514" width="160" height="34" rx="17" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.3"/>
+          <text x="450" y="527" text-anchor="middle" fill="#7a3500" font-size="11" font-weight="700">Write cost: LOW</text>
+          <text x="450" y="542" text-anchor="middle" fill="#7a3500" font-size="11">Read cost: HIGH ⚠</text>
+
+          <!-- ══ COL 3: v3 Deletion Vector ══ -->
+          <!-- what's stored -->
+          <rect x="624" y="248" width="256" height="62" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.3"/>
+          <text x="752" y="268" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="700">What's stored</text>
+          <text x="752" y="285" text-anchor="middle" fill="#444b59" font-size="11">Compressed bitmap (1 bit / row)</text>
+          <text x="752" y="301" text-anchor="middle" fill="#444b59" font-size="11">Puffin blob, co-located with data file</text>
+
+          <line x1="752" y1="310" x2="752" y2="332" stroke="#1F9E8F" stroke-width="1.5" marker-end="url(#da-g)"/>
+
+          <!-- read mechanism -->
+          <rect x="624" y="332" width="256" height="76" rx="7" fill="#edfaf8" stroke="#1F9E8F" stroke-width="1.3"/>
+          <text x="752" y="352" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="700">Read-time mechanism</text>
+          <text x="752" y="370" text-anchor="middle" fill="#444b59" font-size="11">Read Puffin blob → AND bitmap</text>
+          <text x="752" y="386" text-anchor="middle" fill="#444b59" font-size="11">with decoded row data — 1 pass</text>
+          <text x="752" y="402" text-anchor="middle" fill="#1F9E8F" font-size="11" font-weight="600">No join, no amplification</text>
+
+          <line x1="752" y1="408" x2="752" y2="430" stroke="#1F9E8F" stroke-width="1.5" marker-end="url(#da-g)"/>
+
+          <!-- advantage -->
+          <rect x="624" y="430" width="256" height="62" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+          <text x="752" y="450" text-anchor="middle" fill="#0d5c54" font-size="11.5" font-weight="700">Advantage</text>
+          <text x="752" y="468" text-anchor="middle" fill="#0d5c54" font-size="11">Survives compaction (blob replaces blob)</text>
+          <text x="752" y="484" text-anchor="middle" fill="#0d5c54" font-size="11">Replaces both v2 types; Iceberg v3 only</text>
+
+          <line x1="752" y1="492" x2="752" y2="514" stroke="#1F9E8F" stroke-width="1.5" marker-end="url(#da-g)"/>
+
+          <!-- cost badge col 3 -->
+          <rect x="672" y="514" width="160" height="34" rx="17" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.3"/>
+          <text x="752" y="527" text-anchor="middle" fill="#0d5c54" font-size="11" font-weight="700">Write cost: LOW</text>
+          <text x="752" y="542" text-anchor="middle" fill="#0d5c54" font-size="11">Read cost: LOWEST ✓</text>
+
+          <!-- ══ CONVERGE → filtered rows ══ -->
+          <line x1="148" y1="548" x2="148" y2="600" stroke="#6b7280" stroke-width="1.4"/>
+          <line x1="450" y1="548" x2="450" y2="600" stroke="#6b7280" stroke-width="1.4"/>
+          <line x1="752" y1="548" x2="752" y2="600" stroke="#6b7280" stroke-width="1.4"/>
+          <line x1="148" y1="600" x2="752" y2="600" stroke="#6b7280" stroke-width="1.4"/>
+          <line x1="450" y1="600" x2="450" y2="614" stroke="#6b7280" stroke-width="1.8" marker-end="url(#da)"/>
+
+          <rect x="260" y="614" width="380" height="20" rx="6" fill="#2f6fb8"/>
+          <text x="450" y="629" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Return live rows (deleted rows suppressed)</text>
+        </svg>
+      </figure>
 
       <h3>Metadata Layer</h3>
       <p>The metadata layer has three file types, all stored alongside data files in object storage.</p>
@@ -561,6 +951,173 @@ sequenceDiagram
 
       <h3>Branching and tagging</h3>
       <p>Iceberg v2 introduced named branches and tags as references in the metadata file's <code>refs</code> map. A branch is a mutable named pointer to a snapshot (updated on each new commit to the branch); a tag is an immutable named pointer. Branches enable write isolation — two concurrent writers can commit to separate branches and merge by reference swap — and are the mechanism underlying Nessie's multi-table git-style versioning. The main branch is always called <code>main</code> and is equivalent to the <code>current-snapshot-id</code>.</p>
+
+      <p>Named branches and optimistic locking (OCC) are complementary but solve different problems. OCC handles <em>what happens when two writers collide on the same ref</em>: both assume they won't conflict, build metadata independently, then race to CAS the catalog pointer — one wins, the other detects the failure and retries from scratch. Named branches eliminate the collision entirely by giving each writer its own ref to commit to, so there is no CAS contention between them at all during the writing phase. OCC is still the commit mechanism within each branch; a branch merge — swapping <code>main</code> to point at a new merged snapshot — is itself a CAS under the hood.</p>
+
+      <p>The deeper consequence is <strong>read isolation</strong>. Writers on separate branches do not see each other's writes until an explicit merge. A reader on <code>branch-a</code> only sees snapshots committed to <code>branch-a</code>; commits landing on <code>branch-b</code> or <code>main</code> are completely invisible. This is much stronger than what OCC alone provides — on a single <code>main</code> branch, once a commit lands every subsequent reader sees it immediately. Nessie extends this isolation across multiple tables simultaneously, making a branch boundary a transactional boundary for coordinated multi-table writes.</p>
+
+      <div class="callout key">
+        <span class="tag">OCC vs. named branches — one-line distinction</span>
+        <p><strong>OCC</strong> = conflict detection and retry on a single shared ref. <strong>Named branches</strong> = eliminate the conflict by partitioning writers onto separate refs, deferring conflict resolution to an explicit merge. High-frequency streaming on one <code>main</code> branch causes constant OCC retries; moving each writer to its own branch removes contention entirely — not because the conflict-resolution strategy changed, but because the contention never arises.</p>
+      </div>
+
+      <!-- Diagram 1: OCC on a single branch -->
+      <figure style="margin:2rem 0;background:#f8f9fb;border:1px solid var(--rule-strong);border-radius:10px;padding:1.5rem 1rem 1rem;">
+        <figcaption style="font-size:0.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1rem;text-align:center;">OCC on a single branch — one writer retries</figcaption>
+        <svg viewBox="0 0 780 310" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:780px;display:block;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <defs>
+            <marker id="oa" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#6b7280"/></marker>
+            <marker id="oa-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#1F9E8F"/></marker>
+            <marker id="oa-r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#C8425A"/></marker>
+          </defs>
+
+          <!-- Column headers -->
+          <rect x="50" y="10" width="150" height="32" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.3"/>
+          <text x="125" y="31" text-anchor="middle" fill="#1a1d24" font-size="12.5" font-weight="700">Writer A</text>
+          <rect x="315" y="10" width="150" height="32" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.3"/>
+          <text x="390" y="31" text-anchor="middle" fill="#1a1d24" font-size="12.5" font-weight="700">catalog (main)</text>
+          <rect x="580" y="10" width="150" height="32" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.3"/>
+          <text x="655" y="31" text-anchor="middle" fill="#1a1d24" font-size="12.5" font-weight="700">Writer B</text>
+
+          <!-- Lifelines -->
+          <line x1="125" y1="42" x2="125" y2="295" stroke="#3B73C4" stroke-width="1.2" stroke-dasharray="5,4"/>
+          <line x1="390" y1="42" x2="390" y2="295" stroke="#8A94A6" stroke-width="1.2" stroke-dasharray="5,4"/>
+          <line x1="655" y1="42" x2="655" y2="295" stroke="#D9772E" stroke-width="1.2" stroke-dasharray="5,4"/>
+
+          <!-- Step 1: both read S1 from catalog -->
+          <circle cx="390" cy="78" r="15" fill="#fff" stroke="#8A94A6" stroke-width="1.8"/>
+          <text x="390" y="83" text-anchor="middle" fill="#1a1d24" font-size="11" font-weight="700">S1</text>
+          <line x1="375" y1="78" x2="142" y2="78" stroke="#6b7280" stroke-width="1.4" marker-end="url(#oa)"/>
+          <line x1="405" y1="78" x2="638" y2="78" stroke="#6b7280" stroke-width="1.4" marker-end="url(#oa)"/>
+          <text x="247" y="70" text-anchor="middle" fill="#6b7280" font-size="10">read S1</text>
+          <text x="525" y="70" text-anchor="middle" fill="#6b7280" font-size="10">read S1</text>
+
+          <!-- Activation boxes (building metadata) -->
+          <rect x="113" y="102" width="24" height="48" rx="3" fill="#3B73C4" opacity="0.25"/>
+          <text x="68" y="122" text-anchor="middle" fill="#444b59" font-size="10">build</text>
+          <text x="68" y="135" text-anchor="middle" fill="#444b59" font-size="10">metadata</text>
+          <rect x="643" y="102" width="24" height="48" rx="3" fill="#D9772E" opacity="0.25"/>
+          <text x="710" y="122" text-anchor="middle" fill="#444b59" font-size="10">build</text>
+          <text x="710" y="135" text-anchor="middle" fill="#444b59" font-size="10">metadata</text>
+
+          <!-- Step 2: Writer A commits → S2 (success) -->
+          <line x1="139" y1="170" x2="371" y2="170" stroke="#1F9E8F" stroke-width="1.7" marker-end="url(#oa-g)"/>
+          <text x="247" y="163" text-anchor="middle" fill="#1F9E8F" font-size="10.5" font-weight="600">CAS S1→S2</text>
+          <circle cx="390" cy="170" r="15" fill="#fff" stroke="#1F9E8F" stroke-width="1.8"/>
+          <text x="390" y="175" text-anchor="middle" fill="#1F9E8F" font-size="11" font-weight="700">S2</text>
+          <text x="422" y="164" fill="#1F9E8F" font-size="14" font-weight="700">✓</text>
+
+          <!-- Step 3: Writer B tries CAS (stale) → FAIL -->
+          <line x1="641" y1="210" x2="409" y2="210" stroke="#C8425A" stroke-width="1.7" marker-end="url(#oa-r)"/>
+          <text x="530" y="203" text-anchor="middle" fill="#C8425A" font-size="10.5" font-weight="600">CAS S1→? (expects S1)</text>
+          <text x="353" y="217" text-anchor="middle" fill="#C8425A" font-size="13" font-weight="700">✗</text>
+          <text x="353" y="229" text-anchor="middle" fill="#C8425A" font-size="9.5">S1 already gone</text>
+
+          <!-- Step 4: catalog returns current = S2 to Writer B -->
+          <line x1="405" y1="250" x2="636" y2="250" stroke="#6b7280" stroke-width="1.4" marker-end="url(#oa)"/>
+          <text x="523" y="243" text-anchor="middle" fill="#6b7280" font-size="10">retry: re-read current = S2</text>
+
+          <!-- Step 5: Writer B commits S3 (success) -->
+          <line x1="641" y1="282" x2="409" y2="282" stroke="#1F9E8F" stroke-width="1.7" marker-end="url(#oa-g)"/>
+          <text x="530" y="275" text-anchor="middle" fill="#1F9E8F" font-size="10.5" font-weight="600">CAS S2→S3</text>
+          <circle cx="390" cy="282" r="15" fill="#fff" stroke="#1F9E8F" stroke-width="1.8"/>
+          <text x="390" y="287" text-anchor="middle" fill="#1F9E8F" font-size="11" font-weight="700">S3</text>
+          <text x="422" y="276" fill="#1F9E8F" font-size="14" font-weight="700">✓</text>
+        </svg>
+      </figure>
+
+      <!-- Diagram 2: Named branches with read isolation -->
+      <figure style="margin:2rem 0;background:#f8f9fb;border:1px solid var(--rule-strong);border-radius:10px;padding:1.5rem 1rem 1rem;">
+        <figcaption style="font-size:0.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1rem;text-align:center;">Named branches — isolated writes, deferred merge, scoped reads</figcaption>
+        <svg viewBox="0 0 780 370" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:780px;display:block;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <defs>
+            <marker id="ba" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2f6fb8"/></marker>
+            <marker id="ba-t" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#1F9E8F"/></marker>
+            <marker id="ba-p" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#7E4FB5"/></marker>
+          </defs>
+
+          <!-- Track labels (left pills) -->
+          <rect x="8" y="102" width="64" height="22" rx="11" fill="#2f6fb8"/>
+          <text x="40" y="117" text-anchor="middle" fill="#fff" font-size="10.5" font-weight="700">main</text>
+          <rect x="4" y="192" width="76" height="22" rx="11" fill="#1F9E8F"/>
+          <text x="42" y="207" text-anchor="middle" fill="#fff" font-size="10.5" font-weight="700">branch-a</text>
+          <rect x="4" y="282" width="76" height="22" rx="11" fill="#7E4FB5"/>
+          <text x="42" y="297" text-anchor="middle" fill="#fff" font-size="10.5" font-weight="700">branch-b</text>
+
+          <!-- ── Main track line ── -->
+          <line x1="110" y1="113" x2="700" y2="113" stroke="#2f6fb8" stroke-width="2.2"/>
+
+          <!-- Main snapshots -->
+          <circle cx="130" cy="113" r="16" fill="#2f6fb8" stroke="#fff" stroke-width="2"/>
+          <text x="130" y="118" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">S0</text>
+          <circle cx="245" cy="113" r="16" fill="#2f6fb8" stroke="#fff" stroke-width="2"/>
+          <text x="245" y="118" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">S1</text>
+          <circle cx="700" cy="113" r="18" fill="#2f6fb8" stroke="#fff" stroke-width="2.5"/>
+          <text x="700" y="110" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">Sm</text>
+          <text x="700" y="122" text-anchor="middle" fill="#c9ddf7" font-size="8.5">merge</text>
+
+          <!-- ── branch-a isolation zone ── -->
+          <rect x="262" y="167" width="355" height="58" rx="6" fill="#1F9E8F" opacity="0.08" stroke="#1F9E8F" stroke-width="1" stroke-dasharray="4,3"/>
+          <text x="438" y="233" text-anchor="middle" fill="#0d5c54" font-size="9.5" font-style="italic">branch-a readers: see S0, S1, Sa1, Sa2, Sa3 — Sb writes invisible</text>
+
+          <!-- ── branch-b isolation zone ── -->
+          <rect x="268" y="257" width="250" height="58" rx="6" fill="#7E4FB5" opacity="0.08" stroke="#7E4FB5" stroke-width="1" stroke-dasharray="4,3"/>
+          <text x="390" y="323" text-anchor="middle" fill="#4a1e80" font-size="9.5" font-style="italic">branch-b readers: see S0, S1, Sb1, Sb2 — Sa writes invisible</text>
+
+          <!-- ── branch-a track line ── -->
+          <line x1="355" y1="203" x2="555" y2="203" stroke="#1F9E8F" stroke-width="2.2"/>
+
+          <!-- Fork from S1 to branch-a -->
+          <line x1="255" y1="122" x2="344" y2="196" stroke="#1F9E8F" stroke-width="1.8" stroke-dasharray="6,3" marker-end="url(#ba-t)"/>
+
+          <!-- branch-a snapshots -->
+          <circle cx="365" cy="203" r="15" fill="#1F9E8F" stroke="#fff" stroke-width="2"/>
+          <text x="365" y="208" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">Sa1</text>
+          <circle cx="460" cy="203" r="15" fill="#1F9E8F" stroke="#fff" stroke-width="2"/>
+          <text x="460" y="208" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">Sa2</text>
+          <circle cx="555" cy="203" r="15" fill="#1F9E8F" stroke="#fff" stroke-width="2"/>
+          <text x="555" y="208" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">Sa3</text>
+
+          <!-- Writer A label -->
+          <text x="460" y="182" text-anchor="middle" fill="#1F9E8F" font-size="10.5" font-weight="700">Writer A — no retries, no CAS contention</text>
+
+          <!-- Merge branch-a → Sm -->
+          <line x1="566" y1="196" x2="688" y2="122" stroke="#1F9E8F" stroke-width="1.8" stroke-dasharray="6,3" marker-end="url(#ba)"/>
+
+          <!-- ── branch-b track line ── -->
+          <line x1="360" y1="293" x2="500" y2="293" stroke="#7E4FB5" stroke-width="2.2"/>
+
+          <!-- Fork from S1 to branch-b -->
+          <line x1="252" y1="127" x2="352" y2="284" stroke="#7E4FB5" stroke-width="1.8" stroke-dasharray="6,3" marker-end="url(#ba-p)"/>
+
+          <!-- branch-b snapshots -->
+          <circle cx="365" cy="293" r="15" fill="#7E4FB5" stroke="#fff" stroke-width="2"/>
+          <text x="365" y="298" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">Sb1</text>
+          <circle cx="500" cy="293" r="15" fill="#7E4FB5" stroke="#fff" stroke-width="2"/>
+          <text x="500" y="298" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">Sb2</text>
+
+          <!-- Writer B label -->
+          <text x="430" y="273" text-anchor="middle" fill="#7E4FB5" font-size="10.5" font-weight="700">Writer B — no retries, no CAS contention</text>
+
+          <!-- Merge branch-b → Sm -->
+          <line x1="512" y1="284" x2="685" y2="127" stroke="#7E4FB5" stroke-width="1.8" stroke-dasharray="6,3" marker-end="url(#ba)"/>
+
+          <!-- Sm annotation -->
+          <text x="700" y="83" text-anchor="middle" fill="#2f6fb8" font-size="9.5" font-weight="700">reference swap</text>
+          <text x="700" y="95" text-anchor="middle" fill="#6b7280" font-size="9">(CAS on main)</text>
+          <text x="700" y="143" text-anchor="middle" fill="#2f6fb8" font-size="9.5">all commits</text>
+          <text x="700" y="154" text-anchor="middle" fill="#2f6fb8" font-size="9.5">now visible</text>
+
+          <!-- time arrow -->
+          <line x1="110" y1="355" x2="740" y2="355" stroke="#d5d9e0" stroke-width="1.5" marker-end="url(#ba)"/>
+          <text x="118" y="352" fill="#6b7280" font-size="10">time</text>
+        </svg>
+      </figure>
+
+      <div class="callout amber">
+        <span class="tag">Tradeoff — divergence accumulates</span>
+        <p>The longer two branches live in isolation, the harder the eventual merge becomes. If <code>branch-a</code> adds rows that <code>main</code> has since deleted via compaction, reconciling that is a semantic problem that no CAS retry can resolve automatically. This is why long-lived Iceberg branches are primarily a Nessie or catalog-layer concern with explicit merge strategies, rather than something used day-to-day on a busy production table. Short-lived branches for batch loads or ETL isolation are the common production pattern; long-lived feature branches carrying divergent writes are the exception.</p>
+      </div>
     </section>
 
     <!-- ===== 4. AUTH ===== -->
@@ -578,6 +1135,50 @@ sequenceDiagram
       <div class="callout warn">
         <span class="tag">Breaking change — Iceberg 1.6.0</span>
         <p>The IRC's own OAuth token endpoint (<code>POST /v1/oauth/tokens</code>) was deprecated in Iceberg (Java) 1.6.0 and is planned for removal in Iceberg 2.0. Clients must configure <code>oauth2-server-uri</code> to point to an external OAuth2/OIDC identity provider rather than relying on the catalog to issue tokens. Deployments that use the built-in endpoint will need to migrate to an external IdP (Keycloak, Okta, Azure AD, AWS Cognito) before the Iceberg 2.0 upgrade path.</p>
+        <figure style="margin:1.2rem 0 0;">
+          <div class="diagram" style="background:#fff8f8;">
+            <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#DCE8FB','primaryBorderColor':'#3B73C4','primaryTextColor':'#1E3A6B','lineColor':'#5A6273','noteBkgColor':'#FBF0CF','noteTextColor':'#5a4000','activationBkgColor':'#eef4fb','activationBorderColor':'#3B73C4','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    actor User as Data Analyst
+    participant Engine as Query Engine (Trino/Spark)
+    participant IdP as External OAuth2 Provider
+    participant IRC as Iceberg REST Catalog
+
+    %% Trust Establishment Phase
+    note over IdP, IRC: Phase 1: Trust Establishment (Asymmetric Cryptography)
+    IRC->>IdP: Fetch public signing keys (GET /jwks.json)
+    IdP-->>IRC: Return JWKS (Public Keys)
+    note over IRC: Cache public keys locally
+
+    %% Token Exchange Phase
+    note over User, IdP: Phase 2: Identity & Token Exchange (RFC 7523)
+    User->>Engine: Submit SQL Query (with User ID JWT)
+    Engine->>IdP: POST /token (grant_type=jwt_bearer & assertion=User_JWT)
+    note over IdP: Validate User JWT & mint catalog-scoped token
+    IdP-->>Engine: Return Access Token (Audience = Iceberg Catalog)
+
+    %% Catalog Request and RBAC Phase
+    note over Engine, IRC: Phase 3: Metadata Request & Local RBAC Evaluation
+    Engine->>IRC: GET /v1/catalogs/prod/tables/clickstream
+
+    note over IRC: 1. Cryptographically validate signature via cached JWKS
+    note over IRC: 2. Inspect Claims (e.g., group membership array)
+    note over IRC: 3. Evaluate Local Matrix (Does group have SELECT on target?)
+
+    alt RBAC Authorized
+        note over IRC: Generate temporary cloud storage tokens
+        IRC-->>Engine: Return Table Metadata JSON + Vended Storage Credentials
+        Engine->>User: Execute scan & return query results
+    else RBAC Denied
+        IRC-->>Engine: HTTP 403 Forbidden
+        Engine-->>User: Query Failed: Unauthorized Error
+    end
+            </div>
+          </div>
+          <figcaption>The catalog is a pure resource server post-1.6.0 — it validates tokens but never issues them. The <code>POST /token</code> with <code>grant_type=jwt-bearer</code> goes to the <em>external</em> IdP, not the catalog. Trust is anchored by the JWKS public keys the catalog fetches at startup.</figcaption>
+        </figure>
       </div>
 
       <h3>Boundary 3 — Query engine</h3>
@@ -788,6 +1389,66 @@ sequenceDiagram
       <p><strong>Equality delete scan amplification (v2 MOR).</strong> An equality delete file applies to all data files in the same partition with a lower sequence number. If a table has 1,000 data files in a partition and accumulates 50 equality delete files, reading any row from that partition requires checking 50 equality delete files against each of 1,000 data files — a cross product of 50,000 file interactions per partition, per query. This grows quadratically with both data file count and uncompacted delete file count. v3 deletion vectors eliminate this; for v2 MOR tables, aggressive compaction (which rewrites the data files, absorbing the deletes) is the only mitigation.</p>
       <p><strong>Catalog pointer CAS contention.</strong> OCC assumes low conflict. In workloads where hundreds of concurrent writers all target the same table (e.g., a high-throughput streaming pipeline with many Flink tasks committing independently), CAS retries multiply. Each retry discards new metadata files and rebuilds them — CPU and I/O cost without data movement. The mitigation is to batch writes into fewer, larger commits (e.g., Flink's <code>checkpoint.interval</code> tuning) or use a branching model (commit to sub-branches and merge).</p>
       <p><strong>Metadata file accumulation.</strong> Every commit writes a new metadata file. A table receiving 100 commits/day accumulates 36,500 metadata files per year. The <code>write.metadata.delete-after-commit.enabled</code> table property enables automatic cleanup, keeping only the last N metadata files. Without this, the metadata directory grows unboundedly, and the metadata log entries in each file also grow, increasing the parse cost of each catalog read.</p>
+
+      <div class="callout note">
+        <span class="tag">Why this matters — it's not just directory cleanliness</span>
+        <p>The catalog pointer takes you directly to the current metadata file — old metadata files are never traversed for a normal read. The cost comes from two different places. First, the <strong>current metadata file itself gets larger</strong>: it embeds a <code>metadata-log</code> array containing the path and timestamp of every previous metadata file, plus a <code>snapshots</code> array for every live snapshot. Both grow unboundedly without cleanup. After 36,500 commits you parse a 36,500-entry JSON array on every table load, even though you need none of it. Second, <strong>operational tooling cannot use the catalog shortcut</strong>: compaction, orphan file cleanup, and snapshot expiry must enumerate everything on storage and cross-reference it against referenced files. On S3, <code>ListObjects</code> pages at 1,000 objects per call — a directory with 36,500 metadata files costs 37 LIST API calls before any work starts, multiplied across every table in the lakehouse.</p>
+
+        <figure style="margin:1.2rem 0 0;">
+          <svg viewBox="0 0 720 230" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:720px;display:block;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            <defs>
+              <marker id="mf-a" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#3B73C4"/></marker>
+              <marker id="mf-r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#C8425A"/></marker>
+              <marker id="mf-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#1F9E8F"/></marker>
+            </defs>
+
+            <!-- ── LEFT: Current metadata file anatomy ── -->
+            <rect x="10" y="10" width="310" height="210" rx="8" fill="#f4f5f7" stroke="#d5d9e0" stroke-width="1.2"/>
+            <text x="165" y="30" text-anchor="middle" fill="#6b7280" font-size="10.5" font-weight="700" letter-spacing=".05em" text-decoration="uppercase">CURRENT METADATA FILE (JSON)</text>
+
+            <!-- schema / partition / snapshots sections -->
+            <rect x="24" y="40" width="282" height="24" rx="4" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1"/>
+            <text x="165" y="57" text-anchor="middle" fill="#1a1d24" font-size="10.5">schema history · partition specs · sort orders</text>
+
+            <rect x="24" y="70" width="282" height="30" rx="4" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1"/>
+            <text x="165" y="84" text-anchor="middle" fill="#1a1d24" font-size="10.5" font-weight="600">snapshots[ ] — one entry per live snapshot</text>
+            <text x="165" y="96" text-anchor="middle" fill="#C8425A" font-size="9.5">grows until expireSnapshots runs</text>
+
+            <!-- metadata-log — the key culprit, highlighted -->
+            <rect x="24" y="106" width="282" height="54" rx="4" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.4"/>
+            <text x="165" y="123" text-anchor="middle" fill="#1a1d24" font-size="10.5" font-weight="700">metadata-log[ ]</text>
+            <text x="165" y="138" text-anchor="middle" fill="#444b59" font-size="10">one entry per previous metadata file</text>
+            <text x="165" y="152" text-anchor="middle" fill="#C8425A" font-size="9.5" font-weight="600">36,500 entries after 1 yr @ 100 commits/day</text>
+
+            <rect x="24" y="166" width="282" height="24" rx="4" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1"/>
+            <text x="165" y="183" text-anchor="middle" fill="#1a1d24" font-size="10.5">current-snapshot-id · statistics refs</text>
+
+            <!-- parse cost annotation -->
+            <text x="165" y="214" text-anchor="middle" fill="#C8425A" font-size="10" font-weight="600">⚠ parsed in full on every catalog table load</text>
+
+            <!-- ── RIGHT: two cost paths ── -->
+            <!-- Cost 1: catalog read -->
+            <rect x="380" y="10" width="330" height="96" rx="8" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.3"/>
+            <text x="545" y="30" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">Cost 1 — catalog read latency</text>
+            <text x="545" y="48" text-anchor="middle" fill="#444b59" font-size="10.5">Catalog pointer → current file ✓ (instant)</text>
+            <text x="545" y="63" text-anchor="middle" fill="#444b59" font-size="10.5">But parsing metadata-log[ ] with</text>
+            <text x="545" y="78" text-anchor="middle" fill="#C8425A" font-size="10.5" font-weight="600">36,500 entries adds latency every read</text>
+            <text x="545" y="93" text-anchor="middle" fill="#444b59" font-size="10">regardless of how many old files exist on disk</text>
+
+            <!-- Cost 2: operational tooling -->
+            <rect x="380" y="120" width="330" height="100" rx="8" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.3"/>
+            <text x="545" y="140" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">Cost 2 — operational tooling</text>
+            <text x="545" y="158" text-anchor="middle" fill="#444b59" font-size="10.5">compaction · orphan cleanup · expiry</text>
+            <text x="545" y="173" text-anchor="middle" fill="#444b59" font-size="10.5">must ListObjects on storage (no shortcut)</text>
+            <text x="545" y="188" text-anchor="middle" fill="#C8425A" font-size="10.5" font-weight="600">36,500 files = 37 S3 LIST API calls</text>
+            <text x="545" y="203" text-anchor="middle" fill="#444b59" font-size="10">before any work starts, per table</text>
+
+            <!-- connector arrow from left box to right boxes -->
+            <line x1="322" y1="130" x2="378" y2="58" stroke="#C8425A" stroke-width="1.5" marker-end="url(#mf-r)"/>
+            <line x1="322" y1="140" x2="378" y2="170" stroke="#C8425A" stroke-width="1.5" marker-end="url(#mf-r)"/>
+          </svg>
+        </figure>
+      </div>
       <p><strong>No native multi-table transactions in the spec.</strong> Iceberg v2 commits are atomic per table. Cross-table atomicity (e.g., "deduct from table A and credit to table B in a single atomic transaction") requires a catalog that implements multi-table branching (Nessie's git-model, or Unity Catalog's multi-table commit API). This is a real gap for use cases that need referential integrity across Iceberg tables.</p>
 
       <h3>When to use Iceberg</h3>
@@ -799,6 +1460,122 @@ sequenceDiagram
       <div class="callout warn">
         <span class="tag">Production checklist</span>
         <p>Run compaction (rewriteDataFiles) on a schedule keyed to your write frequency. Enable <code>write.metadata.delete-after-commit.enabled=true</code> and <code>write.metadata.previous-versions-max=100</code>. Run snapshot expiry (expireSnapshots) to bound time-travel retention and allow orphan file GC. Monitor manifest count per partition — above ~10,000 manifest entries per partition, query planning latency will be noticeable.</p>
+        <p><strong>None of this is automatic.</strong> Iceberg is a table format library, not a running service — it has no background threads, no daemon, and no scheduler. The catalog's responsibility ends at pointer management and RBAC; it does not monitor table health or trigger maintenance. Compaction and expiry are compute operations (Spark/Flink jobs reading and rewriting files) that must be wired up by an external operational layer. In the open ecosystem this means Airflow DAGs, AWS Step Functions, or Databricks Jobs calling the Iceberg maintenance actions on a schedule you define. On managed platforms (Databricks Unity Catalog, AWS S3 Tables, Snowflake-managed Iceberg) the platform runs this compute invisibly on your behalf — but even then, it is a separate compute layer orchestrated by the platform, not the catalog or Iceberg itself. Without this layer, degradation is silent: queries keep working but get measurably slower as manifest counts and metadata-log size grow.</p>
+
+        <p style="margin-top:1rem;margin-bottom:0.4rem;font-weight:660;">Example: Spark maintenance job</p>
+        <p style="margin-bottom:0.6rem;font-size:0.9em;color:var(--ink-soft);">Spark needs the Iceberg extensions and a catalog config wired up before any maintenance SQL will work. The catalog block tells Spark where the IRC is, how to authenticate, and where the warehouse lives on storage.</p>
+
+        <pre><code style="font-size:12.5px;"># ── spark-submit / Airflow SparkSubmitOperator config ──────────────────────
+# Required JARs: iceberg-spark-runtime-3.5_2.12-1.6.x.jar
+#                iceberg-aws-bundle-1.6.x.jar  (for S3FileIO + STS credential vending)
+
+spark = (
+    SparkSession.builder
+    .appName("iceberg-maintenance")
+
+    # 1. Load Iceberg SQL extensions (CALL procedures, time-travel syntax, DDL)
+    .config("spark.sql.extensions",
+            "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+
+    # 2. Register the catalog — name it anything ("prod" here)
+    .config("spark.sql.catalog.prod",
+            "org.apache.iceberg.spark.SparkCatalog")
+    .config("spark.sql.catalog.prod.type",         "rest")
+    .config("spark.sql.catalog.prod.uri",          "https://catalog.example.com")
+
+    # 3. OAuth2 client credentials for the IRC
+    #    (post-Iceberg 1.6: point at external IdP, not the catalog's own /oauth/tokens)
+    .config("spark.sql.catalog.prod.oauth2-server-uri",
+            "https://idp.example.com/oauth2/token")
+    .config("spark.sql.catalog.prod.credential",
+            "client_id:client_secret")           # or use env / secret manager
+
+    # 4. Warehouse root — where Iceberg writes data and metadata files
+    .config("spark.sql.catalog.prod.warehouse",    "s3://my-bucket/warehouse")
+
+    # 5. S3FileIO with STS credential vending (receives vended creds from IRC)
+    .config("spark.sql.catalog.prod.io-impl",
+            "org.apache.iceberg.aws.s3.S3FileIO")
+
+    .getOrCreate()
+)
+
+
+# ── 1. Compaction — merge small files into ~128 MB target files ──────────────
+spark.sql("""
+    CALL prod.system.rewrite_data_files(
+        table   => 'prod.analytics.clickstream',
+        strategy => 'binpack',
+        options  => map(
+            'target-file-size-bytes',            '134217728',
+            'max-concurrent-file-group-rewrites', '5',
+            'min-input-files',                   '5'
+        )
+    )
+""")
+
+
+# ── 2. Expire snapshots — drop snapshots older than 7 days, keep last 10 ────
+from datetime import datetime, timedelta, timezone
+cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+
+spark.sql(f"""
+    CALL prod.system.expire_snapshots(
+        table       => 'prod.analytics.clickstream',
+        older_than  => TIMESTAMP '{cutoff}',
+        retain_last => 10
+    )
+""")
+
+
+# ── 3. Remove orphan files — delete unreferenced files older than 3 days ─────
+#    (allow 3-day grace period for in-flight writes that haven't committed yet)
+orphan_cutoff = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
+
+spark.sql(f"""
+    CALL prod.system.remove_orphan_files(
+        table      => 'prod.analytics.clickstream',
+        older_than => TIMESTAMP '{orphan_cutoff}'
+    )
+""")
+
+
+# ── 4. Rewrite manifests — consolidate many small manifest files ─────────────
+#    Run after heavy streaming ingestion that created many single-file manifests
+spark.sql("""
+    CALL prod.system.rewrite_manifests('prod.analytics.clickstream')
+""")</code></pre>
+
+        <p style="margin-top:0.9rem;margin-bottom:0.3rem;font-weight:660;font-size:0.9em;">Key config callouts</p>
+        <div class="tbl-wrap" style="margin-top:0.4rem;">
+          <table style="font-size:13px;">
+            <thead>
+              <tr><th>Config key</th><th>Why it's needed</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>spark.sql.extensions</code></td>
+                <td>Loads the <code>CALL</code> procedure syntax and Iceberg DDL. Without it, <code>CALL prod.system.rewrite_data_files(...)</code> is a parse error.</td>
+              </tr>
+              <tr>
+                <td><code>spark.sql.catalog.prod.type = rest</code></td>
+                <td>Tells Spark to use the IRC client. Alternatives: <code>hive</code> (Hive Metastore), <code>hadoop</code> (filesystem catalog). Must match your catalog deployment.</td>
+              </tr>
+              <tr>
+                <td><code>oauth2-server-uri</code> + <code>credential</code></td>
+                <td>The maintenance job authenticates to the IRC like any other client. It needs a service-account OAuth2 client with write/admin privileges on the target namespace — not a user token.</td>
+              </tr>
+              <tr>
+                <td><code>io-impl = S3FileIO</code></td>
+                <td>Compaction reads and rewrites data files directly on S3. S3FileIO uses the IRC-vended STS credentials so the Spark job never holds long-lived storage keys.</td>
+              </tr>
+              <tr>
+                <td><code>iceberg-aws-bundle</code> JAR</td>
+                <td>Provides S3FileIO, GlueCatalog, and the STS credential-vending integration. Must be on the Spark executor classpath, not just the driver.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
