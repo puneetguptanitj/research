@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Cloud Networking for Data Platforms — Deep Dive</title>
+<style>
+  :root{
+    --bg:#eceef1; --surface:#ffffff;
+    --ink:#1a1d24; --ink-soft:#444b59; --ink-faint:#6b7280;
+    --rule:#e3e6eb; --rule-strong:#d5d9e0;
+    --accent:#2f6fb8; --accent-soft:#eef4fb;
+    --code-bg:#f4f5f7;
+    --l-storage:#8A94A6;  --l-storage-bg:#E8EBF0;
+    --l-table:#3B73C4;    --l-table-bg:#DCE8FB;
+    --l-catalog:#7E4FB5;  --l-catalog-bg:#EADDF7;
+    --l-compute:#1F9E8F;  --l-compute-bg:#D6F0EE;
+    --l-oper:#D9772E;     --l-oper-bg:#FCE4D4;
+    --l-semantic:#C99A1E; --l-semantic-bg:#FBF0CF;
+    --l-gov:#4A9A3C;      --l-gov-bg:#DEEFD9;
+    --l-identity:#C8425A; --l-identity-bg:#FAD9DC;
+    --l-consume:#5256C8;  --l-consume-bg:#DEE0FA;
+    --warn:#C8425A; --warn-bg:#FBE9EC;
+    --amber:#b8860b; --amber-bg:#FBF4DC;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16.5px; line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  code{
+    font-family:"SF Mono",SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;
+    font-size:0.86em; background:var(--code-bg); padding:0.12em 0.38em;
+    border-radius:4px; color:#9a3b66;
+  }
+  .wrap{max-width:var(--wrap-max,1180px); margin:0 auto; padding:0 24px;
+        display:flex; gap:36px; align-items:flex-start;
+        transition:max-width 0.25s ease;}
+
+  /* ── width control pill ── */
+  .wc{
+    position:fixed; bottom:22px; right:22px; z-index:999;
+    display:flex; align-items:center; gap:2px;
+    background:#1a1d24; border-radius:99px;
+    padding:5px 7px; box-shadow:0 4px 18px rgba(0,0,0,0.28);
+    user-select:none;
+  }
+  .wc-label{font-size:10px;font-weight:700;letter-spacing:0.08em;
+            text-transform:uppercase;color:#6b7280;padding:0 6px 0 4px;}
+  .wc button{
+    border:none; background:transparent; color:#9ca3af;
+    font-size:11.5px; font-weight:600; padding:4px 10px; border-radius:99px;
+    cursor:pointer; font-family:inherit; transition:background 0.13s,color 0.13s;
+    white-space:nowrap;
+  }
+  .wc button:hover{background:#2d3240;color:#e5e7eb;}
+  .wc button.wc-active{background:#2f6fb8;color:#fff;}
+  .wc-sep{width:1px;height:16px;background:#2d3240;margin:0 2px;}
+  .toc{
+    position:sticky; top:0; width:248px; flex:0 0 248px;
+    max-height:100vh; overflow-y:auto; padding:28px 0 40px;
+  }
+  .doc{
+    flex:1 1 auto; min-width:0; background:var(--surface);
+    margin:24px 0 64px; padding:52px 60px 64px;
+    border:1px solid var(--rule); border-radius:10px;
+  }
+  .toc-title{font-size:11px; font-weight:700; letter-spacing:0.09em;
+             text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px 12px;}
+  .toc ol{list-style:none; margin:0; padding:0; counter-reset:toc;}
+  .toc li{margin:0;}
+  .toc a{
+    display:block; padding:5px 12px; border-left:2px solid var(--rule);
+    color:var(--ink-soft); font-size:13.5px; line-height:1.4;
+  }
+  .toc a:hover{color:var(--ink); border-left-color:var(--rule-strong); text-decoration:none;}
+  .toc a.active{color:var(--accent); border-left-color:var(--accent); font-weight:600;}
+  .toc a .n{color:var(--ink-faint); font-variant-numeric:tabular-nums; margin-right:7px;}
+  .toc a.active .n{color:var(--accent);}
+  .eyebrow{font-size:12px; font-weight:700; letter-spacing:0.1em;
+           text-transform:uppercase; color:var(--accent);}
+  h1{font-size:33px; line-height:1.22; margin:10px 0 6px; letter-spacing:-0.01em;}
+  .definition{font-size:18px; color:var(--ink-soft); margin:0 0 18px; max-width:62ch;}
+  .meta{display:flex; flex-wrap:wrap; gap:8px 18px; font-size:13px;
+        color:var(--ink-faint); border-top:1px solid var(--rule);
+        border-bottom:1px solid var(--rule); padding:11px 0; margin-bottom:34px;}
+  .meta b{color:var(--ink-soft); font-weight:600;}
+  section{margin:0 0 14px; padding-top:14px;}
+  h2{font-size:22px; margin:38px 0 14px; padding-bottom:7px;
+     border-bottom:2px solid var(--rule); letter-spacing:-0.01em;}
+  h2 .num{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:10px;}
+  h3{font-size:16.5px; margin:26px 0 8px; color:var(--ink);}
+  p{margin:0 0 14px;}
+  ul,ol{margin:0 0 14px; padding-left:22px;}
+  li{margin:4px 0;}
+  strong{font-weight:660;}
+  .tldr{
+    background:var(--accent-soft); border:1px solid #cfe0f1;
+    border-radius:9px; padding:20px 24px; margin:6px 0 10px;
+  }
+  .tldr h2{border:0; margin:0 0 8px; font-size:16px; color:var(--accent);
+           text-transform:uppercase; letter-spacing:0.06em;}
+  .tldr p{margin:0 0 10px;}
+  .tldr .takeaways{margin:0; padding-left:20px;}
+  .tldr .takeaways li{margin:6px 0;}
+  .callout{border-radius:8px; padding:13px 17px; margin:18px 0;
+           font-size:15px; border:1px solid;}
+  .callout .tag{display:block; font-size:11px; font-weight:700;
+                letter-spacing:0.07em; text-transform:uppercase; margin-bottom:3px;}
+  .callout p:last-child{margin-bottom:0;}
+  .callout.key{background:var(--accent-soft); border-color:#cfe0f1;}
+  .callout.key .tag{color:var(--accent);}
+  .callout.note{background:#f6f7f9; border-color:var(--rule-strong);}
+  .callout.note .tag{color:var(--ink-faint);}
+  .callout.warn{background:var(--warn-bg); border-color:#f0c6ce;}
+  .callout.warn .tag{color:var(--warn);}
+  .callout.amber{background:var(--amber-bg); border-color:#e0d08a;}
+  .callout.amber .tag{color:var(--amber);}
+  .tbl-wrap{overflow-x:auto; margin:18px 0;}
+  table{border-collapse:collapse; width:100%; font-size:14px;}
+  th,td{text-align:left; padding:9px 13px; border-bottom:1px solid var(--rule); vertical-align:top;}
+  thead th{background:#f6f7f9; color:var(--ink-soft); font-weight:660;
+           font-size:12px; letter-spacing:0.03em; text-transform:uppercase;
+           border-bottom:2px solid var(--rule-strong);}
+  tbody tr:last-child td{border-bottom:0;}
+  tbody tr:hover{background:#fafbfc;}
+  figure{margin:24px 0; padding:0;}
+  .diagram{
+    background:#fcfcfd; border:1px solid var(--rule);
+    border-radius:9px; padding:22px 20px 8px; text-align:center;
+  }
+  .diagram svg, .diagram .mermaid{max-width:100%; height:auto;}
+  figcaption{font-size:13px; color:var(--ink-faint); margin-top:12px;
+             padding:0 8px 6px; text-align:left;}
+  figcaption b{color:var(--ink-soft); font-weight:660;}
+  .legend{display:flex; flex-wrap:wrap; gap:6px 16px; justify-content:center;
+          margin-top:14px; padding-top:12px; border-top:1px solid var(--rule);
+          font-size:11.5px; color:var(--ink-soft);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .legend i{width:13px; height:13px; border-radius:3px; display:inline-block;
+            border:1px solid rgba(0,0,0,0.18);}
+  .sources{font-size:14px;}
+  .sources li{margin:9px 0;}
+  .tier{display:inline-block; font-size:10.5px; font-weight:700;
+        letter-spacing:0.04em; text-transform:uppercase; padding:1.5px 7px;
+        border-radius:4px; margin-right:8px; vertical-align:1.5px;}
+  .tier.spec{background:#e6e0f5; color:#5a3a93;}
+  .tier.docs{background:#dce8fb; color:#1E3A6B;}
+  .tier.code{background:#d6f0ee; color:#0C4A43;}
+  .tier.paper{background:#deefd9; color:#234D1A;}
+  .tier.practitioner{background:#fbf0cf; color:#6B4E06;}
+  .glossary dt{font-weight:660; margin-top:10px;}
+  .glossary dd{margin:2px 0 0; color:var(--ink-soft);}
+  .footer{margin-top:42px; padding-top:16px; border-top:1px solid var(--rule);
+          font-size:12.5px; color:var(--ink-faint);}
+  .toc-toggle{display:none;}
+  @media(max-width:980px){
+    .wrap{flex-direction:column; gap:0; padding:0 14px;}
+    .toc{position:static; width:100%; flex:none; max-height:none; padding:18px 0 0;}
+    .toc ol{display:none;} .toc ol.open{display:block;}
+    .toc-toggle{display:block; cursor:pointer; background:var(--surface);
+      border:1px solid var(--rule); border-radius:8px; padding:10px 14px;
+      font-weight:600; font-size:14px; color:var(--ink-soft); width:100%; text-align:left;}
+    .doc{padding:32px 22px 44px; margin:14px 0 40px;}
+    h1{font-size:26px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- TOC -->
+  <nav class="toc">
+    <button class="toc-toggle" onclick="document.getElementById('tocList').classList.toggle('open')">Contents ▾</button>
+    <div class="toc-title">Contents</div>
+    <ol id="tocList">
+      <li><a href="#tldr"><span class="n">—</span>TL;DR</a></li>
+      <li><a href="#architecture"><span class="n">1</span>Primitives &amp; architecture</a></li>
+      <li><a href="#placement"><span class="n">2</span>Placement in the landscape</a></li>
+      <li><a href="#mechanism"><span class="n">3</span>How each primitive works</a></li>
+      <li><a href="#punchhole"><span class="n">4</span>Punching holes in VPCs</a></li>
+      <li><a href="#auth"><span class="n">5</span>Authentication &amp; identity</a></li>
+      <li><a href="#deltasharing"><span class="n">6</span>Delta Sharing vs private links</a></li>
+      <li><a href="#connections"><span class="n">7</span>How it connects to the stack</a></li>
+      <li><a href="#tradeoffs"><span class="n">8</span>Trade-offs &amp; failure modes</a></li>
+      <li><a href="#take"><span class="n">9</span>Architect's take</a></li>
+      <li><a href="#sources"><span class="n">—</span>Sources</a></li>
+      <li><a href="#glossary"><span class="n">—</span>Glossary</a></li>
+    </ol>
+  </nav>
+
+  <!-- DOCUMENT -->
+  <main class="doc">
+
+    <header>
+      <div class="eyebrow">Data Platform Deep-Dive</div>
+      <h1>Cloud Networking for Data Platforms</h1>
+      <p class="definition">The full taxonomy of cloud network isolation and connectivity primitives — VPC peering, private links, transit gateways, NAT gateways, and how Databricks Delta Sharing collapses the cross-org networking problem to plain HTTPS.</p>
+      <div class="meta">
+        <span><b>Prepared</b> 2026-05-24</span>
+        <span><b>Reading time</b> ~30 min</span>
+        <span><b>Focus</b> Architecture · Mechanisms · Punch-hole patterns · Delta Sharing</span>
+        <span><b>Clouds</b> AWS · Azure · GCP (AWS primary)</span>
+      </div>
+    </header>
+
+    <!-- TL;DR -->
+    <section id="tldr" class="tldr">
+      <h2>TL;DR</h2>
+      <p>Cloud VPC networking gives you a private, isolated network slice. The primitives you use to connect that slice to the world — or to other slices — each trade off scope, security, cost, and operational burden in distinct ways. Choosing the wrong one is how platforms end up with either an over-exposed attack surface or an $80k/year transit gateway bill for shuffling internal data.</p>
+      <p>Delta Sharing is architecturally interesting precisely because it sidesteps the cross-account/cross-cloud networking problem entirely: instead of requiring a PrivateLink or VPN between two organizations, it vends short-lived, scope-limited object-storage credentials over HTTPS. The recipient only needs to reach the Databricks control plane and cloud object storage — both of which are already reachable over the internet with TLS.</p>
+      <ol class="takeaways">
+        <li><strong>Internet Gateway ≠ NAT Gateway ≠ VPN Gateway ≠ Transit Gateway.</strong> Each serves a different traffic direction and scope. Conflating them is the root of most network architecture mistakes.</li>
+        <li><strong>PrivateLink exposes a specific service, not a network.</strong> This is the critical distinction from VPC Peering: no transitive routing, no broad blast radius, works across overlapping CIDRs. Use it for SaaS patterns and data platform services (Databricks, S3 Interface Endpoint, Redshift).</li>
+        <li><strong>VPC Peering is fine for two VPCs; Transit Gateway is the answer beyond that.</strong> The N*(N-1)/2 peering math, combined with the 125-connection limit and no transitive routing, makes peering unworkable at mesh scale.</li>
+        <li><strong>"Punching a hole" has a right and a wrong way.</strong> The right way is PrivateLink or a tightly-scoped security group rule with your own service behind an NLB. The wrong way is opening a CIDR range in a NACL without a compensating security group, or enabling full VPC peering when you only need service-level access.</li>
+        <li><strong>Delta Sharing replaces PrivateLink as the connectivity model for cross-org data sharing.</strong> The protocol vends pre-signed URLs / STS tokens scoped to exactly the files the recipient queried — no network plumbing between orgs required. For fully private storage (no public endpoints), a Delta Sharing Network Gateway or NCC + PrivateLink pattern closes the gap.</li>
+        <li><strong>Gateway VPC Endpoints for S3 are free and should always be deployed</strong> in any private subnet that reads from S3. Using NAT Gateway for S3 traffic instead costs roughly $0.045/GB that could be zero.</li>
+      </ol>
+    </section>
+
+    <!-- 1. ARCHITECTURE -->
+    <section id="architecture">
+      <h2><span class="num">1</span>What it is &amp; core architecture</h2>
+
+      <p>A <strong>Virtual Private Cloud (VPC)</strong> is a logically isolated segment of a cloud provider's network, defined by one or more CIDR blocks (e.g., <code>10.0.0.0/16</code>) that you own. Inside it, you create <em>subnets</em> — slices of that CIDR bound to a specific availability zone. Subnets are either <em>public</em> (route table has a default route to an Internet Gateway) or <em>private</em> (no IGW route; egress via NAT or none). Route tables, security groups (stateful L4 firewall per ENI), and NACLs (stateless L3/L4 firewall per subnet) control traffic within and across the VPC boundary.</p>
+
+      <p>The primitives that connect VPCs to other networks, or expose services between them, fall into six families:</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 860 560" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Cloud networking primitives taxonomy">
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- TITLE -->
+            <text x="430" y="22" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1d24">Cloud Networking Primitives Taxonomy</text>
+
+            <!-- ---- INTERNET / PUBLIC boundary ---- -->
+            <rect x="16" y="36" width="828" height="52" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.3"/>
+            <text x="30" y="53" font-size="10" font-weight="700" fill="#5A6273" letter-spacing="0.4">INTERNET / PUBLIC</text>
+            <rect x="200" y="46" width="155" height="30" rx="6" fill="#F5F6F8" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="277" y="66" text-anchor="middle" font-size="12" fill="#3A4252" font-weight="600">Internet Gateway (IGW)</text>
+            <rect x="380" y="46" width="145" height="30" rx="6" fill="#F5F6F8" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="452" y="66" text-anchor="middle" font-size="12" fill="#3A4252" font-weight="600">Direct Connect GW</text>
+            <rect x="550" y="46" width="130" height="30" rx="6" fill="#F5F6F8" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="615" y="66" text-anchor="middle" font-size="12" fill="#3A4252" font-weight="600">VPN Gateway</text>
+
+            <!-- ---- TRANSIT / REGIONAL HUB ---- -->
+            <rect x="16" y="102" width="828" height="60" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.3"/>
+            <text x="30" y="120" font-size="10" font-weight="700" fill="#7A3D0E" letter-spacing="0.4">REGIONAL HUB</text>
+            <!-- Focus box: Transit Gateway -->
+            <rect x="290" y="112" width="280" height="38" rx="7"
+                  fill="#FCE4D4" stroke="#111418" stroke-width="2.5"/>
+            <text x="430" y="132" text-anchor="middle" font-size="13.5" font-weight="700" fill="#7A3D0E">Transit Gateway (TGW)</text>
+            <text x="430" y="146" text-anchor="middle" font-size="10.5" fill="#7A3D0E">hub-and-spoke · transitive · inter-region</text>
+            <text x="576" y="112" font-size="10" fill="#111418" font-weight="700">← focus</text>
+
+            <!-- ---- VPC BOUNDARY ---- -->
+            <rect x="16" y="176" width="828" height="250" rx="7" fill="#F5F6F8" stroke="#D5D9E0" stroke-width="1.3"/>
+            <text x="30" y="196" font-size="10" font-weight="700" fill="#5A6273" letter-spacing="0.4">WITHIN VPC</text>
+
+            <!-- Public Subnet -->
+            <rect x="30" y="202" width="380" height="210" rx="6" fill="#E8F4FB" stroke="#3B73C4" stroke-dasharray="5,3" stroke-width="1.2"/>
+            <text x="44" y="220" font-size="10" font-weight="700" fill="#1E3A6B">PUBLIC SUBNET</text>
+            <rect x="50" y="228" width="150" height="38" rx="6" fill="#F5F6F8" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="125" y="248" text-anchor="middle" font-size="12" fill="#3A4252" font-weight="600">NAT Gateway</text>
+            <text x="125" y="260" text-anchor="middle" font-size="10" fill="#5A6273">(public, has EIP)</text>
+            <rect x="230" y="228" width="160" height="38" rx="6" fill="#F5F6F8" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="310" y="248" text-anchor="middle" font-size="12" fill="#3A4252" font-weight="600">NAT Gateway</text>
+            <text x="310" y="260" text-anchor="middle" font-size="10" fill="#5A6273">(private, VPC-to-VPC)</text>
+            <!-- Load Balancer row -->
+            <rect x="50" y="282" width="340" height="38" rx="6" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="220" y="302" text-anchor="middle" font-size="12" fill="#0C4A43" font-weight="600">Network Load Balancer</text>
+            <text x="220" y="315" text-anchor="middle" font-size="10" fill="#0C4A43">(required for PrivateLink endpoint service)</text>
+            <!-- PrivateLink service label -->
+            <rect x="50" y="336" width="340" height="60" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+            <text x="220" y="358" text-anchor="middle" font-size="12" fill="#432068" font-weight="600">VPC Endpoint Service (PrivateLink provider)</text>
+            <text x="220" y="374" text-anchor="middle" font-size="10" fill="#432068">NLB-backed · acceptance required</text>
+            <text x="220" y="387" text-anchor="middle" font-size="10" fill="#432068">service name: com.amazonaws.vpce.region.vpce-svc-xxx</text>
+
+            <!-- Private Subnet -->
+            <rect x="430" y="202" width="400" height="210" rx="6" fill="#FEF9EC" stroke="#C99A1E" stroke-dasharray="5,3" stroke-width="1.2"/>
+            <text x="444" y="220" font-size="10" font-weight="700" fill="#6B4E06">PRIVATE SUBNET</text>
+            <!-- Gateway endpoint -->
+            <rect x="450" y="228" width="165" height="46" rx="6" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.2"/>
+            <text x="532" y="248" text-anchor="middle" font-size="12" fill="#234D1A" font-weight="600">Gateway Endpoint</text>
+            <text x="532" y="261" text-anchor="middle" font-size="10" fill="#234D1A">S3 + DynamoDB only</text>
+            <text x="532" y="273" text-anchor="middle" font-size="10" fill="#234D1A">free · route-table-based</text>
+            <!-- Interface endpoint -->
+            <rect x="640" y="228" width="175" height="46" rx="6" fill="#EADDF7" stroke="#111418" stroke-width="2.5"/>
+            <text x="727" y="248" text-anchor="middle" font-size="12" fill="#432068" font-weight="700">Interface Endpoint</text>
+            <text x="727" y="261" text-anchor="middle" font-size="10" fill="#432068">(PrivateLink consumer)</text>
+            <text x="727" y="273" text-anchor="middle" font-size="10" fill="#432068">ENI · private IP · DNS override</text>
+            <text x="818" y="228" font-size="10" fill="#111418" font-weight="700">← focus</text>
+            <!-- VPC Peering -->
+            <rect x="450" y="290" width="165" height="46" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.2"/>
+            <text x="532" y="310" text-anchor="middle" font-size="12" fill="#7A3D0E" font-weight="600">VPC Peering</text>
+            <text x="532" y="323" text-anchor="middle" font-size="10" fill="#7A3D0E">bidirectional · no transitive</text>
+            <text x="532" y="336" text-anchor="middle" font-size="10" fill="#7A3D0E">max 125 connections</text>
+            <!-- Security controls -->
+            <rect x="450" y="352" width="360" height="46" rx="6" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.2"/>
+            <text x="630" y="372" text-anchor="middle" font-size="12" fill="#6E1626" font-weight="600">Security Groups (stateful L4) + NACLs (stateless L3/L4)</text>
+            <text x="630" y="386" text-anchor="middle" font-size="10" fill="#6E1626">per-ENI SGs · per-subnet NACLs · both evaluated</text>
+
+            <!-- ---- SERVICE MESH / DELTA SHARING ---- -->
+            <rect x="16" y="440" width="828" height="64" rx="7" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.3"/>
+            <text x="30" y="458" font-size="10" font-weight="700" fill="#23266E" letter-spacing="0.4">APPLICATION-LAYER SHARING (NO VPC WIRING)</text>
+            <rect x="240" y="450" width="380" height="42" rx="7"
+                  fill="#DEE0FA" stroke="#111418" stroke-width="2.5"/>
+            <text x="430" y="470" text-anchor="middle" font-size="13.5" font-weight="700" fill="#23266E">Delta Sharing Protocol (HTTPS + vended credentials)</text>
+            <text x="430" y="485" text-anchor="middle" font-size="10.5" fill="#23266E">provider stores data · recipient queries via REST + pre-signed URLs</text>
+            <text x="623" y="450" font-size="10" fill="#111418" font-weight="700">← focus</text>
+
+            <!-- Connectors -->
+            <!-- IGW ↔ NAT Gateway -->
+            <line x1="277" y1="88" x2="190" y2="112" stroke="#5A6273" stroke-width="1.4" marker-end="url(#arr)"/>
+            <!-- TGW ↔ VPC attachment -->
+            <line x1="430" y1="162" x2="430" y2="176" stroke="#5A6273" stroke-width="1.4" marker-end="url(#arr)"/>
+            <!-- Interface endpoint ↔ service -->
+            <line x1="640" y1="250" x2="395" y2="365" stroke="#7E4FB5" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+            <!-- label for that line -->
+            <rect x="476" y="295" width="86" height="16" rx="8" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="519" y="307" text-anchor="middle" font-size="10" fill="#432068">PrivateLink tunnel</text>
+
+          </svg>
+          <div class="legend">
+            <span><i style="background:#E8EBF0"></i>Internet / edge</span>
+            <span><i style="background:#FCE4D4"></i>Regional hub / peering</span>
+            <span><i style="background:#EADDF7"></i>PrivateLink (provider &amp; consumer)</span>
+            <span><i style="background:#DEEFD9"></i>Gateway endpoint (free)</span>
+            <span><i style="background:#FAD9DC"></i>Identity &amp; access controls</span>
+            <span><i style="background:#DEE0FA"></i>App-layer sharing</span>
+          </div>
+        </div>
+        <figcaption><b>Figure 1.</b> The full taxonomy of cloud networking primitives, from edge gateways to in-VPC controls to application-layer sharing. Focus boxes (dark border): Transit Gateway, Interface VPC Endpoint (PrivateLink consumer), and Delta Sharing — the three most architecturally significant for data platform design.</figcaption>
+      </figure>
+
+      <h3>The six families in one paragraph each</h3>
+
+      <p><strong>Internet Gateway (IGW).</strong> Attached one-to-one to a VPC. Performs 1:1 NAT between the public IPv4 address assigned to an EC2 instance and its private IP. Scales horizontally and is never a bottleneck. Traffic in both directions traverses the public internet. Subnets with a <code>0.0.0.0/0 → igw-xxx</code> route table entry are "public." Every public-facing load balancer or bastion lives here. Remove the IGW route from any subnet where instances should not be directly reachable from the internet.</p>
+
+      <p><strong>NAT Gateway.</strong> Allows private subnets to initiate outbound connections to the internet (or to other VPCs) without being reachable inbound. Two modes: <em>public NAT</em> (sits in a public subnet, has an Elastic IP, SNATs to that EIP, traffic exits to the internet); <em>private NAT</em> (no EIP, translates source IPs for VPC-to-VPC routing when CIDRs would otherwise overlap). NAT Gateways are zonal; for HA you need one per AZ. Cost: $0.045/hr + $0.045/GB (us-east-1, 2025). The most common waste in AWS bills is routing S3-bound traffic through a NAT Gateway instead of a Gateway Endpoint.</p>
+
+      <p><strong>VPN Gateway &amp; Direct Connect Gateway.</strong> VPN Gateway terminates IPSec/IKEv2 Site-to-Site tunnels to on-premises hardware or software VPN peers; max ~1.25 Gbps per tunnel, multiple tunnels for HA. Direct Connect Gateway attaches to private virtual interfaces on a dedicated fiber circuit — deterministic latency, higher bandwidth (1–100 Gbps), but weeks to provision and expensive. Both are used for hybrid cloud connectivity. Neither helps with cross-account or cross-org connectivity within AWS.</p>
+
+      <p><strong>Transit Gateway (TGW).</strong> A regional hub router. VPCs and VPN connections attach to it; you define route tables per attachment, enabling fine-grained routing policies. TGW supports <em>transitive routing</em> — VPC A can reach VPC C through TGW even if they're not directly peered — which is the core problem VPC Peering cannot solve. Cross-region TGW peering links two regional hubs, enabling a global private backbone. Cost: $0.05/attachment-hour + $0.02/GB (us-east-1). For 10+ VPCs or complex topologies this is almost always cheaper than the N*(N-1)/2 peering mesh it replaces.</p>
+
+      <p><strong>VPC Peering.</strong> A direct, bilateral routing relationship between two VPCs — same account, cross-account, or cross-region. No intermediary; traffic stays on the AWS backbone. The constraint: no transitive routing. If A is peered with B and B is peered with C, A cannot reach C through B; you need an A-C peering. Limit: 125 active peering connections per VPC. Best for simple, stable, two-VPC topologies where you want full network access (all ports/protocols) between the two — e.g., a data plane VPC peered with a shared services VPC. Never build a full-mesh peering beyond ~5 VPCs.</p>
+
+      <p><strong>VPC Endpoints — Gateway vs. Interface.</strong> Gateway Endpoints are free, route-table-based entries that steer S3 and DynamoDB traffic through the AWS backbone — no public internet, no NAT Gateway, no ENI. Interface Endpoints (powered by AWS PrivateLink) are ENIs injected into your subnets with a private IP; DNS overrides make the service hostname resolve to that private IP. AWS rewrites traffic destined for the service endpoint in the hypervisor layer — the traffic goes directly from the consumer's physical host to the provider's NLB backend, with no intermediate proxy. PrivateLink providers expose their service behind a Network Load Balancer and create a VPC Endpoint Service (<code>com.amazonaws.vpce.region.vpce-svc-xxx</code>); consumers create Interface Endpoints pointing at that service name.</p>
+
+      <div class="callout key">
+        <span class="tag">Key distinction</span>
+        <p>VPC Peering and Transit Gateway expose <em>entire networks</em> to each other — any ENI in VPC A can potentially reach any ENI in VPC B (modulo security groups). PrivateLink exposes a <em>single service</em>. This is why PrivateLink is the correct pattern for SaaS exposure, multi-tenant data services, and cross-account access to specific resources: the blast radius is one service, not one network.</p>
+      </div>
+
+      <h3>Azure equivalents</h3>
+
+      <p>Azure maps closely: <em>Service Endpoints</em> route traffic to Azure PaaS services over the Azure backbone but the service retains its public IP — effectively a policy-based route with no network isolation. <em>Private Link / Private Endpoint</em> injects the service into your VNet as a private IP (like an AWS Interface Endpoint) and requires a Private DNS Zone to override the public hostname. Azure Virtual Network Peering is the VPC Peering analog; Azure Virtual WAN is the Transit Gateway analog. One Azure nuance: VNet Service Endpoints are quick to set up and good enough for most intra-Azure scenarios, but they don't work cross-tenant; Private Endpoints do.</p>
+
+      <h3>GCP equivalents</h3>
+
+      <p>GCP's <em>Private Service Connect</em> (PSC) maps to PrivateLink. PSC is implemented via Google's Andromeda SDN — the data plane is fully distributed with no centralized proxy, and traffic is NAT'd at the destination host. A PSC endpoint creates a forwarding rule in the consumer VPC; the producer publishes a service via a load balancer backend. GCP also has <em>VPC Service Controls</em>, which is architecturally different from PSC: it creates an API-layer security perimeter around GCP services to prevent data exfiltration — complementary to PSC, not a substitute. VPC Network Peering is the GCP equivalent of VPC Peering, with the same no-transitive-routing constraint.</p>
+    </section>
+
+    <!-- 2. PLACEMENT -->
+    <section id="placement">
+      <h2><span class="num">2</span>Placement in the data platform &amp; AI landscape</h2>
+
+      <p>Cloud networking is not itself one of the L0–L9 data platform layers — it is infrastructure that <em>underlies</em> all of them. But it is far from neutral: every data platform design decision (where the catalog runs, whether the query engine can reach object storage without traversing the internet, how cross-org sharing works) is constrained or enabled by the networking primitives chosen. Think of cloud networking as the "L-1" plane — it determines what is reachable by L0 and above.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 530" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Cloud networking placement relative to data platform layers">
+            <defs>
+              <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+
+            <!-- Left: layer labels -->
+            <text x="10" y="28" font-size="11" font-weight="700" fill="#5A6273">LAYER</text>
+
+            <!-- L9 Consumption -->
+            <rect x="80" y="14" width="540" height="36" rx="6" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.2"/>
+            <text x="30" y="38" font-size="10.5" font-weight="700" fill="#5A6273">L9</text>
+            <text x="350" y="37" text-anchor="middle" font-size="12" font-weight="600" fill="#23266E">Consumption / Agents / BI</text>
+
+            <!-- L8 Identity -->
+            <rect x="80" y="56" width="540" height="36" rx="6" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.2"/>
+            <text x="30" y="80" font-size="10.5" font-weight="700" fill="#5A6273">L8</text>
+            <text x="350" y="79" text-anchor="middle" font-size="12" font-weight="600" fill="#6E1626">Identity &amp; Access (OAuth2, OIDC, SGs, IAM)</text>
+
+            <!-- L7 Governance -->
+            <rect x="80" y="98" width="540" height="36" rx="6" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.2"/>
+            <text x="30" y="121" font-size="10.5" font-weight="700" fill="#5A6273">L7</text>
+            <text x="350" y="121" text-anchor="middle" font-size="12" font-weight="600" fill="#234D1A">Governance / Knowledge Catalog / Lineage</text>
+
+            <!-- L6 Semantic -->
+            <rect x="80" y="140" width="540" height="36" rx="6" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.2"/>
+            <text x="30" y="163" font-size="10.5" font-weight="700" fill="#5A6273">L6</text>
+            <text x="350" y="163" text-anchor="middle" font-size="12" font-weight="600" fill="#6B4E06">Semantic Layer (dbt metrics, Cube, AtScale)</text>
+
+            <!-- L5 Operational -->
+            <rect x="80" y="182" width="540" height="36" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.2"/>
+            <text x="30" y="205" font-size="10.5" font-weight="700" fill="#5A6273">L5</text>
+            <text x="350" y="205" text-anchor="middle" font-size="12" font-weight="600" fill="#7A3D0E">Operational Tier (Lakebase, Postgres)</text>
+
+            <!-- L4 Compute -->
+            <rect x="80" y="224" width="540" height="36" rx="6" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="30" y="247" font-size="10.5" font-weight="700" fill="#5A6273">L4</text>
+            <text x="350" y="247" text-anchor="middle" font-size="12" font-weight="600" fill="#0C4A43">Query / Compute (Trino, Spark, Databricks SQL)</text>
+
+            <!-- L3 Catalog -->
+            <rect x="80" y="266" width="540" height="36" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+            <text x="30" y="289" font-size="10.5" font-weight="700" fill="#5A6273">L3</text>
+            <text x="350" y="289" text-anchor="middle" font-size="12" font-weight="600" fill="#432068">Catalog (Unity Catalog, IRC, Polaris)</text>
+
+            <!-- L2 Table Format -->
+            <rect x="80" y="308" width="540" height="36" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.2"/>
+            <text x="30" y="331" font-size="10.5" font-weight="700" fill="#5A6273">L2</text>
+            <text x="350" y="331" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A6B">Table Format (Apache Iceberg, Delta Lake)</text>
+
+            <!-- L1 File Format -->
+            <rect x="80" y="350" width="540" height="36" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="30" y="373" font-size="10.5" font-weight="700" fill="#5A6273">L1</text>
+            <text x="350" y="373" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">File Format (Parquet, ORC, Avro)</text>
+
+            <!-- L0 Object Storage -->
+            <rect x="80" y="392" width="540" height="36" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="30" y="415" font-size="10.5" font-weight="700" fill="#5A6273">L0</text>
+            <text x="350" y="415" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">Object Storage (S3, ADLS, GCS)</text>
+
+            <!-- L-1 Networking — FOCUS -->
+            <rect x="80" y="440" width="540" height="72" rx="7"
+                  fill="#FCE4D4" stroke="#111418" stroke-width="2.8"/>
+            <text x="30" y="470" font-size="10.5" font-weight="700" fill="#111418">L-1</text>
+            <text x="350" y="466" text-anchor="middle" font-size="14" font-weight="700" fill="#7A3D0E">Cloud Networking Primitives</text>
+            <text x="350" y="482" text-anchor="middle" font-size="11.5" fill="#7A3D0E">VPC · IGW · NAT GW · VPN GW · TGW · VPC Peering</text>
+            <text x="350" y="498" text-anchor="middle" font-size="11.5" fill="#7A3D0E">Gateway Endpoint · Interface Endpoint (PrivateLink) · PSC</text>
+            <text x="623" y="441" font-size="10.5" fill="#111418" font-weight="700">← focus</text>
+
+            <!-- Cross-cutting planes: Identity and Governance vertical bands -->
+            <rect x="632" y="14" width="50" height="414" rx="5" fill="#FAD9DC" stroke="#C8425A" stroke-width="0.9" opacity="0.7"/>
+            <text x="657" y="44" text-anchor="middle" font-size="9.5" font-weight="700" fill="#6E1626" transform="rotate(-90,657,200)">Identity (L8 plane)</text>
+
+            <rect x="690" y="14" width="50" height="414" rx="5" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="0.9" opacity="0.7"/>
+            <text x="715" y="44" text-anchor="middle" font-size="9.5" font-weight="700" fill="#234D1A" transform="rotate(-90,715,210)">Governance (L7 plane)</text>
+
+            <!-- Arrow: networking underlies everything -->
+            <line x1="350" y1="440" x2="350" y2="428" stroke="#D9772E" stroke-width="1.8" marker-end="url(#arr2)"/>
+            <!-- label -->
+            <rect x="282" y="430" width="136" height="14" rx="7" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="350" y="441" text-anchor="middle" font-size="10" fill="#7A3D0E">underlies all layers</text>
+
+          </svg>
+          <div class="legend">
+            <span><i style="background:#FCE4D4;border-color:#111418"></i>Focus: Cloud Networking (L-1)</span>
+            <span><i style="background:#FAD9DC"></i>Identity plane</span>
+            <span><i style="background:#DEEFD9"></i>Governance plane</span>
+          </div>
+        </div>
+        <figcaption><b>Figure 2.</b> Cloud networking sits below L0 — it's the physical/logical substrate that determines reachability between every layer above. Security groups and IAM overlap with L8; network-level access decisions precede every catalog, compute, and storage interaction.</figcaption>
+      </figure>
+
+      <p>The practical intersections that matter for data platform architects:</p>
+
+      <ul>
+        <li><strong>L0 ↔ networking:</strong> How query engines reach S3/ADLS/GCS. Gateway Endpoints (S3) remove NAT cost. Interface Endpoints bring S3 fully private. VPC firewall rules on buckets enforce that only traffic from known CIDR/VPC Endpoint is accepted.</li>
+        <li><strong>L3/L4 ↔ networking:</strong> Databricks workspace, Unity Catalog control plane, Trino coordinators — all should be reachable only via PrivateLink from consumer VPCs, not over public internet.</li>
+        <li><strong>Cross-org sharing ↔ networking:</strong> The traditional model requires cross-account PrivateLink or VPC Peering + storage policy. Delta Sharing replaces this with an application-layer protocol.</li>
+        <li><strong>L8 ↔ networking:</strong> Security groups are the first enforcement point. IAM roles control what an EC2/Lambda/container <em>is allowed to do</em>; security groups control what it can <em>reach</em>. Both are required.</li>
+      </ul>
+    </section>
+
+    <!-- 3. MECHANISM -->
+    <section id="mechanism">
+      <h2><span class="num">3</span>How each primitive works — mechanisms</h2>
+
+      <h3>VPC Peering — bilateral route injection</h3>
+      <p>When you create a VPC Peering connection, AWS injects routes into the route tables of both VPCs pointing at the peering connection ID. Traffic flows directly between the two VPCs on the AWS backbone without any intermediate hop — no router appliance, no encryption overhead. The route table entries must be added manually (or via Terraform); they are not automatic. Security groups in the destination VPC apply normally; NACLs on both sides apply. Crucially, route tables are VPC-scoped: if VPC-B is peered with both VPC-A and VPC-C, there is no route in VPC-B's route table that lets A-originated traffic exit through the VPC-C peering — AWS explicitly prohibits transitive routing in peering. IP addressing must not overlap.</p>
+
+      <h3>Transit Gateway — attachment-based hub routing</h3>
+      <p>A TGW has one or more route tables. Each VPC, VPN, and Direct Connect attachment is associated with a route table and can propagate its CIDR to it. By default, a VPC attached to a TGW can reach all other attached VPCs — transitive routing works because the TGW <em>is</em> the transit router. You can create isolated route tables (one per VPC) to enforce fine-grained segmentation: a "prod" table that only accepts routes from prod attachments, a "dev" table that only accepts dev. Inter-region peering links two TGWs, extending the hub-and-spoke globally. TGW also terminates Site-to-Site VPN and integrates with Direct Connect Gateway for on-prem.</p>
+
+      <h3>AWS PrivateLink — the hypervisor-layer shortcut</h3>
+      <p>On the provider side: a service runs behind a Network Load Balancer. You create a VPC Endpoint Service referencing the NLB; AWS assigns it a service name. You optionally require acceptance of new endpoint connections (default: required for security — do not disable this). On the consumer side: you create an Interface VPC Endpoint specifying the service name; AWS creates one ENI per specified subnet, each with a private IP from that subnet's CIDR. AWS simultaneously creates a private DNS entry (a zone override) so that the service's public hostname (e.g., <code>*.execute-api.us-east-1.amazonaws.com</code>) resolves to the ENI private IP inside the VPC. Traffic from the consumer's EC2/Lambda goes to the ENI private IP; AWS rewrites it in the hypervisor and routes it directly to the NLB target — the public internet is never involved.</p>
+
+      <div class="callout note">
+        <span class="tag">Key mechanism</span>
+        <p>PrivateLink's data plane is fully distributed (implemented in the Nitro hypervisor). There is no centralized proxy. Measured latency overhead vs. direct VPC access is typically under 100µs. The NLB in the provider VPC is not a bottleneck at typical enterprise data platform scale — it handles millions of connections per second.</p>
+      </div>
+
+      <h3>Gateway VPC Endpoints — route table magic, zero cost</h3>
+      <p>For S3 and DynamoDB only. When you create a Gateway Endpoint, AWS injects a "pl-XXXXXXXX" (prefix list) entry into the route tables you specify, routing all traffic to those service IP ranges through the gateway endpoint — bypassing NAT Gateway and internet. No ENI, no DNS change, no security group. Access is controlled by an endpoint policy (IAM-style JSON) and by the bucket policy (<code>aws:SourceVpce</code> condition key). The prefix list is managed by AWS and updated automatically as S3 IP ranges change.</p>
+
+      <h3>How the DNS override works for PrivateLink</h3>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#EADDF7','primaryBorderColor':'#7E4FB5','primaryTextColor':'#432068','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant A as App
+    participant R as VPC Resolver
+    participant E as Interface Endpoint ENI
+    participant N as Provider NLB
+    participant S as Service backend
+
+    A->>R: resolve s3.us-east-1.amazonaws.com
+    R-->>A: 10.0.3.47 (private DNS override active — zone shadows public record)
+    A->>E: HTTPS to 10.0.3.47:443 (stays on AWS backbone)
+    E->>N: Hypervisor rewrites dest<br/>forwards to NLB target
+    N->>S: TCP to backend target
+    S-->>N: Response
+    N-->>E: Response
+    E-->>A: TLS response
+          </div>
+        </div>
+        <figcaption><b>Figure 3.</b> PrivateLink DNS override and request lifecycle. The critical step is the VPC Resolver returning the ENI private IP rather than the service's public IP — this depends on "Enable Private DNS Name" being enabled on the endpoint and on VPC DNS hostnames + resolution both being enabled on the VPC.</figcaption>
+      </figure>
+
+      <div class="callout warn">
+        <span class="tag">Watch out</span>
+        <p><strong>Split-horizon DNS is a common failure mode.</strong> If "Enable Private DNS Name" is not set on the Interface Endpoint, or if the VPC does not have DNS resolution enabled, the application will resolve the service hostname to its public IP and either fail (if IGW is absent) or succeed over the internet (defeating the purpose). Always verify with <code>dig &lt;endpoint-hostname&gt;</code> from within the VPC — it must return a <code>10.x.x.x</code> address, not a public IP.</p>
+      </div>
+    </section>
+
+    <!-- 4. PUNCHING HOLES -->
+    <section id="punchhole">
+      <h2><span class="num">4</span>Punching holes in VPCs — when and how</h2>
+
+      <p>"Punching a hole" is informal language for creating inbound access to a resource that would otherwise be unreachable from outside its subnet or VPC. The phrase covers a spectrum from a single security group rule change to full VPC peering. The decisions cascade: <em>who needs access</em> → <em>what scope of network do they need</em> → <em>what is the minimum surface area</em>.</p>
+
+      <h3>When you must (and must not) punch holes</h3>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Scenario</th>
+              <th>Do you need to punch a hole?</th>
+              <th>Recommended approach</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Another VPC in same account needs to call a specific service you host</td>
+              <td>Yes — scope to service</td>
+              <td>PrivateLink: expose via NLB + VPC Endpoint Service</td>
+            </tr>
+            <tr>
+              <td>Another AWS account (trusted partner) needs broad access to your VPC</td>
+              <td>Yes — scope to network</td>
+              <td>VPC Peering or TGW attachment with route table restrictions</td>
+            </tr>
+            <tr>
+              <td>10+ VPCs need to route to a shared service VPC</td>
+              <td>Yes — scope to service</td>
+              <td>PrivateLink from service VPC (avoids TGW cost) OR TGW centralized endpoint pattern</td>
+            </tr>
+            <tr>
+              <td>On-premises network needs to reach cloud resources</td>
+              <td>Yes — scope to required resources</td>
+              <td>VPN Gateway (quick, encrypted) or Direct Connect (predictable latency); route only specific prefixes</td>
+            </tr>
+            <tr>
+              <td>Another organization needs to read your data assets</td>
+              <td><strong>No</strong> — use Delta Sharing</td>
+              <td>Delta Sharing (REST + pre-signed URLs); no network plumbing required</td>
+            </tr>
+            <tr>
+              <td>Lambda/ECS in private subnet needs to call AWS API endpoints (not S3)</td>
+              <td>No or minimal</td>
+              <td>Interface VPC Endpoint for the specific service (e.g., SSM, STS, ECR); avoids NAT Gateway cost</td>
+            </tr>
+            <tr>
+              <td>Serverless workloads need access to private S3</td>
+              <td>No (for AWS-same-account)</td>
+              <td>Gateway Endpoint (free); Interface S3 Endpoint if stricter isolation needed</td>
+            </tr>
+            <tr>
+              <td>External internet user needs to reach a private resource</td>
+              <td>No — add indirection</td>
+              <td>ALB in public subnet fronting private targets; do not open NACL/SG to 0.0.0.0/0 directly on private resources</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The right way to expose a service across VPCs</h3>
+
+      <p>The canonical pattern is: service behind a Network Load Balancer → VPC Endpoint Service → consumers create Interface Endpoints. The NLB is required because PrivateLink's data plane connects to NLB targets, not to EC2 instances directly. The security group on the NLB target EC2s/containers should allow inbound only from the NLB security group (or NLB's CIDR), not from <code>0.0.0.0/0</code>. This way the only path to the service is through the NLB → PrivateLink → consumer ENI.</p>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#D6F0EE','primaryBorderColor':'#1F9E8F','primaryTextColor':'#0C4A43','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+flowchart LR
+    subgraph ConsumerVPC["Consumer VPC (any account/region)"]
+        App["Application / Query Engine"]
+        IENI["Interface Endpoint ENI<br/>(private IP 10.1.x.x)"]
+        App -->|"HTTPS to private IP"| IENI
+    end
+    subgraph PLink["AWS PrivateLink (backbone)"]
+        PL["Hypervisor NAT<br/>+ direct routing"]
+    end
+    subgraph ProviderVPC["Provider VPC (service owner)"]
+        NLB["Network Load Balancer<br/>(internal, port 443)"]
+        SG["Security Group<br/>allow from NLB CIDR only"]
+        Svc["Service Pods / EC2"]
+        NLB --> SG --> Svc
+    end
+    IENI -->|"tunneled via PrivateLink"| PLink
+    PLink -->|"to NLB target"| NLB
+          </div>
+        </div>
+        <figcaption><b>Figure 4.</b> Canonical pattern for cross-VPC/cross-account service exposure via PrivateLink. The consumer VPC needs no route changes beyond having the Interface Endpoint. The provider's security group allows inbound only from the NLB, not from arbitrary CIDRs.</figcaption>
+      </figure>
+
+      <h3>Security Group vs NACL — which to touch</h3>
+
+      <p><strong>Always prefer security group rules over NACL rules</strong> for punching access holes. Security groups are stateful (return traffic is automatically allowed), attached per-ENI (so rules are scoped to exactly the affected resource), and support source-as-security-group-ID referencing (which eliminates IP management entirely for same-VPC resources). NACLs are stateless — you must add rules for both inbound and outbound traffic, and they apply to all traffic entering/leaving the subnet, not just the resource you care about. Use NACLs as a defense-in-depth second layer (e.g., "block all traffic from this subnet to the database subnet except on port 5432"), not as the primary access control.</p>
+
+      <div class="callout warn">
+        <span class="tag">Common mistake</span>
+        <p>Opening a NACL rule for <code>0.0.0.0/0</code> on a port "temporarily" and forgetting it. NACLs have no stateful tracking — a rule that's open is open to all traffic matching that pattern. Security groups with specific source security group IDs are both safer and easier to audit.</p>
+      </div>
+
+      <h3>Zero-trust alternatives to "punching holes"</h3>
+
+      <p>For connectivity patterns that don't fit neatly into VPC primitives — especially ephemeral developer access, third-party SaaS-to-private-VPC connections, or multi-cloud without a VPN — consider identity-aware proxies and mesh tools: <strong>AWS Verified Access</strong> (OIDC/SAML before reaching a resource, no VPN needed), <strong>Tailscale</strong> (WireGuard-based overlay mesh, peer-to-peer with DERP relay, works across clouds), or <strong>Cloudflare Tunnel</strong> (outbound-only connector from the private resource, no inbound firewall rules needed). These shift the trust model from "network location" to "identity + device posture" — better for humans and for service-to-service connections that cross trust domain boundaries.</p>
+    </section>
+
+    <!-- 5. AUTH -->
+    <section id="auth">
+      <h2><span class="num">5</span>Authentication &amp; identity</h2>
+
+      <p>Cloud networking itself is not an authentication system — it controls reachability, not identity. But every networking primitive interacts with identity systems in specific ways, and confusing network-layer access control with application-layer authentication is a common security flaw.</p>
+
+      <h3>PrivateLink: network approval ≠ authentication</h3>
+      <p>When a consumer creates an Interface Endpoint to your service, PrivateLink requires the provider to <em>accept</em> the connection (or configure auto-accept). This is a network-level admission control — it answers "is this VPC Endpoint ID allowed to reach my NLB?" It does <em>not</em> authenticate the application calling the service. Any EC2 in the consumer VPC that can reach the Interface Endpoint ENI will get a TCP connection to the provider's NLB. The service itself must enforce authentication — typically via TLS mutual authentication (mTLS) or Bearer tokens. Treat PrivateLink acceptance as a coarse network gate, not a substitute for app-level authn.</p>
+
+      <h3>IAM for Gateway Endpoints</h3>
+      <p>Gateway Endpoints for S3 can carry an <em>endpoint policy</em> — an IAM resource policy attached to the endpoint that restricts what operations and which S3 buckets the VPC can access through it. Combined with a bucket policy using <code>aws:SourceVpce</code>, you get: (a) only traffic through the endpoint reaches the bucket, and (b) only the operations in the endpoint policy are permitted. This is the correct pattern for locking down data lake S3 buckets to only internal VPC access.</p>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#FAD9DC','primaryBorderColor':'#C8425A','primaryTextColor':'#6E1626','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant C as EC2 or Lambda
+    participant T as AWS STS
+    participant G as S3 Gateway Endpoint
+    participant B as S3 Bucket
+
+    C->>T: AssumeRole via metadata service 169.254.169.254
+    T-->>C: AccessKeyId + SecretKey + SessionToken
+    C->>G: GET bucket/prefix (SigV4-signed)<br/>route table directs here — no NAT no internet
+    G->>B: Forwards request
+    B->>B: Check aws:SourceVpce == vpce-xxx AND IAM role
+    B-->>C: Object data
+          </div>
+        </div>
+        <figcaption><b>Figure 5.</b> Auth flow for S3 access via Gateway Endpoint. The IAM role provides the identity (authn via STS); the bucket policy enforces both identity-based and network-location-based authorization; the Gateway Endpoint ensures traffic never exits to the internet.</figcaption>
+      </figure>
+
+      <h3>Databricks PrivateLink: workspace-level network controls</h3>
+      <p>Databricks exposes its workspace, the SCC relay, and the REST API all via PrivateLink endpoints. The workspace URL resolves to the Interface Endpoint ENI in your VPC. Authentication to Databricks itself is separate: OAuth2 + OIDC (Databricks identity, or federated via your IdP), enforced at the Databricks control plane after the network-level connection is established. Unity Catalog enforces RBAC/ABAC on top of that. In other words, PrivateLink handles <em>network reachability</em>; Unity Catalog + Databricks authn handles <em>identity and authorization</em>. Neither replaces the other.</p>
+
+      <div class="callout amber">
+        <span class="tag">Subtle risk</span>
+        <p>Enabling PrivateLink for a Databricks workspace but leaving the workspace's public access enabled ("no-public-access = false") is not full isolation. Set <code>no-public-access = true</code> to ensure the workspace API is <em>only</em> reachable through the PrivateLink endpoint, not over the internet. This is the Databricks workspace-level analog of setting a bucket policy with <code>aws:SourceVpce</code>.</p>
+      </div>
+    </section>
+
+    <!-- 6. DELTA SHARING -->
+    <section id="deltasharing">
+      <h2><span class="num">6</span>Delta Sharing vs. private links — the architectural substitution</h2>
+
+      <p>The traditional approach to cross-account or cross-org data sharing in the cloud is: (1) set up VPC Peering or PrivateLink between the two accounts, (2) configure storage bucket policies to allow the recipient's IAM role, (3) share IAM credentials or assume-role trust. This creates a permanent network-level relationship between two organizations — expensive to set up, fragile to maintain, and operationally coupled (provider network changes break recipient access).</p>
+
+      <p><strong>Delta Sharing decouples data sharing from network topology.</strong> It is an open HTTP REST protocol (published on GitHub; VLDB 2025 paper: Puttaswamy et al.) that works as follows: the data provider runs a Delta Sharing server (Databricks' is built into Unity Catalog). The server maintains a catalog of shares, recipients, and access grants. When a recipient queries a share, the server returns <em>pre-signed URLs</em> (AWS S3 pre-signed URLs, Azure SAS tokens, or GCS signed URLs) or <em>STS tokens</em> that grant temporary, scoped, read-only access to exactly the Parquet/Delta files needed for that query. The recipient reads directly from object storage using those credentials — no permanent network path to the provider's VPC is required.</p>
+
+      <h3>Open Sharing vs Databricks-to-Databricks</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Protocol</th>
+              <th>Auth model</th>
+              <th>Network requirement</th>
+              <th>What can be shared</th>
+              <th>Use when</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Open Sharing</strong></td>
+              <td>Long-lived bearer token OR OIDC federation (short-lived JWT)</td>
+              <td>Recipient must reach Databricks Delta Sharing endpoint (HTTPS/443) + cloud storage (HTTPS/443 to S3/ADLS/GCS)</td>
+              <td>Delta tables, Parquet, views (with filtering on provider side)</td>
+              <td>Recipient is not on Databricks, or not on Unity Catalog</td>
+            </tr>
+            <tr>
+              <td><strong>Databricks-to-Databricks</strong></td>
+              <td>Platform identity (sharing identifier); no token exchange needed; Databricks manages auth end-to-end</td>
+              <td>Same as Open Sharing — HTTPS only; no cross-VPC plumbing</td>
+              <td>Tables, views, volumes, notebooks, models, streaming tables, managed Iceberg</td>
+              <td>Both provider and recipient are on Unity Catalog-enabled Databricks workspaces</td>
+            </tr>
+            <tr>
+              <td><strong>Open-source Delta Sharing server</strong></td>
+              <td>Bearer token or custom</td>
+              <td>Recipient must reach the self-hosted server</td>
+              <td>Delta / Parquet tables</td>
+              <td>Non-Databricks provider platform</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>How Delta Sharing vends credentials — the credential flow</h3>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#DEE0FA','primaryBorderColor':'#5256C8','primaryTextColor':'#23266E','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant RC as Recipient Client
+    participant DSS as Delta Sharing Server
+    participant UC as Unity Catalog
+    participant STS as Cloud STS Presigner
+    participant S3 as Provider Object Storage
+
+    RC->>DSS: GET /shares/NAME/schemas/S/tables/T/query (Bearer token)
+    DSS->>UC: Validate token and check recipient access to share
+    UC-->>DSS: Authorized - table metadata and partition info
+    DSS->>STS: Request pre-signed URLs or STS token scoped to file prefixes
+    STS-->>DSS: Short-lived credentials (15-min URL or prefix-scoped STS token)
+    DSS-->>RC: deltaTableFiles list with URLs - no permanent creds, no VPC routing
+    RC->>S3: GET presigned-url (X-Amz-Expires=900)<br/>reads directly from storage using short-lived creds
+    S3-->>RC: Parquet file bytes over TLS
+          </div>
+        </div>
+        <figcaption><b>Figure 6.</b> Delta Sharing credential vending flow. The entire exchange requires only outbound HTTPS from the recipient — no VPC peering, no PrivateLink endpoint, no cross-account IAM trust. Short-lived credentials (step 5) expire before they can be reused if intercepted.</figcaption>
+      </figure>
+
+      <h3>When Delta Sharing does NOT eliminate network configuration</h3>
+
+      <p>Delta Sharing simplifies networking for the common case (internet-accessible object storage). Three scenarios still require network configuration:</p>
+
+      <p><strong>1. Provider storage has no public access.</strong> If the S3 bucket policy denies all public access and only allows the provider's VPC Endpoint, then pre-signed URLs generated by the Delta Sharing server will return HTTP 403 when the recipient tries to use them from outside the VPC. Solutions: (a) use a <em>Delta Sharing Network Gateway</em> (new in Summer 2025 — provider-side HTTPS proxy that re-serves the data, removing the need for recipients to reach the raw bucket), or (b) configure the bucket to allow traffic from the Delta Sharing server's IP ranges / VPC endpoint for the presign operation.</p>
+
+      <p><strong>2. Fully private cross-cloud sharing (e.g., AWS recipient → Azure provider).</strong> If the provider's ADLS storage is private, the recipient's serverless compute needs a path. The pattern (Databricks, Jan 2025): configure an NCC (Network Connectivity Configuration) for serverless with a PrivateLink rule pointing at a VPC Endpoint Service in AWS, which routes via an NLB whose target group has the ADLS private endpoint IP. Cross-cloud: a Site-to-Site VPN or ExpressRoute/Direct Connect links AWS and Azure first. The NCC object tells Databricks serverless to use the PrivateLink path rather than the public internet for that hostname.</p>
+
+      <p><strong>3. Recipient has strict egress controls.</strong> If the recipient's network blocks outbound internet but they need to reach the Databricks Delta Sharing endpoint, they need an Interface Endpoint for the Databricks workspace on the provider side, or they need their own Databricks workspace's NCC to route sharing traffic through a private path.</p>
+
+      <div class="callout key">
+        <span class="tag">The key insight</span>
+        <p>Delta Sharing inverts the networking burden: instead of both organizations building a persistent bilateral network relationship (VPC Peering, PrivateLink, VPN), the protocol treats the internet as the transport and uses object storage's own pre-signed URL/STS mechanism as the access control. The networking problem collapses to "can the recipient make outbound HTTPS connections?" — which is almost always yes.</p>
+      </div>
+    </section>
+
+    <!-- 7. CONNECTIONS -->
+    <section id="connections">
+      <h2><span class="num">7</span>How cloud networking connects to the rest of the data stack</h2>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 880 520" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Cloud networking connections to data stack components">
+            <defs>
+              <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+              <marker id="arr3b" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#7E4FB5"/>
+              </marker>
+            </defs>
+
+            <!-- Central: Cloud Networking Primitives -->
+            <rect x="290" y="210" width="300" height="80" rx="9"
+                  fill="#FCE4D4" stroke="#111418" stroke-width="2.8"/>
+            <text x="440" y="242" text-anchor="middle" font-size="14" font-weight="700" fill="#7A3D0E">Cloud Networking</text>
+            <text x="440" y="258" text-anchor="middle" font-size="11.5" fill="#7A3D0E">VPC · PrivateLink · TGW · Peering</text>
+            <text x="440" y="274" text-anchor="middle" font-size="11.5" fill="#7A3D0E">Gateway Endpoint · NAT · IGW</text>
+
+            <!-- Object Storage -->
+            <rect x="10" y="210" width="200" height="50" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="110" y="231" text-anchor="middle" font-size="13" font-weight="600" fill="#3A4252">Object Storage</text>
+            <text x="110" y="248" text-anchor="middle" font-size="10.5" fill="#5A6273">S3 / ADLS / GCS</text>
+            <!-- Arrow: to storage -->
+            <line x1="290" y1="240" x2="210" y2="240" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="215" y="229" width="72" height="14" rx="7" fill="#FFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="251" y="240" text-anchor="middle" font-size="10" fill="#3A4252">GW Endpoint</text>
+
+            <!-- Databricks / Compute -->
+            <rect x="670" y="180" width="200" height="50" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="770" y="200" text-anchor="middle" font-size="13" font-weight="600" fill="#0C4A43">Databricks Workspace</text>
+            <text x="770" y="216" text-anchor="middle" font-size="10.5" fill="#1F9E8F">compute plane + control plane</text>
+            <line x1="590" y1="235" x2="670" y2="205" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="594" y="208" width="74" height="14" rx="7" fill="#FFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="631" y="219" text-anchor="middle" font-size="10" fill="#3A4252">PrivateLink</text>
+
+            <!-- Unity Catalog / IRC -->
+            <rect x="670" y="260" width="200" height="50" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="770" y="280" text-anchor="middle" font-size="13" font-weight="600" fill="#432068">Unity Catalog / IRC</text>
+            <text x="770" y="296" text-anchor="middle" font-size="10.5" fill="#7E4FB5">credential vending</text>
+            <line x1="590" y1="270" x2="670" y2="280" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="594" y="261" width="72" height="14" rx="7" fill="#FFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="630" y="272" text-anchor="middle" font-size="10" fill="#432068">PrivateLink</text>
+
+            <!-- Identity / IAM -->
+            <rect x="670" y="340" width="200" height="50" rx="7" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.4"/>
+            <text x="770" y="360" text-anchor="middle" font-size="13" font-weight="600" fill="#6E1626">IAM / OIDC / STS</text>
+            <text x="770" y="376" text-anchor="middle" font-size="10.5" fill="#C8425A">SG policy + IAM role</text>
+            <line x1="560" y1="285" x2="670" y2="360" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="574" y="311" width="90" height="14" rx="7" fill="#FFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="619" y="322" text-anchor="middle" font-size="10" fill="#6E1626">SG rules + endpoint policy</text>
+
+            <!-- Delta Sharing -->
+            <rect x="10" y="80" width="220" height="50" rx="7" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.4"/>
+            <text x="120" y="100" text-anchor="middle" font-size="13" font-weight="600" fill="#23266E">Delta Sharing</text>
+            <text x="120" y="116" text-anchor="middle" font-size="10.5" fill="#5256C8">open protocol · HTTPS + creds</text>
+            <line x1="290" y1="225" x2="230" y2="125" stroke="#5256C8" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr3b)"/>
+            <rect x="210" y="162" width="90" height="14" rx="7" fill="#FFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="255" y="173" text-anchor="middle" font-size="10" fill="#5256C8">bypasses VPC wiring</text>
+
+            <!-- On-prem / Hybrid -->
+            <rect x="10" y="340" width="200" height="50" rx="7" fill="#F5F6F8" stroke="#D5D9E0" stroke-width="1.4"/>
+            <text x="110" y="360" text-anchor="middle" font-size="13" font-weight="600" fill="#3A4252">On-Premises / Hybrid</text>
+            <text x="110" y="376" text-anchor="middle" font-size="10.5" fill="#5A6273">corp network</text>
+            <line x1="290" y1="270" x2="210" y2="365" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="196" y="299" width="90" height="14" rx="7" fill="#FFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="241" y="310" text-anchor="middle" font-size="10" fill="#3A4252">VPN / Direct Connect</text>
+
+            <!-- Transit Gateway -->
+            <rect x="290" y="60" width="300" height="50" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.4"/>
+            <text x="440" y="80" text-anchor="middle" font-size="13" font-weight="600" fill="#7A3D0E">Transit Gateway</text>
+            <text x="440" y="96" text-anchor="middle" font-size="10.5" fill="#D9772E">hub-and-spoke · multiple VPC attachments</text>
+            <line x1="440" y1="210" x2="440" y2="110" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="403" y="153" width="74" height="14" rx="7" fill="#FFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="440" y="164" text-anchor="middle" font-size="10" fill="#3A4252">TGW attachment</text>
+
+            <!-- Knowledge Catalog -->
+            <rect x="290" y="420" width="300" height="50" rx="7" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.4"/>
+            <text x="440" y="440" text-anchor="middle" font-size="13" font-weight="600" fill="#234D1A">Knowledge Catalog / Governance</text>
+            <text x="440" y="456" text-anchor="middle" font-size="10.5" fill="#4A9A3C">metadata, lineage, policy</text>
+            <line x1="440" y1="290" x2="440" y2="420" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr3)"/>
+            <rect x="400" y="346" width="80" height="14" rx="7" fill="#FFF" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="440" y="357" text-anchor="middle" font-size="10" fill="#234D1A">PrivateLink / SG rules</text>
+
+          </svg>
+          <div class="legend">
+            <span><i style="background:#FCE4D4;border-color:#111418"></i>Focus: Cloud Networking</span>
+            <span><i style="background:#E8EBF0"></i>Object Storage</span>
+            <span><i style="background:#D6F0EE"></i>Compute</span>
+            <span><i style="background:#EADDF7"></i>Catalog</span>
+            <span><i style="background:#DEE0FA"></i>Delta Sharing</span>
+            <span><i style="background:#FAD9DC"></i>Identity</span>
+          </div>
+        </div>
+        <figcaption><b>Figure 7.</b> Cloud networking connections to the data platform stack. Solid lines = PrivateLink or VPC-native connectivity; dashed line = Delta Sharing, which bypasses VPC wiring entirely.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Stack component</th><th>Connection mechanism</th><th>What crosses</th><th>Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Object Storage (S3/ADLS/GCS)</td>
+              <td>Gateway VPC Endpoint (S3/DynamoDB, free) or Interface Endpoint (any S3 op, incl. bucket policy enforcement)</td>
+              <td>Parquet/Delta files, metadata manifests, Iceberg metadata JSON</td>
+              <td>Always deploy Gateway Endpoint in private subnets to avoid NAT Gateway S3 egress cost</td>
+            </tr>
+            <tr>
+              <td>Databricks workspace</td>
+              <td>PrivateLink (3 endpoints: workspace, SCC relay, REST API)</td>
+              <td>Notebook interactions, job submissions, workspace API calls</td>
+              <td>Set <code>no_public_access=true</code>; route all workspace traffic through PrivateLink</td>
+            </tr>
+            <tr>
+              <td>Unity Catalog / IRC catalog</td>
+              <td>PrivateLink to Databricks control plane; internal VPC routing to Unity Catalog metastore endpoint</td>
+              <td>Table metadata, credential vending (STS tokens for storage), access grants</td>
+              <td>Credential vending flows from catalog → engine → storage; engine never holds long-lived keys</td>
+            </tr>
+            <tr>
+              <td>On-premises / hybrid</td>
+              <td>VPN Gateway (IPSec/IKEv2) or Direct Connect</td>
+              <td>Query traffic, admin access, data ingest from on-prem sources</td>
+              <td>Direct Connect preferred for latency-sensitive workloads (&lt;10ms); VPN for HA pairs</td>
+            </tr>
+            <tr>
+              <td>Multi-VPC within same account</td>
+              <td>Transit Gateway (hub-and-spoke) or VPC Peering (≤5 VPCs)</td>
+              <td>Full network traffic between attached VPCs (security groups constrain further)</td>
+              <td>TGW preferred for more than 3 VPCs; peering is cheaper for 2-VPC stable topologies</td>
+            </tr>
+            <tr>
+              <td>Cross-org data sharing</td>
+              <td>Delta Sharing (REST API + pre-signed URLs) — no VPC required</td>
+              <td>Query results as Parquet files fetched directly from provider object storage</td>
+              <td>Replaces PrivateLink + cross-account IAM trust for all sharing use cases except fully private storage</td>
+            </tr>
+            <tr>
+              <td>Knowledge Catalog / governance tools</td>
+              <td>PrivateLink or VPC Peering to hosted catalog (e.g., Collibra, Atlan SaaS)</td>
+              <td>Metadata ingestion, policy push, lineage events</td>
+              <td>SaaS governance tools increasingly offer PrivateLink; self-hosted share the VPC or use peering</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 8. TRADE-OFFS -->
+    <section id="tradeoffs">
+      <h2><span class="num">8</span>Trade-offs, failure modes &amp; when (not) to use each</h2>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Primitive</th>
+              <th>Strengths</th>
+              <th>Failure modes / risks</th>
+              <th>Avoid when</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Internet Gateway</strong></td>
+              <td>Zero cost; unlimited throughput; simple</td>
+              <td>Any EC2 with a public IP and permissive SG is internet-reachable; no encryption</td>
+              <td>Data plane resources (databases, query engines, data lake): these should never be in public subnets</td>
+            </tr>
+            <tr>
+              <td><strong>NAT Gateway</strong></td>
+              <td>Managed, highly available per AZ; simple outbound-only for private subnets</td>
+              <td>$0.045/GB egress cost; forget it's routing S3 traffic and spend thousands/month unnecessarily; AZ-scoped (cross-AZ traffic = extra cost)</td>
+              <td>S3/DynamoDB traffic in AWS — use a Gateway Endpoint instead; zonal HA requires one per AZ</td>
+            </tr>
+            <tr>
+              <td><strong>Gateway Endpoint</strong></td>
+              <td>Free; no ENI; no DNS changes needed; enforces bucket policy with <code>SourceVpce</code></td>
+              <td>S3 and DynamoDB only; doesn't support all S3 features (e.g., S3 Transfer Acceleration); route table entry limit</td>
+              <td>Services other than S3 and DynamoDB; multi-account cross-VPC access (use Interface Endpoint)</td>
+            </tr>
+            <tr>
+              <td><strong>Interface Endpoint (PrivateLink)</strong></td>
+              <td>Service-level isolation (not network-level); works with overlapping CIDRs; no route table changes; available for 100+ AWS services</td>
+              <td>$0.01/hr per ENI per AZ + $0.01/GB; DNS split-horizon misconfiguration; requires NLB in provider VPC; consumer must enable Private DNS</td>
+              <td>Cases where full network access (all ports/services) is needed — peering or TGW is simpler and cheaper for broad access</td>
+            </tr>
+            <tr>
+              <td><strong>VPC Peering</strong></td>
+              <td>No cost within same region (just data transfer); low latency; full network access; simple for 2-VPC topologies</td>
+              <td>No transitive routing; N*(N-1)/2 connections; 125-connection hard limit; CIDR overlap breaks it; full network exposure (relying on SGs alone)</td>
+              <td>More than ~5 VPCs; meshes; cases where service-level isolation is required; overlapping CIDRs</td>
+            </tr>
+            <tr>
+              <td><strong>Transit Gateway</strong></td>
+              <td>Transitive routing; centralized; supports VPN + DX + inter-region; route table isolation; scales to thousands of VPCs</td>
+              <td>$0.05/attachment-hour (10 VPCs = $360/month before data transfer); additional hop adds ~1ms latency; route table complexity; requires TGW route propagation setup</td>
+              <td>Fewer than 3–4 VPCs (peering is cheaper); cases where PrivateLink suffices (service-to-service)</td>
+            </tr>
+            <tr>
+              <td><strong>Delta Sharing</strong></td>
+              <td>No VPC wiring; cross-cloud; cross-org; live/zero-copy; governance via Unity Catalog; OIDC federation; open protocol</td>
+              <td>Egress costs across regions/clouds; pre-signed URL MITM risk (mitigated by short TTL); provider storage must be reachable; latency of REST round-trip before object reads</td>
+              <td>Fully private storage with no internet path (requires Network Gateway or NCC+PrivateLink); high-throughput streaming ingest (use Lakeflow Connect instead)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The N*(N-1)/2 peering problem, illustrated</h3>
+      <p>With 10 VPCs in a full mesh, you need 45 peering connections, each requiring route table entries on both sides (90 entries), and security group rules referencing 9 peer CIDRs per VPC. If any two VPCs' CIDRs overlap (common in org mergers or multi-team accounts), the entire mesh breaks. Transit Gateway cuts this to 10 attachments, one route table, and works regardless of CIDR overlap with careful route table design.</p>
+
+      <h3>Delta Sharing egress costs</h3>
+      <p>Delta Sharing within a region incurs no egress cost from the cloud provider's perspective — the data files are accessed from the same region. Cross-region or cross-cloud sharing incurs standard cloud egress fees, which can be significant for large datasets. Databricks supports Cloudflare R2 as a Delta Sharing storage backend (R2 charges zero egress fees) as a workaround for cross-cloud sharing egress.</p>
+
+      <h3>PrivateLink cost at scale</h3>
+      <p>At 50 VPCs each needing three Interface Endpoints to Databricks (workspace, SCC, REST), and each in 3 AZs: 50 × 3 × 3 = 450 ENIs at $0.01/hr = $3,240/month, before data transfer. The Databricks PrivateLink model uses <em>one endpoint per workspace per VPC</em> (not per AZ — the NLB handles AZ distribution), so the math is more like 50 × 3 = 150 ENIs = $1,080/month. Still significant; plan it into the platform cost model.</p>
+    </section>
+
+    <!-- 9. ARCHITECT'S TAKE -->
+    <section id="take">
+      <h2><span class="num">9</span>Architect's take</h2>
+
+      <p><strong>The single most important networking habit for data platforms: deploy a Gateway Endpoint for S3 on day one.</strong> It is free, requires one Terraform resource, and eliminates a class of accidental-egress-over-NAT costs that are invisible until the AWS bill arrives. Every private subnet in every VPC that runs query engines, data pipelines, or Spark clusters should have a Gateway Endpoint route.</p>
+
+      <p><strong>Default to PrivateLink for data platform services, not VPC Peering.</strong> Query engines, catalogs, and control planes expose specific API surfaces — they don't need full bilateral network access. PrivateLink gives you the minimum surface area: one service, one TCP port, no blast radius into the wider VPC. The cost is higher than peering (per-ENI hourly) but the security posture and operational simplicity are worth it. Peering is correct only when you genuinely need broad network access, e.g., a compute cluster that needs to reach many different ports across a shared services VPC.</p>
+
+      <p><strong>Use Delta Sharing as the default pattern for any cross-org data access.</strong> Before building a PrivateLink or VPN between your org and a partner's, ask whether Delta Sharing can solve it instead. For read-only tabular data sharing, it almost certainly can — and you eliminate the permanent operational coupling between two organizations' network teams. The protocol is now a VLDB-published standard with implementations across Databricks, Snowflake, Apache Spark, Power BI, and pandas.</p>
+
+      <p><strong>Watch for three developments over the next 12–18 months:</strong> (1) The Delta Sharing Network Gateway (announced Summer 2025) maturing from preview — once stable, it closes the "private storage" gap that still requires NCC+PrivateLink configurations for fully air-gapped providers. (2) AWS Verified Access expanding to cover more access patterns, potentially reducing the need for full VPN for developer/admin access to private resources. (3) Increasing PrivateLink adoption for IRC catalog endpoints — as Polaris, Lakekeeper, and Unity Catalog all expose REST APIs, expect all major platforms to offer Interface Endpoints for catalog access, making L3 as network-isolated as L0 storage already is.</p>
+
+      <div class="callout note">
+        <span class="tag">Decision rule of thumb</span>
+        <p>When you hear "we need to share data with another account/org," answer with a question: "do they need network-level access (to deploy their own compute into our environment) or data-level access (to read specific tables)?" Network-level: VPC Peering or TGW. Data-level: Delta Sharing. Only about 10% of cross-org data sharing scenarios genuinely require network-level access. Delta Sharing handles the other 90% with less operational complexity, better governance, and no bilateral network trust.</p>
+      </div>
+    </section>
+
+    <!-- SOURCES -->
+    <section id="sources">
+      <h2>Sources</h2>
+      <ul class="sources">
+        <li><span class="tier docs">Docs</span><a href="https://docs.aws.amazon.com/vpc/latest/privatelink/what-is-privatelink.html">AWS PrivateLink — What is PrivateLink?</a> — authoritative reference for Interface Endpoint architecture, DNS override behavior, and endpoint service model.</li>
+        <li><span class="tier docs">Docs</span><a href="https://docs.aws.amazon.com/vpc/latest/privatelink/concepts.html">AWS PrivateLink Concepts</a> — endpoint network interfaces, NLB requirement, consumer/provider model.</li>
+        <li><span class="tier docs">Docs</span><a href="https://docs.aws.amazon.com/vpc/latest/privatelink/gateway-endpoints.html">AWS Gateway Endpoints</a> — free S3/DynamoDB routing, prefix list mechanism, endpoint policy syntax.</li>
+        <li><span class="tier docs">Docs</span><a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html">AWS NAT Gateways</a> — public vs. private NAT, AZ scoping, pricing ($0.045/hr + $0.045/GB).</li>
+        <li><span class="tier docs">Docs</span><a href="https://docs.aws.amazon.com/whitepapers/latest/building-scalable-secure-multi-vpc-network-infrastructure/aws-privatelink.html">AWS Whitepaper: Building Scalable Multi-VPC Network Infrastructure</a> — centralized PrivateLink access patterns, Transit Gateway integration.</li>
+        <li><span class="tier docs">Docs</span><a href="https://docs.cloud.google.com/vpc/docs/private-service-connect-architecture">GCP Private Service Connect Architecture</a> — Andromeda SDN implementation, distributed data plane, latency characteristics.</li>
+        <li><span class="tier docs">Docs</span><a href="https://docs.cloud.google.com/vpc-service-controls/docs/overview">GCP VPC Service Controls Overview</a> — API perimeter, data exfiltration prevention, complementary role to PSC.</li>
+        <li><span class="tier docs">Docs</span><a href="https://techcommunity.microsoft.com/blog/fasttrackforazureblog/azure-private-endpoint-vs-service-endpoint-a-comprehensive-guide/4363095">Azure Private Endpoint vs. Service Endpoint (Microsoft TechCommunity)</a> — comparison of Azure service endpoints vs. Private Link endpoints, DNS and network architecture.</li>
+        <li><span class="tier paper">Paper</span><a href="https://www.vldb.org/pvldb/vol18/p5197-puttaswamy.pdf">Delta Sharing: An Open Protocol for Cross-Platform Data Sharing (VLDB 2025)</a> — Puttaswamy et al.; credential vending design, zero-copy architecture, performance evaluation.</li>
+        <li><span class="tier docs">Docs</span><a href="https://docs.databricks.com/aws/en/delta-sharing/">Databricks Delta Sharing — AWS docs (updated Apr 2026)</a> — open sharing vs D2D protocol, OIDC federation, Databricks-to-Databricks auth, compute billing model.</li>
+        <li><span class="tier code">Code</span><a href="https://github.com/delta-io/delta-sharing/blob/main/PROTOCOL.md">Delta Sharing Protocol Specification (GitHub)</a> — REST API endpoints, credential vending response format, pre-signed URL vs STS token options.</li>
+        <li><span class="tier docs">Docs</span><a href="https://docs.databricks.com/aws/en/delta-sharing/share-data-databricks">Databricks-to-Databricks Delta Sharing</a> — sharing identifier model, no-token auth, cross-account and cross-cloud support.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://community.databricks.com/t5/technical-blog/private-cross-cloud-delta-sharing-with-serverless-compute/ba-p/105719">Private Cross-Cloud Delta Sharing with Serverless Compute (Databricks Community, Jan 2025)</a> — NCC + PrivateLink + NLB + VPN pattern for fully private cross-cloud (AWS serverless → Azure ADLS) Delta Sharing.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://techcommunity.microsoft.com/blog/azurearchitectureblog/databricks-delta-sharing-enabling-cost-efficient-cross-cloud-data-access/4511400">Databricks Delta Sharing: Enabling Cost-Efficient Cross-Cloud Data Access (Microsoft Tech Community 2025)</a> — cross-cloud Delta Sharing egress cost analysis, R2 as zero-egress alternative.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://ably.com/blog/aws-vpc-peering-vs-transit-gateway-and-beyond">VPC peering vs Transit Gateway and beyond (Ably Engineering)</a> — practical comparison of peering, TGW, and PrivateLink; N*(N-1)/2 math; operational trade-offs at scale.</li>
+        <li><span class="tier practitioner">Practitioner</span><a href="https://blog.cloudtrooper.net/2025/02/17/private-link-reality-bites-service-endpoints-vs-private-link/">Azure Private Link reality bites — service endpoints vs Private Link (cloudtrooper.net, Feb 2025)</a> — candid engineering analysis of Azure Private Link limitations and DNS complexity.</li>
+      </ul>
+    </section>
+
+    <!-- GLOSSARY -->
+    <section id="glossary">
+      <h2>Glossary</h2>
+      <dl class="glossary">
+        <dt>CIDR (Classless Inter-Domain Routing)</dt>
+        <dd>IP address range notation, e.g., 10.0.0.0/16 = 65,536 addresses. VPCs are defined by CIDR blocks; subnets are sub-ranges within them.</dd>
+        <dt>ENI (Elastic Network Interface)</dt>
+        <dd>A virtual NIC in AWS, attached to an EC2 instance or a service endpoint. Has one primary private IP, optional secondary IPs, and an associated security group.</dd>
+        <dt>NLB (Network Load Balancer)</dt>
+        <dd>An AWS L4 (TCP/UDP/TLS) load balancer. Required as the backend for a PrivateLink VPC Endpoint Service; handles millions of connections per second at very low latency.</dd>
+        <dt>NCC (Network Connectivity Configuration)</dt>
+        <dd>A Databricks object that governs how serverless compute connects to external resources. Can include PrivateLink rules that map a hostname to a VPC Endpoint Service, routing serverless traffic through a private path rather than the internet.</dd>
+        <dt>Pre-signed URL</dt>
+        <dd>A time-limited URL for an object in cloud storage that embeds authentication credentials in the query string. Confers the rights of the signing identity for the object, for the duration specified (typically 15 minutes in Delta Sharing).</dd>
+        <dt>STS Token (Security Token Service)</dt>
+        <dd>Temporary AWS credentials (AccessKeyId + SecretAccessKey + SessionToken) with a bounded expiry and optional policy constraints. Delta Sharing uses prefix-scoped STS tokens as an alternative to per-file pre-signed URLs — more efficient for large tables.</dd>
+        <dt>Transitive routing</dt>
+        <dd>Traffic flowing A→B→C through a network hub. VPC Peering explicitly prohibits it; Transit Gateway enables it by design.</dd>
+        <dt>VPC Endpoint Service</dt>
+        <dd>The provider-side construct for AWS PrivateLink. Backed by a Network Load Balancer; assigned a service name (com.amazonaws.vpce.region.vpce-svc-xxx). Consumers reference this name when creating Interface Endpoints.</dd>
+        <dt>Andromeda (GCP)</dt>
+        <dd>Google Cloud's software-defined networking fabric, implementing Virtual Private Cloud networking and Private Service Connect. Fully distributed; no centralized network appliances in the data path.</dd>
+        <dt>Delta Sharing Network Gateway</dt>
+        <dd>A Databricks-managed HTTPS proxy (announced Summer 2025, in preview) that serves as an intermediary for Delta Sharing traffic when the provider's storage is fully private. Recipients route their data reads through the gateway, eliminating the need for direct storage access.</dd>
+      </dl>
+    </section>
+
+    <div class="footer">
+      Data Platform Deep-Dive · generated 2026-05-24 · accuracy-first, no marketing fluff.
+      Verify time-sensitive claims (Delta Sharing Network Gateway, NCC PrivateLink preview) against cited sources — these features were in preview/early GA as of May 2026.
+    </div>
+
+  </main>
+</div>
+
+<!-- ── width control ── -->
+<div class="wc" id="wc">
+  <span class="wc-label">Width</span>
+  <div class="wc-sep"></div>
+  <button data-w="820">Narrow</button>
+  <button data-w="1180">Default</button>
+  <button data-w="1440">Wide</button>
+  <button data-w="0">Full</button>
+</div>
+<script>
+(function(){
+  var KEY='dp-wrap-w';
+  var saved=localStorage.getItem(KEY)||'1180';
+  function applyWidth(w){
+    var root=document.documentElement;
+    root.style.setProperty('--wrap-max', w==='0'?'100%':w+'px');
+    document.querySelectorAll('.wc button').forEach(function(b){
+      b.classList.toggle('wc-active', b.getAttribute('data-w')===w);
+    });
+    localStorage.setItem(KEY,w);
+  }
+  applyWidth(saved);
+  document.getElementById('wc').addEventListener('click',function(e){
+    var btn=e.target.closest('button');
+    if(btn) applyWidth(btn.getAttribute('data-w'));
+  });
+})();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad:true, securityLevel:'loose', theme:'base' });
+  }
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var map = {};
+    links.forEach(function(a){
+      var id = a.getAttribute('href').slice(1);
+      var el = document.getElementById(id);
+      if (el) map[id] = a;
+    });
+    var obs = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting){
+          links.forEach(function(l){ l.classList.remove('active'); });
+          if (map[e.target.id]) map[e.target.id].classList.add('active');
+        }
+      });
+    }, { rootMargin:'-15% 0px -75% 0px' });
+    Object.keys(map).forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) obs.observe(el);
+    });
+  })();
+</script>
+</body>
+</html>

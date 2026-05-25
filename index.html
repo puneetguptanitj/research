@@ -25,6 +25,7 @@
     --l-gov-bg: #DEEFD9;     --l-gov: #4A9A3C;
     --l-identity-bg: #FAD9DC;--l-identity: #C8425A;
     --l-consume-bg: #DEE0FA; --l-consume: #5256C8;
+    --l-network-bg: #FCE4D4; --l-network: #D9772E;
   }
   *, *::before, *::after { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
@@ -130,6 +131,8 @@
   .tag-btn[data-layer="storage"].active, .tag-btn[data-layer="storage"]:hover { background: var(--l-storage); }
   .tag-btn[data-layer="identity"] { border-color: var(--l-identity); color: var(--l-identity); }
   .tag-btn[data-layer="identity"].active, .tag-btn[data-layer="identity"]:hover { background: var(--l-identity); }
+  .tag-btn[data-layer="network"]  { border-color: var(--l-network);  color: var(--l-network); }
+  .tag-btn[data-layer="network"].active, .tag-btn[data-layer="network"]:hover { background: var(--l-network); }
   .tag-btn[data-layer="all"]      { border-color: var(--rule-strong); color: var(--ink-soft); }
   .tag-btn[data-layer="all"].active, .tag-btn[data-layer="all"]:hover { background: var(--ink-soft); }
 
@@ -179,6 +182,7 @@
   .card[data-layer="table"]::before    { background: var(--l-table); }
   .card[data-layer="storage"]::before  { background: var(--l-storage); }
   .card[data-layer="identity"]::before { background: var(--l-identity); }
+  .card[data-layer="network"]::before  { background: var(--l-network); }
 
   .card-meta {
     display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
@@ -195,6 +199,7 @@
   .layer-chip[data-layer="table"]    { background: var(--l-table-bg);    color: #1E3A6B; border-color: var(--l-table); }
   .layer-chip[data-layer="storage"]  { background: var(--l-storage-bg);  color: #3A4252; border-color: var(--l-storage); }
   .layer-chip[data-layer="identity"] { background: var(--l-identity-bg); color: #6E1626; border-color: var(--l-identity); }
+  .layer-chip[data-layer="network"]  { background: var(--l-network-bg);  color: #7A3D0E; border-color: var(--l-network); }
 
   .card-date { font-size: 12px; color: var(--ink-faint); margin-left: auto; }
 
@@ -315,8 +320,8 @@
   <h1>Data Platform <span>Deep-Dives</span></h1>
   <p class="hero-sub">Architecture-first research on the modern data + AI stack. Accurate, high-signal, no marketing fluff.</p>
   <div class="hero-stats">
-    <div><strong id="article-count">4</strong>Articles</div>
-    <div><strong id="word-count">~17k</strong>Words</div>
+    <div><strong id="article-count">5</strong>Articles</div>
+    <div><strong id="word-count">~24k</strong>Words</div>
     <div><strong>7</strong>Sections each</div>
     <div><strong>5+</strong>Diagrams each</div>
   </div>
@@ -336,6 +341,7 @@
     <button class="tag-btn" data-layer="catalog" onclick="setFilter(this)">L3 · Catalog</button>
     <button class="tag-btn" data-layer="table" onclick="setFilter(this)">L2 · Table format</button>
     <button class="tag-btn" data-layer="identity" onclick="setFilter(this)">L8 · Identity</button>
+    <button class="tag-btn" data-layer="network" onclick="setFilter(this)">Infra · Networking</button>
   </div>
 </div>
 
@@ -421,13 +427,22 @@
           <span class="stack-item" style="background:#E8EBF0;color:#3A4252;border-color:#8A94A6">ADLS</span>
         </div>
       </div>
+      <div class="stack-row has-article" onclick="document.getElementById('article-networking').scrollIntoView({behavior:'smooth'})">
+        <span class="stack-label">NET</span>
+        <span class="stack-name">Network / Infra</span>
+        <div class="stack-items">
+          <span class="stack-item covered" style="background:#FCE4D4;color:#7A3D0E;border-color:#111418"><a href="2026-05-24-cloud-networking-private-links-delta-sharing-deep-dive.html">VPC · PrivateLink · Delta Sharing ✦</a></span>
+          <span class="stack-item" style="background:#FCE4D4;color:#7A3D0E;border-color:#D9772E">Transit Gateway</span>
+          <span class="stack-item" style="background:#FCE4D4;color:#7A3D0E;border-color:#D9772E">PSC / Azure PE</span>
+        </div>
+      </div>
     </div>
   </div>
 
   <!-- Cards header -->
   <div class="section-header">
     <h2>All articles</h2>
-    <span class="count-badge" id="visible-count">3 articles</span>
+    <span class="count-badge" id="visible-count">5 articles</span>
   </div>
 
   <!-- ── ARTICLE CARDS ── -->
@@ -535,6 +550,41 @@
           ~24 min
         </span>
         <a class="read-link" href="2026-05-21-iceberg-rest-catalog-deep-dive.html">
+          Read deep-dive
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </div>
+    </article>
+
+    <!-- Cloud Networking -->
+    <article class="card" id="article-networking" data-layer="network"
+             data-search="vpc virtual private cloud privatelink private link peering transit gateway nat gateway internet gateway igw tgw direct connect vpn gateway vpc endpoint interface endpoint gateway endpoint security group nacl network acl delta sharing databricks ncc network connectivity configuration aws azure gcp private service connect psc andromeda punch holes zero trust verified access tailscale cloudflare tunnel nlb network load balancer PrivateLink pre-signed url sts token credential vending cross-org sharing open sharing">
+      <div class="card-meta">
+        <span class="layer-chip" data-layer="network">Infra · Networking</span>
+        <span class="mini-tag">AWS / Azure / GCP</span>
+        <span class="mini-tag">PrivateLink</span>
+        <span class="mini-tag">Delta Sharing</span>
+        <span class="card-date">2026-05-24</span>
+      </div>
+      <h3><a href="2026-05-24-cloud-networking-private-links-delta-sharing-deep-dive.html">Cloud Networking for Data Platforms</a></h3>
+      <p class="card-definition">A taxonomy of every cloud network primitive — from IGW and NAT Gateway through VPC Peering, Transit Gateway, and all flavors of private endpoint — with a security-group-first guide to punching controlled holes in VPCs, and a deep look at how Databricks Delta Sharing's credential-vending model eliminates bilateral network wiring between organizations entirely.</p>
+      <div class="card-tldr">
+        <strong>The short version:</strong> VPC Peering is simple but non-transitive (N×(N−1)/2 connections); Transit Gateway solves that at $0.05/hr + $0.02/GB. Interface VPC Endpoints (AWS PrivateLink) put an ENI with a private IP in your subnet, overriding DNS so traffic never leaves the AWS backbone — but require an NLB on the provider side. GCP's Private Service Connect does the same with Andromeda SDN, fully distributed. Delta Sharing sidesteps cross-org networking altogether: the sharing server vends short-lived pre-signed URLs/STS tokens over plain HTTPS, so the recipient's engine reads the data directly from object storage without any permanent network relationship.
+      </div>
+      <div class="card-footer">
+        <div class="card-tags">
+          <span class="mini-tag">VPC Peering</span>
+          <span class="mini-tag">Transit Gateway</span>
+          <span class="mini-tag">PrivateLink / PSC</span>
+          <span class="mini-tag">Security Groups</span>
+          <span class="mini-tag">Delta Sharing</span>
+          <span class="mini-tag">NCC / Serverless</span>
+        </div>
+        <span class="card-reading">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          ~30 min
+        </span>
+        <a class="read-link" href="2026-05-24-cloud-networking-private-links-delta-sharing-deep-dive.html">
           Read deep-dive
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </a>

@@ -184,6 +184,7 @@
       <li><a href="#architecture"><span class="n">1</span>What it is &amp; architecture</a></li>
       <li><a href="#placement"><span class="n">2</span>Placement in the landscape</a></li>
       <li><a href="#mechanism"><span class="n">3</span>How it works</a></li>
+      <li><a href="#task-count" style="padding-left:24px;font-size:12.5px;">↳ Task count per stage</a></li>
       <li><a href="#auth"><span class="n">4</span>Authentication &amp; identity</a></li>
       <li><a href="#connections"><span class="n">5</span>How it connects</a></li>
       <li><a href="#tradeoffs"><span class="n">6</span>Trade-offs &amp; failure modes</a></li>
@@ -712,9 +713,238 @@ sequenceDiagram
         </div>
         <figcaption><b>Figure 3.</b> Trino query lifecycle with the Iceberg/IRC connector. The coordinator plans and schedules; workers read object storage directly using catalog-vended credentials. Workers exchange intermediate data over HTTP — no shared disk, no external message broker.</figcaption>
       </figure>
-    </section>
 
-    <!-- 4. AUTH -->
+      <h3 id="task-count">How task count per stage is calculated</h3>
+      <p>A common misconception is that the number of tasks for a query equals the number of workers in the cluster. In reality, task count is determined <em>per stage</em>, and the formula differs depending on whether a stage reads from a connector (source stage), consumes shuffled data from an upstream stage (exchange stage), or is a single-output gather stage. A single worker can carry tasks from multiple stages simultaneously, and some stages may involve far fewer than N workers.</p>
+
+      <p>The key distinction: <strong>tasks</strong> are the unit assigned to a worker per stage; <strong>drivers</strong> are the parallel pipelines within a task (one per split for source stages). Tasks ≠ drivers, and neither necessarily equals the worker count.</p>
+
+      <!-- ── DIAGRAM 5a: Source stage ── -->
+      <figure style="margin:32px 0;">
+        <svg viewBox="0 0 780 310" xmlns="http://www.w3.org/2000/svg" style="width:100%;border-radius:8px;border:1px solid #e3e6eb;background:#f9fafb;display:block;" aria-label="Source stage task count: splits drive tasks">
+          <!-- Title -->
+          <text x="390" y="28" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1a1d24" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Source Stage — task count driven by splits from the connector</text>
+
+          <!-- Coordinator box -->
+          <rect x="290" y="48" width="200" height="52" rx="7" fill="#eef4fb" stroke="#2f6fb8" stroke-width="1.5"/>
+          <text x="390" y="70" text-anchor="middle" font-size="12" font-weight="700" fill="#2f6fb8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Coordinator</text>
+          <text x="390" y="88" text-anchor="middle" font-size="11" fill="#444b59" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Enumerates splits from ConnectorSplitManager</text>
+
+          <!-- Splits bar -->
+          <text x="390" y="126" text-anchor="middle" font-size="11.5" font-weight="600" fill="#6b7280" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">12 splits total (after partition pruning)</text>
+          <!-- split chips -->
+          <rect x="110" y="132" width="34" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="127" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s1</text>
+          <rect x="150" y="132" width="34" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="167" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s2</text>
+          <rect x="190" y="132" width="34" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="207" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s3</text>
+          <rect x="230" y="132" width="34" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="247" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s4</text>
+          <rect x="270" y="132" width="34" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="287" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s5</text>
+          <rect x="310" y="132" width="34" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="327" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s6</text>
+          <rect x="350" y="132" width="34" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="367" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s7</text>
+          <rect x="390" y="132" width="34" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="407" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s8</text>
+          <rect x="430" y="132" width="34" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="447" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s9</text>
+          <rect x="470" y="132" width="38" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="489" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s10</text>
+          <rect x="514" y="132" width="38" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="533" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s11</text>
+          <rect x="558" y="132" width="38" height="18" rx="4" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="577" y="145" text-anchor="middle" font-size="10" fill="#0C4A43" font-family="monospace">s12</text>
+          <!-- no splits: workers 4 gets nothing -->
+          <rect x="630" y="132" width="110" height="18" rx="4" fill="#f0f0f0" stroke="#d0d0d0" stroke-width="1" stroke-dasharray="4,3"/>
+          <text x="685" y="145" text-anchor="middle" font-size="10" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">no splits assigned</text>
+
+          <!-- arrows to workers -->
+          <line x1="247" y1="150" x2="127" y2="210" stroke="#2f6fb8" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr5)"/>
+          <line x1="367" y1="150" x2="325" y2="210" stroke="#2f6fb8" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr5)"/>
+          <line x1="490" y1="150" x2="530" y2="210" stroke="#2f6fb8" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr5)"/>
+          <line x1="685" y1="150" x2="685" y2="210" stroke="#d0d0d0" stroke-width="1.3" stroke-dasharray="4,3"/>
+
+          <!-- Worker boxes -->
+          <rect x="50" y="210" width="155" height="68" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
+          <text x="128" y="230" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0C4A43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Worker 1 — Task ✓</text>
+          <text x="128" y="247" text-anchor="middle" font-size="10.5" fill="#0C4A43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">splits: s1–s4 → 4 drivers</text>
+          <text x="128" y="263" text-anchor="middle" font-size="10" fill="#1F9E8F" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">node-scheduler assigns splits</text>
+
+          <rect x="248" y="210" width="155" height="68" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
+          <text x="326" y="230" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0C4A43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Worker 2 — Task ✓</text>
+          <text x="326" y="247" text-anchor="middle" font-size="10.5" fill="#0C4A43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">splits: s5–s8 → 4 drivers</text>
+          <text x="326" y="263" text-anchor="middle" font-size="10" fill="#1F9E8F" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">node-scheduler assigns splits</text>
+
+          <rect x="446" y="210" width="155" height="68" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
+          <text x="524" y="230" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0C4A43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Worker 3 — Task ✓</text>
+          <text x="524" y="247" text-anchor="middle" font-size="10.5" fill="#0C4A43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">splits: s9–s12 → 4 drivers</text>
+          <text x="524" y="263" text-anchor="middle" font-size="10" fill="#1F9E8F" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">node-scheduler assigns splits</text>
+
+          <rect x="630" y="210" width="120" height="68" rx="7" fill="#f6f7f9" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="5,4"/>
+          <text x="690" y="236" text-anchor="middle" font-size="11.5" font-weight="700" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Worker 4</text>
+          <text x="690" y="253" text-anchor="middle" font-size="10.5" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">no task created</text>
+          <text x="690" y="269" text-anchor="middle" font-size="10" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">(0 splits assigned)</text>
+
+          <!-- Formula callout -->
+          <rect x="188" y="290" width="404" height="16" rx="4" fill="none"/>
+          <text x="390" y="302" text-anchor="middle" font-size="11.5" font-weight="600" fill="#444b59" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Tasks = workers receiving ≥1 split (3 of 4) · Drivers per task = splits assigned to that worker</text>
+
+          <defs>
+            <marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 Z" fill="#2f6fb8"/>
+            </marker>
+          </defs>
+        </svg>
+        <figcaption style="margin-top:10px;font-size:13px;color:#5a6273;"><b>Figure 5a — Source stage task count.</b> The coordinator enumerates splits from the connector (after predicate/partition pruning) and the node scheduler distributes them across workers. Each worker that receives at least one split gets exactly one task for this stage. If splits &lt; workers, some workers get no task at all. Within a task, each split becomes one driver — so drivers per task = splits assigned, not 1.</figcaption>
+      </figure>
+
+      <!-- ── DIAGRAM 5b: Exchange stage ── -->
+      <figure style="margin:32px 0;">
+        <svg viewBox="0 0 780 340" xmlns="http://www.w3.org/2000/svg" style="width:100%;border-radius:8px;border:1px solid #e3e6eb;background:#f9fafb;display:block;" aria-label="Exchange stage task count: hash partitions drive tasks">
+          <text x="390" y="28" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1a1d24" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Exchange Stage — task count set by hash partition count</text>
+
+          <!-- Upstream workers (mini) -->
+          <rect x="60" y="44" width="90" height="36" rx="5" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+          <text x="105" y="67" text-anchor="middle" font-size="10.5" font-weight="600" fill="#0C4A43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Upstream W1</text>
+          <rect x="180" y="44" width="90" height="36" rx="5" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+          <text x="225" y="67" text-anchor="middle" font-size="10.5" font-weight="600" fill="#0C4A43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Upstream W2</text>
+          <rect x="300" y="44" width="90" height="36" rx="5" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+          <text x="345" y="67" text-anchor="middle" font-size="10.5" font-weight="600" fill="#0C4A43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Upstream W3</text>
+
+          <!-- Config callout -->
+          <rect x="480" y="44" width="270" height="52" rx="6" fill="#FBF4DC" stroke="#b8860b" stroke-width="1.2"/>
+          <text x="615" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#b8860b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">query.initial-hash-partitions</text>
+          <text x="615" y="81" text-anchor="middle" font-size="11" fill="#444b59" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Set at planning time · default ≈ worker count</text>
+          <text x="615" y="93" text-anchor="middle" font-size="10.5" fill="#6b7280" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">In this example: 3 partitions → 3 tasks</text>
+
+          <!-- Hash partition label -->
+          <text x="280" y="118" text-anchor="middle" font-size="11.5" font-weight="600" fill="#6b7280" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Partitioned exchange: rows routed by hash(key) % num_partitions</text>
+
+          <!-- Partition buckets -->
+          <rect x="80" y="128" width="160" height="36" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
+          <text x="160" y="151" text-anchor="middle" font-size="11.5" font-weight="600" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Partition 0 · hash(key) % 3 = 0</text>
+          <rect x="300" y="128" width="160" height="36" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
+          <text x="380" y="151" text-anchor="middle" font-size="11.5" font-weight="600" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Partition 1 · hash(key) % 3 = 1</text>
+          <rect x="520" y="128" width="160" height="36" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
+          <text x="600" y="151" text-anchor="middle" font-size="11.5" font-weight="600" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Partition 2 · hash(key) % 3 = 2</text>
+
+          <!-- arrows partitions → workers -->
+          <line x1="160" y1="164" x2="128" y2="232" stroke="#7E4FB5" stroke-width="1.4" marker-end="url(#arr6)"/>
+          <line x1="380" y1="164" x2="390" y2="232" stroke="#7E4FB5" stroke-width="1.4" marker-end="url(#arr6)"/>
+          <line x1="600" y1="164" x2="652" y2="232" stroke="#7E4FB5" stroke-width="1.4" marker-end="url(#arr6)"/>
+
+          <!-- Worker task boxes -->
+          <rect x="50" y="232" width="155" height="72" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
+          <text x="128" y="253" text-anchor="middle" font-size="11.5" font-weight="700" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Worker 1 — Task ✓</text>
+          <text x="128" y="270" text-anchor="middle" font-size="10.5" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Owns partition 0</text>
+          <text x="128" y="286" text-anchor="middle" font-size="10" fill="#7E4FB5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">No splits — reads from</text>
+          <text x="128" y="299" text-anchor="middle" font-size="10" fill="#7E4FB5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">upstream exchange buffers</text>
+
+          <rect x="312" y="232" width="155" height="72" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
+          <text x="390" y="253" text-anchor="middle" font-size="11.5" font-weight="700" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Worker 2 — Task ✓</text>
+          <text x="390" y="270" text-anchor="middle" font-size="10.5" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Owns partition 1</text>
+          <text x="390" y="286" text-anchor="middle" font-size="10" fill="#7E4FB5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">No splits — reads from</text>
+          <text x="390" y="299" text-anchor="middle" font-size="10" fill="#7E4FB5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">upstream exchange buffers</text>
+
+          <rect x="574" y="232" width="155" height="72" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
+          <text x="652" y="253" text-anchor="middle" font-size="11.5" font-weight="700" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Worker 3 — Task ✓</text>
+          <text x="652" y="270" text-anchor="middle" font-size="10.5" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Owns partition 2</text>
+          <text x="652" y="286" text-anchor="middle" font-size="10" fill="#7E4FB5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">No splits — reads from</text>
+          <text x="652" y="299" text-anchor="middle" font-size="10" fill="#7E4FB5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">upstream exchange buffers</text>
+
+          <text x="390" y="327" text-anchor="middle" font-size="11.5" font-weight="600" fill="#444b59" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Tasks = min(query.initial-hash-partitions, workers) · No splits, no drivers — exchange buffers only</text>
+
+          <defs>
+            <marker id="arr6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 Z" fill="#7E4FB5"/>
+            </marker>
+          </defs>
+        </svg>
+        <figcaption style="margin-top:10px;font-size:13px;color:#5a6273;"><b>Figure 5b — Exchange stage task count.</b> There are no splits. Instead, the planner sets a hash partition count (controlled by <code>query.initial-hash-partitions</code>, default ≈ worker count). Each partition is routed to exactly one downstream worker task — all rows sharing the same hash bucket land on the same worker. Drivers in these tasks read from HTTP exchange buffers, not from a connector.</figcaption>
+      </figure>
+
+      <!-- ── DIAGRAM 5c: Gather stage ── -->
+      <figure style="margin:32px 0;">
+        <svg viewBox="0 0 780 280" xmlns="http://www.w3.org/2000/svg" style="width:100%;border-radius:8px;border:1px solid #e3e6eb;background:#f9fafb;display:block;" aria-label="Gather stage: always 1 task">
+          <text x="390" y="28" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1a1d24" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Gather Stage — always 1 task, regardless of cluster size</text>
+
+          <!-- Upstream workers -->
+          <rect x="60" y="48" width="120" height="38" rx="5" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+          <text x="120" y="72" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Upstream task W1</text>
+          <rect x="230" y="48" width="120" height="38" rx="5" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+          <text x="290" y="72" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Upstream task W2</text>
+          <rect x="400" y="48" width="120" height="38" rx="5" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+          <text x="460" y="72" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Upstream task W3</text>
+          <rect x="570" y="48" width="120" height="38" rx="5" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+          <text x="630" y="72" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Upstream task W4</text>
+
+          <!-- funnel arrows all to single worker -->
+          <line x1="120" y1="86" x2="342" y2="168" stroke="#C8425A" stroke-width="1.4" marker-end="url(#arr7)"/>
+          <line x1="290" y1="86" x2="358" y2="168" stroke="#C8425A" stroke-width="1.4" marker-end="url(#arr7)"/>
+          <line x1="460" y1="86" x2="400" y2="168" stroke="#C8425A" stroke-width="1.4" marker-end="url(#arr7)"/>
+          <line x1="630" y1="86" x2="418" y2="168" stroke="#C8425A" stroke-width="1.4" marker-end="url(#arr7)"/>
+
+          <!-- Single gather task -->
+          <rect x="270" y="168" width="220" height="68" rx="8" fill="#FAD9DC" stroke="#C8425A" stroke-width="2"/>
+          <text x="380" y="192" text-anchor="middle" font-size="12.5" font-weight="700" fill="#6E1626" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Worker 1 — 1 Task only</text>
+          <text x="380" y="210" text-anchor="middle" font-size="10.5" fill="#6E1626" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Final aggregation / merge</text>
+          <text x="380" y="226" text-anchor="middle" font-size="10" fill="#C8425A" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Planner hardcodes partition count = 1</text>
+
+          <!-- idle workers -->
+          <rect x="50" y="178" width="120" height="48" rx="6" fill="#f6f7f9" stroke="#d1d5db" stroke-width="1.2" stroke-dasharray="5,4"/>
+          <text x="110" y="199" text-anchor="middle" font-size="10.5" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Workers 2–4</text>
+          <text x="110" y="215" text-anchor="middle" font-size="10" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">idle this stage</text>
+
+          <text x="390" y="256" text-anchor="middle" font-size="11.5" font-weight="600" fill="#444b59" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Tasks = 1, always · Partition count hardcoded to 1 by the planner · All other workers idle</text>
+          <text x="390" y="272" text-anchor="middle" font-size="11" fill="#6b7280" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif">Output volume is tiny (e.g., 1 row per GROUP BY key) — no benefit to spreading across workers</text>
+
+          <defs>
+            <marker id="arr7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 Z" fill="#C8425A"/>
+            </marker>
+          </defs>
+        </svg>
+        <figcaption style="margin-top:10px;font-size:13px;color:#5a6273;"><b>Figure 5c — Gather stage task count.</b> The planner sets the exchange partition count to 1, routing all upstream output to a single worker. This is used for final aggregations and any stage where the output is expected to be small. The remaining workers are idle for this stage but may be concurrently running tasks from other stages.</figcaption>
+      </figure>
+
+      <!-- ── Summary table ── -->
+      <div class="tbl-wrap" style="margin:28px 0;">
+        <table>
+          <thead>
+            <tr>
+              <th>Stage type</th>
+              <th>What determines task count</th>
+              <th>Key config / mechanism</th>
+              <th>Drivers per task</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Source</strong> (TableScan)</td>
+              <td>Workers receiving ≥1 split from the connector</td>
+              <td><code>node-scheduler.max-splits-per-node</code>; connector's <code>ConnectorSplitManager</code> controls total splits after predicate pruning</td>
+              <td>= splits assigned to that worker (can be many)</td>
+            </tr>
+            <tr style="background:var(--surface2,#f6f7f9);">
+              <td><strong>Exchange</strong> (partitioned shuffle)</td>
+              <td>Hash partition count set at planning time</td>
+              <td><code>query.initial-hash-partitions</code> (default ≈ worker count); coordinator maps partitions → workers round-robin</td>
+              <td>A few — consuming HTTP exchange buffers only, no splits</td>
+            </tr>
+            <tr>
+              <td><strong>Gather</strong> (final agg / single-output)</td>
+              <td>Always 1, hardcoded by the planner</td>
+              <td>Planner sets partition count = 1; output volume too small to distribute</td>
+              <td>A few — consuming HTTP exchange buffers only</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The total task count for a query is therefore the <em>sum</em> across all stages — typically larger than the worker count (workers carry concurrent tasks from multiple stages), but individual stages can be smaller. The only guarantee is that no single worker ever holds more than one task per stage.</p>
     <section id="auth">
       <h2><span class="num">4</span>Authentication &amp; identity</h2>
 
