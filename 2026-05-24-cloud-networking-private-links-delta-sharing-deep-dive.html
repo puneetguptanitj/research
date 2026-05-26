@@ -346,23 +346,538 @@
         <figcaption><b>Figure 1.</b> The full taxonomy of cloud networking primitives, from edge gateways to in-VPC controls to application-layer sharing. Focus boxes (dark border): Transit Gateway, Interface VPC Endpoint (PrivateLink consumer), and Delta Sharing — the three most architecturally significant for data platform design.</figcaption>
       </figure>
 
-      <h3>The six families in one paragraph each</h3>
+      <h3>The six families — detailed</h3>
 
-      <p><strong>Internet Gateway (IGW).</strong> Attached one-to-one to a VPC. Performs 1:1 NAT between the public IPv4 address assigned to an EC2 instance and its private IP. Scales horizontally and is never a bottleneck. Traffic in both directions traverses the public internet. Subnets with a <code>0.0.0.0/0 → igw-xxx</code> route table entry are "public." Every public-facing load balancer or bastion lives here. Remove the IGW route from any subnet where instances should not be directly reachable from the internet.</p>
+      <!-- ═══════════════════════════ 1. IGW ═══════════════════════════ -->
+      <h3 style="margin-top:32px;padding:9px 14px 9px 18px;background:var(--l-oper-bg);border-left:4px solid #D9772E;border-radius:0 6px 6px 0;font-size:15.5px">① Internet Gateway (IGW)</h3>
 
-      <p><strong>NAT Gateway.</strong> Allows private subnets to initiate outbound connections to the internet (or to other VPCs) without being reachable inbound. Two modes: <em>public NAT</em> (sits in a public subnet, has an Elastic IP, SNATs to that EIP, traffic exits to the internet); <em>private NAT</em> (no EIP, translates source IPs for VPC-to-VPC routing when CIDRs would otherwise overlap). NAT Gateways are zonal; for HA you need one per AZ. Cost: $0.045/hr + $0.045/GB (us-east-1, 2025). The most common waste in AWS bills is routing S3-bound traffic through a NAT Gateway instead of a Gateway Endpoint.</p>
+      <p>The IGW is a horizontally-scaled, redundant, highly-available VPC component. It performs <strong>1:1 static NAT</strong> between an instance's Elastic IP and its private IP in <em>both</em> directions — no port reuse, no ephemeral port state. "1:1" means there is exactly one NAT table entry per Elastic IP: the public IP is simply rewritten to/from the private IP at the packet level. A subnet becomes <em>public</em> the instant its route table gains a <code>0.0.0.0/0 → igw-xxx</code> entry; delete that entry and it becomes private. Crucially, an EC2 instance with <em>no</em> Elastic IP or auto-assigned public IP is invisible to the IGW even inside a public subnet — the IGW has nothing to translate. One VPC, one IGW: you cannot attach two.</p>
+      <p><strong>AWS Hyperplane connection:</strong> There is no central IGW appliance. The address translation logic runs in the <strong>AWS Hyperplane</strong> — the distributed SDN data-plane fabric embedded in every Nitro hypervisor host. Packets are NAT'd at the physical host of the sending or receiving instance. This is why AWS documentation says the IGW "scales horizontally" and is "never a bottleneck": the work is spread across every server in the region that hosts a VPC EC2 instance.</p>
 
-      <p><strong>VPN Gateway &amp; Direct Connect Gateway.</strong> VPN Gateway terminates IPSec/IKEv2 Site-to-Site tunnels to on-premises hardware or software VPN peers; max ~1.25 Gbps per tunnel, multiple tunnels for HA. Direct Connect Gateway attaches to private virtual interfaces on a dedicated fiber circuit — deterministic latency, higher bandwidth (1–100 Gbps), but weeks to provision and expensive. Both are used for hybrid cloud connectivity. Neither helps with cross-account or cross-org connectivity within AWS.</p>
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 760 282" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="igw-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F9E8F"/></marker>
+              <marker id="igw-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C8425A"/></marker>
+            </defs>
+            <text x="380" y="15" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">Internet Gateway — 1:1 NAT, Subnet Visibility, AWS Hyperplane</text>
+            <!-- Internet -->
+            <rect x="10" y="48" width="94" height="172" rx="14" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.5"/>
+            <text x="57" y="104" text-anchor="middle" font-size="26" fill="#8A94A6">🌐</text>
+            <text x="57" y="127" text-anchor="middle" font-size="11" font-weight="700" fill="#5A6273">Internet</text>
+            <text x="57" y="143" text-anchor="middle" font-size="9" fill="#8A94A6">Public IPv4</text>
+            <!-- Arrow Internet ↔ IGW (public level, y=105) -->
+            <line x1="105" y1="105" x2="184" y2="105" stroke="#1F9E8F" stroke-width="2.2" marker-start="url(#igw-grn)" marker-end="url(#igw-grn)"/>
+            <text x="144" y="98" text-anchor="middle" font-size="8.5" fill="#1F9E8F" font-weight="600">in + out</text>
+            <!-- Blocked dashed line at private subnet level (y=211) -->
+            <line x1="105" y1="211" x2="288" y2="211" stroke="#C8425A" stroke-width="1.5" stroke-dasharray="5,4"/>
+            <text x="195" y="204" text-anchor="middle" font-size="8.5" fill="#C8425A">no route → blocked</text>
+            <!-- IGW box -->
+            <rect x="184" y="80" width="98" height="52" rx="8" fill="#FCE4D4" stroke="#D9772E" stroke-width="2"/>
+            <text x="233" y="104" text-anchor="middle" font-size="13" font-weight="700" fill="#7A3D0E">IGW</text>
+            <text x="233" y="120" text-anchor="middle" font-size="9" fill="#9A5020">1:1 static NAT</text>
+            <!-- Hyperplane badge -->
+            <rect x="186" y="138" width="94" height="18" rx="4" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.2"/>
+            <text x="233" y="151" text-anchor="middle" font-size="8.5" font-weight="700" fill="#6B4E06">▶ AWS Hyperplane</text>
+            <!-- Arrow IGW ↔ public subnet -->
+            <line x1="282" y1="105" x2="340" y2="105" stroke="#1F9E8F" stroke-width="2.2" marker-start="url(#igw-grn)" marker-end="url(#igw-grn)"/>
+            <!-- ✕ block at private level -->
+            <text x="296" y="220" text-anchor="middle" font-size="17" fill="#C8425A" font-weight="700">✕</text>
+            <!-- VPC boundary -->
+            <rect x="328" y="28" width="424" height="244" rx="10" fill="none" stroke="#3B73C4" stroke-width="1.8" stroke-dasharray="7,4"/>
+            <text x="340" y="23" font-size="10.5" font-weight="700" fill="#3B73C4">VPC — 10.0.0.0/16</text>
+            <!-- Public Subnet -->
+            <rect x="342" y="44" width="400" height="108" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
+            <text x="354" y="62" font-size="11" font-weight="700" fill="#0C4A43">Public Subnet — 10.0.1.0/24</text>
+            <text x="354" y="77" font-size="9.5" fill="#1F9E8F">Route table:  0.0.0.0/0 → igw-xxx   |   local → local</text>
+            <rect x="490" y="82" width="236" height="60" rx="6" fill="#fff" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="502" y="100" font-size="10.5" font-weight="700" fill="#0C4A43">EC2 Instance</text>
+            <text x="502" y="115" font-size="10" fill="#1F9E8F">Elastic IP : 54.23.1.10  (public)</text>
+            <text x="502" y="130" font-size="10" fill="#5A6273">Private IP  : 10.0.1.5</text>
+            <rect x="354" y="92" width="128" height="18" rx="3" fill="#D9772E" fill-opacity="0.15"/>
+            <text x="418" y="105" text-anchor="middle" font-size="10" fill="#7A3D0E" font-weight="700">54.23.1.10 ↔ 10.0.1.5  (1:1)</text>
+            <!-- Private Subnet -->
+            <rect x="342" y="164" width="400" height="100" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
+            <text x="354" y="182" font-size="11" font-weight="700" fill="#432068">Private Subnet — 10.0.2.0/24</text>
+            <text x="354" y="197" font-size="9.5" fill="#7E4FB5">Route table:  local → local  (no 0.0.0.0/0 entry)</text>
+            <rect x="490" y="200" width="236" height="52" rx="6" fill="#fff" stroke="#7E4FB5" stroke-width="1.2"/>
+            <text x="502" y="218" font-size="10.5" font-weight="700" fill="#432068">EC2 Instance</text>
+            <text x="502" y="233" font-size="10" fill="#5A6273">Private IP : 10.0.2.5  (no public IP)</text>
+            <text x="354" y="250" font-size="9" fill="#C8425A">↳ No IGW route → unreachable from the internet regardless of SG rules</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-1.</b> IGW 1:1 static NAT. The IGW itself is stateless — it simply rewrites IP headers. Translation logic runs in the AWS Hyperplane at the source Nitro host; there is no centralized gateway device. A subnet's "public" status is determined solely by its route table entry, not by any subnet property.</figcaption>
+      </figure>
 
-      <p><strong>Transit Gateway (TGW).</strong> A regional hub router. VPCs and VPN connections attach to it; you define route tables per attachment, enabling fine-grained routing policies. TGW supports <em>transitive routing</em> — VPC A can reach VPC C through TGW even if they're not directly peered — which is the core problem VPC Peering cannot solve. Cross-region TGW peering links two regional hubs, enabling a global private backbone. Cost: $0.05/attachment-hour + $0.02/GB (us-east-1). For 10+ VPCs or complex topologies this is almost always cheaper than the N*(N-1)/2 peering mesh it replaces.</p>
+      <!-- ═══════════════════════════ 2. NAT GATEWAY ═══════════════════════════ -->
+      <h3 style="margin-top:32px;padding:9px 14px 9px 18px;background:var(--l-compute-bg);border-left:4px solid #1F9E8F;border-radius:0 6px 6px 0;font-size:15.5px">② NAT Gateway</h3>
 
-      <p><strong>VPC Peering.</strong> A direct, bilateral routing relationship between two VPCs — same account, cross-account, or cross-region. No intermediary; traffic stays on the AWS backbone. The constraint: no transitive routing. If A is peered with B and B is peered with C, A cannot reach C through B; you need an A-C peering. Limit: 125 active peering connections per VPC. Best for simple, stable, two-VPC topologies where you want full network access (all ports/protocols) between the two — e.g., a data plane VPC peered with a shared services VPC. Never build a full-mesh peering beyond ~5 VPCs.</p>
+      <p>A NAT Gateway allows instances in <em>private</em> subnets to initiate outbound connections to the internet or to other VPCs while remaining inbound-unreachable. It performs <strong>SNAT</strong> (Source NAT): it rewrites the source IP of outgoing packets to its own Elastic IP and maintains a connection table to route responses back. Two modes exist: <em>Public NAT</em> (lives in a public subnet, has an EIP, traffic exits to the internet via the subnet's IGW); <em>Private NAT</em> (no EIP, used for VPC-to-VPC routing when address spaces overlap — it translates source IPs so both sides see non-conflicting addresses). NAT Gateways are <strong>zonal resources</strong>: one instance lives in one AZ. For high availability you must deploy one per AZ and configure each private subnet's route table to point at the NAT GW in the <em>same</em> AZ — cross-AZ NAT GW traffic incurs both latency and data transfer charges.</p>
+      <p><strong>AWS Hyperplane connection:</strong> NAT Gateway is one of the first AWS networking services to be explicitly powered by <strong>AWS Hyperplane</strong> — a fleet of Nitro-based bare-metal servers running a distributed, stateful NAT tracking engine. Unlike a software NAT running on a single EC2, the Hyperplane fleet scales out horizontally within the AZ; there is no single-point failure. The "NAT Gateway is highly available within an AZ" property comes directly from Hyperplane's fleet redundancy.</p>
+      <p><strong>Cost trap — S3 via NAT Gateway:</strong> $0.045/hr + $0.045/GB (us-east-1). Every gigabyte of S3 traffic routed through a NAT GW costs $0.045 that a free Gateway VPC Endpoint would eliminate. On a data platform moving 10 TB/day to S3 that is ~$450/day of avoidable cost.</p>
 
-      <p><strong>VPC Endpoints — Gateway vs. Interface.</strong> Gateway Endpoints are free, route-table-based entries that steer S3 and DynamoDB traffic through the AWS backbone — no public internet, no NAT Gateway, no ENI. Interface Endpoints (powered by AWS PrivateLink) are ENIs injected into your subnets with a private IP; DNS overrides make the service hostname resolve to that private IP. AWS rewrites traffic destined for the service endpoint in the hypervisor layer — the traffic goes directly from the consumer's physical host to the provider's NLB backend, with no intermediate proxy. PrivateLink providers expose their service behind a Network Load Balancer and create a VPC Endpoint Service (<code>com.amazonaws.vpce.region.vpce-svc-xxx</code>); consumers create Interface Endpoints pointing at that service name.</p>
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 760 400" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="nat-org" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D9772E"/></marker>
+              <marker id="nat-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C8425A"/></marker>
+              <marker id="nat-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F9E8F"/></marker>
+            </defs>
+            <text x="380" y="15" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">NAT Gateway — Zonal Design, Outbound-Only, AWS Hyperplane</text>
+            <!-- Internet -->
+            <rect x="260" y="22" width="240" height="34" rx="10" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.5"/>
+            <text x="380" y="44" text-anchor="middle" font-size="12" font-weight="600" fill="#5A6273">🌐  Internet (Public IPv4)</text>
+            <!-- Arrow IGW ↔ Internet -->
+            <line x1="380" y1="56" x2="380" y2="72" stroke="#D9772E" stroke-width="2" marker-end="url(#nat-org)"/>
+            <!-- IGW box centered -->
+            <rect x="295" y="74" width="170" height="40" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.8"/>
+            <text x="380" y="90" text-anchor="middle" font-size="11" font-weight="700" fill="#7A3D0E">Internet Gateway (IGW)</text>
+            <text x="380" y="107" text-anchor="middle" font-size="9" fill="#9A5020">Hyperplane · 1:1 NAT · 1 per VPC</text>
+            <!-- Diagonal arrows IGW → each NAT GW -->
+            <line x1="320" y1="114" x2="192" y2="156" stroke="#D9772E" stroke-width="1.8" marker-end="url(#nat-org)"/>
+            <line x1="440" y1="114" x2="568" y2="156" stroke="#D9772E" stroke-width="1.8" marker-end="url(#nat-org)"/>
+            <!-- AZ-a boundary -->
+            <rect x="10" y="128" width="360" height="252" rx="10" fill="none" stroke="#8A94A6" stroke-width="1.4" stroke-dasharray="6,4"/>
+            <text x="190" y="124" text-anchor="middle" font-size="10" font-weight="700" fill="#5A6273">Availability Zone A</text>
+            <!-- AZ-a Public Subnet -->
+            <rect x="24" y="138" width="332" height="94" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.3"/>
+            <text x="36" y="156" font-size="10" font-weight="700" fill="#0C4A43">Public Subnet-A  (10.0.1.0/24)</text>
+            <!-- NAT GW-A -->
+            <rect x="90" y="162" width="200" height="50" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.6"/>
+            <text x="190" y="183" text-anchor="middle" font-size="11" font-weight="700" fill="#7A3D0E">NAT Gateway-A</text>
+            <text x="190" y="198" text-anchor="middle" font-size="9.5" fill="#9A5020">EIP: 54.10.0.1  |  SNAT outbound only</text>
+            <!-- Hyperplane badge NAT-A -->
+            <rect x="92" y="218" width="196" height="16" rx="4" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1"/>
+            <text x="190" y="230" text-anchor="middle" font-size="8.5" font-weight="700" fill="#6B4E06">▶ AWS Hyperplane fleet (zonal, stateful NAT)</text>
+            <!-- AZ-a Private Subnet -->
+            <rect x="24" y="244" width="332" height="126" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.3"/>
+            <text x="36" y="262" font-size="10" font-weight="700" fill="#432068">Private Subnet-A  (10.0.2.0/24)</text>
+            <text x="36" y="277" font-size="9" fill="#7E4FB5">Route: 0.0.0.0/0 → nat-gw-a  |  local → local</text>
+            <rect x="100" y="283" width="180" height="52" rx="5" fill="#fff" stroke="#7E4FB5" stroke-width="1.1"/>
+            <text x="190" y="302" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068">EC2 / ECS / Lambda</text>
+            <text x="190" y="318" text-anchor="middle" font-size="9.5" fill="#5A6273">10.0.2.10  (private only)</text>
+            <rect x="26" y="345" width="334" height="20" rx="4" fill="#FBE9EC"/>
+            <text x="193" y="359" text-anchor="middle" font-size="10" fill="#C8425A" font-weight="600">⚠ Route S3 via Gateway Endpoint — saves $0.045/GB</text>
+            <!-- Arrows in AZ-a (outbound only, upward) -->
+            <line x1="190" y1="283" x2="190" y2="244" stroke="#D9772E" stroke-width="2" marker-end="url(#nat-org)"/>
+            <rect x="200" y="257" width="80" height="18" rx="3" fill="#fff" fill-opacity="0.9"/>
+            <text x="240" y="270" text-anchor="middle" font-size="10" fill="#D9772E" font-weight="700">outbound ↑</text>
+            <line x1="190" y1="162" x2="190" y2="140" stroke="#D9772E" stroke-width="2" marker-end="url(#nat-org)"/>
+            <!-- AZ-b boundary -->
+            <rect x="390" y="128" width="360" height="252" rx="10" fill="none" stroke="#8A94A6" stroke-width="1.4" stroke-dasharray="6,4"/>
+            <text x="570" y="124" text-anchor="middle" font-size="10" font-weight="700" fill="#5A6273">Availability Zone B  (separate NAT GW required for HA)</text>
+            <!-- AZ-b Public Subnet -->
+            <rect x="404" y="138" width="332" height="94" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.3"/>
+            <text x="416" y="156" font-size="10" font-weight="700" fill="#0C4A43">Public Subnet-B  (10.0.3.0/24)</text>
+            <!-- NAT GW-B -->
+            <rect x="470" y="162" width="200" height="50" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.6"/>
+            <text x="570" y="183" text-anchor="middle" font-size="11" font-weight="700" fill="#7A3D0E">NAT Gateway-B</text>
+            <text x="570" y="198" text-anchor="middle" font-size="9.5" fill="#9A5020">EIP: 54.10.0.2  |  SNAT outbound only</text>
+            <!-- Hyperplane badge NAT-B -->
+            <rect x="472" y="218" width="196" height="16" rx="4" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1"/>
+            <text x="570" y="230" text-anchor="middle" font-size="8.5" font-weight="700" fill="#6B4E06">▶ AWS Hyperplane fleet (zonal, stateful NAT)</text>
+            <!-- AZ-b Private Subnet -->
+            <rect x="404" y="244" width="332" height="126" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.3"/>
+            <text x="416" y="262" font-size="10" font-weight="700" fill="#432068">Private Subnet-B  (10.0.4.0/24)</text>
+            <text x="416" y="277" font-size="9" fill="#7E4FB5">Route: 0.0.0.0/0 → nat-gw-b  |  local → local</text>
+            <rect x="480" y="283" width="180" height="52" rx="5" fill="#fff" stroke="#7E4FB5" stroke-width="1.1"/>
+            <text x="570" y="302" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068">EC2 / ECS / Lambda</text>
+            <text x="570" y="318" text-anchor="middle" font-size="9.5" fill="#5A6273">10.0.4.10  (private only)</text>
+            <rect x="406" y="345" width="334" height="20" rx="4" fill="#FBE9EC"/>
+            <text x="573" y="359" text-anchor="middle" font-size="10" fill="#C8425A" font-weight="600">⚠ AZ-b uses nat-gw-b — traffic never crosses AZ</text>
+            <!-- Arrows in AZ-b (outbound only, upward) -->
+            <line x1="570" y1="283" x2="570" y2="244" stroke="#D9772E" stroke-width="2" marker-end="url(#nat-org)"/>
+            <rect x="580" y="257" width="80" height="18" rx="3" fill="#fff" fill-opacity="0.9"/>
+            <text x="620" y="270" text-anchor="middle" font-size="10" fill="#D9772E" font-weight="700">outbound ↑</text>
+            <line x1="570" y1="162" x2="570" y2="140" stroke="#D9772E" stroke-width="2" marker-end="url(#nat-org)"/>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-2.</b> NAT Gateway zonal design. Each AZ requires its own NAT Gateway for HA; private subnets route to the NAT GW in the <em>same</em> AZ. The NAT GW is implemented on an AWS Hyperplane fleet — a pool of Nitro bare-metal servers sharing stateful connection tracking within the AZ. Inbound connections from the internet are blocked; only the private subnet can initiate connections.</figcaption>
+      </figure>
+
+      <!-- ═══════════════════════════ 3. VPN / DX ═══════════════════════════ -->
+      <h3 style="margin-top:32px;padding:9px 14px 9px 18px;background:var(--l-identity-bg);border-left:4px solid #C8425A;border-radius:0 6px 6px 0;font-size:15.5px">③ VPN Gateway &amp; Direct Connect Gateway</h3>
+
+      <p>Both primitives address <strong>hybrid cloud connectivity</strong> — linking an on-premises data center or corporate network to one or more VPCs. They differ radically in provisioning time, cost, bandwidth, and latency predictability. A <em>Virtual Private Gateway (VGW)</em> terminates IPSec/IKEv2 Site-to-Site VPN tunnels. Each VPN connection has two tunnels for redundancy (active/passive or active/active with ECMP); each tunnel supports up to ~1.25 Gbps. VGW integrates directly with on-premises hardware (Cisco, Juniper, Palo Alto) or software VPN appliances. Provisioning takes minutes. A <em>Direct Connect Gateway (DXGW)</em> aggregates one or more dedicated fiber circuits to AWS (1, 10, or 100 Gbps) and can connect them to multiple VPCs across multiple regions — something a VGW cannot do. DX provides deterministic, sub-10 ms latency to the nearest DX location and is the right choice when you need consistent performance for database replication, low-latency trading, or bulk data egress. Provisioning a DX circuit takes weeks to months.</p>
+      <p><strong>Key limitation:</strong> Neither VGW nor DXGW solves cross-account or cross-org connectivity <em>within</em> AWS; they are strictly for reaching resources outside AWS. For multi-VPC routing combine with Transit Gateway (see ④).</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 760 310" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="vpn-org" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D9772E"/></marker>
+              <marker id="vpn-blu" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3B73C4"/></marker>
+            </defs>
+            <text x="380" y="15" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">Hybrid Connectivity — VPN Gateway vs Direct Connect Gateway</text>
+            <!-- On-premises DC -->
+            <rect x="10" y="40" width="138" height="230" rx="10" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.8"/>
+            <text x="79" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="#6E1626">On-Premises</text>
+            <text x="79" y="80" text-anchor="middle" font-size="10" fill="#8A3040">Data Center</text>
+            <rect x="26" y="92" width="106" height="40" rx="5" fill="#fff" stroke="#C8425A" stroke-width="1"/>
+            <text x="79" y="109" text-anchor="middle" font-size="10" fill="#6E1626">VPN Router</text>
+            <text x="79" y="123" text-anchor="middle" font-size="8.5" fill="#8A3040">Cisco / Juniper</text>
+            <rect x="26" y="196" width="106" height="40" rx="5" fill="#fff" stroke="#C8425A" stroke-width="1"/>
+            <text x="79" y="213" text-anchor="middle" font-size="10" fill="#6E1626">Core Switch</text>
+            <text x="79" y="227" text-anchor="middle" font-size="8.5" fill="#8A3040">1–100 Gbps fiber</text>
+            <!-- ── PATH 1: VPN (top) ── -->
+            <!-- IPSec tunnels (two dashed lines offset slightly) -->
+            <line x1="149" y1="107" x2="295" y2="107" stroke="#D9772E" stroke-width="2" stroke-dasharray="8,4" marker-end="url(#vpn-org)"/>
+            <line x1="149" y1="119" x2="295" y2="119" stroke="#D9772E" stroke-width="2" stroke-dasharray="8,4" marker-end="url(#vpn-org)"/>
+            <rect x="152" y="88" width="138" height="20" rx="4" fill="#FBF4DC" stroke="#D9772E" stroke-width="0.8"/>
+            <text x="221" y="103" text-anchor="middle" font-size="10" fill="#7A3D0E" font-weight="600">IPSec/IKEv2  ~1.25 Gbps/tunnel</text>
+            <rect x="152" y="128" width="138" height="18" rx="3" fill="#fff" stroke="#D9772E" stroke-width="0.8"/>
+            <text x="221" y="141" text-anchor="middle" font-size="9.5" fill="#9A5020">2 tunnels for HA  ·  minutes to provision</text>
+            <!-- VGW box -->
+            <rect x="295" y="88" width="120" height="50" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.8"/>
+            <text x="355" y="108" text-anchor="middle" font-size="11" font-weight="700" fill="#7A3D0E">VPN Gateway</text>
+            <text x="355" y="124" text-anchor="middle" font-size="9" fill="#9A5020">(VGW)  IPSec endpoint</text>
+            <!-- Arrow VGW → VPC-A -->
+            <line x1="415" y1="113" x2="488" y2="113" stroke="#D9772E" stroke-width="2" marker-end="url(#vpn-org)"/>
+            <!-- VPC-A (single VPC for VPN path) -->
+            <rect x="488" y="82" width="262" height="62" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.5"/>
+            <text x="619" y="100" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">VPC-A  (10.0.0.0/16)</text>
+            <text x="619" y="115" text-anchor="middle" font-size="9.5" fill="#3B73C4">Private subnets, EC2, RDS</text>
+            <text x="619" y="131" text-anchor="middle" font-size="8.5" fill="#5A6273">Reaches on-prem via VGW route</text>
+            <!-- ── PATH 2: Direct Connect (bottom) ── -->
+            <!-- Fiber to DX Location -->
+            <line x1="149" y1="216" x2="215" y2="216" stroke="#3B73C4" stroke-width="2.5" marker-end="url(#vpn-blu)"/>
+            <rect x="152" y="198" width="62" height="18" rx="3" fill="#fff" stroke="#3B73C4" stroke-width="0.8"/>
+            <text x="183" y="211" text-anchor="middle" font-size="10" fill="#1E3A6B" font-weight="600">fiber</text>
+            <!-- DX Location -->
+            <rect x="215" y="196" width="110" height="42" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.6"/>
+            <text x="270" y="214" text-anchor="middle" font-size="10" font-weight="700" fill="#1E3A6B">DX Location</text>
+            <text x="270" y="228" text-anchor="middle" font-size="8.5" fill="#3B73C4">Cross-connect</text>
+            <!-- Arrow DX Location → DX Gateway -->
+            <line x1="325" y1="217" x2="385" y2="217" stroke="#3B73C4" stroke-width="2" marker-end="url(#vpn-blu)"/>
+            <rect x="320" y="200" width="70" height="16" rx="3" fill="#fff"/>
+            <text x="355" y="212" text-anchor="middle" font-size="10" fill="#3B73C4" font-weight="600">Private VIF</text>
+            <!-- DX Gateway -->
+            <rect x="385" y="196" width="120" height="42" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.8"/>
+            <text x="445" y="214" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">DX Gateway</text>
+            <text x="445" y="229" text-anchor="middle" font-size="8.5" fill="#3B73C4">1–100 Gbps dedicated</text>
+            <!-- Arrows DX GW → VPC-A, VPC-B, VPC-C -->
+            <line x1="505" y1="210" x2="558" y2="192" stroke="#3B73C4" stroke-width="1.8" marker-end="url(#vpn-blu)"/>
+            <line x1="505" y1="217" x2="558" y2="217" stroke="#3B73C4" stroke-width="1.8" marker-end="url(#vpn-blu)"/>
+            <line x1="505" y1="224" x2="558" y2="244" stroke="#3B73C4" stroke-width="1.8" marker-end="url(#vpn-blu)"/>
+            <!-- VPC-A, VPC-B, VPC-C (right side) -->
+            <rect x="558" y="174" width="190" height="36" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.3"/>
+            <text x="653" y="197" text-anchor="middle" font-size="10" font-weight="600" fill="#1E3A6B">VPC-A (us-east-1)</text>
+            <rect x="558" y="198" width="190" height="36" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.3"/>
+            <text x="653" y="221" text-anchor="middle" font-size="10" font-weight="600" fill="#1E3A6B">VPC-B (us-east-1)</text>
+            <rect x="558" y="222" width="190" height="36" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.3"/>
+            <text x="653" y="245" text-anchor="middle" font-size="10" font-weight="600" fill="#1E3A6B">VPC-C (eu-west-1)</text>
+            <text x="653" y="261" text-anchor="middle" font-size="8.5" fill="#3B73C4">DX GW spans accounts &amp; regions</text>
+            <!-- Speed/latency labels -->
+            <rect x="12" y="155" width="134" height="34" rx="5" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1"/>
+            <text x="79" y="170" text-anchor="middle" font-size="8.5" fill="#6B4E06" font-weight="700">VPN: minutes, encrypted</text>
+            <text x="79" y="183" text-anchor="middle" font-size="8.5" fill="#6B4E06">DX: weeks, deterministic</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-3.</b> Hybrid connectivity paths. VPN Gateway provisions in minutes and encrypts in transit (IPSec) but caps at ~1.25 Gbps per tunnel. Direct Connect Gateway provides dedicated fiber with 1–100 Gbps, sub-10ms deterministic latency, and can attach to multiple VPCs across regions — but takes weeks to provision and costs significantly more. Neither runs on AWS Hyperplane (VGW runs on dedicated hardware; DX is physical circuit).</figcaption>
+      </figure>
+
+      <!-- ═══════════════════════════ 4. TRANSIT GATEWAY ═══════════════════════════ -->
+      <h3 style="margin-top:32px;padding:9px 14px 9px 18px;background:var(--l-semantic-bg);border-left:4px solid #C99A1E;border-radius:0 6px 6px 0;font-size:15.5px">④ Transit Gateway (TGW)</h3>
+
+      <p>Transit Gateway is a <strong>regional hub router</strong>. VPCs, VPN connections, and Direct Connect attachments connect to it; TGW route tables define what can reach what. The core property is <strong>transitive routing</strong>: if VPC-A and VPC-C are both attached to the same TGW, VPC-A can reach VPC-C without a direct peering connection between them. TGW also enables fine-grained segmentation: you create multiple route tables (e.g., "prod", "dev", "shared") and associate each attachment with exactly one of them. This replaces the N×(N−1)/2 full-mesh peering problem — ten VPCs need 45 peering connections in a mesh, but only 10 TGW attachments. Cross-region <em>TGW peering</em> links two regional TGWs, extending the hub-and-spoke backbone globally over the AWS backbone (no public internet). Cost: $0.05/attachment-hour + $0.02/GB (us-east-1).</p>
+      <p><strong>AWS Hyperplane connection:</strong> Transit Gateway's data plane is built on <strong>AWS Hyperplane</strong>. Packets from an attached VPC's instance flow through the Nitro hypervisor into the Hyperplane fabric, are looked up against the TGW route table, and forwarded to the destination attachment — all within the AWS physical network with no intermediate router hop visible to the EC2. This is why TGW can deliver line-rate throughput per attachment with sub-millisecond added latency.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 760 430" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="tgw-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/></marker>
+              <marker id="tgw-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F9E8F"/></marker>
+              <marker id="tgw-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C8425A"/></marker>
+            </defs>
+            <text x="380" y="15" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">Transit Gateway — Hub-and-Spoke, Transitive Routing, AWS Hyperplane</text>
+            <!-- TGW hub (center) -->
+            <rect x="268" y="158" width="224" height="96" rx="12" fill="#FCE4D4" stroke="#D9772E" stroke-width="2.2"/>
+            <text x="380" y="185" text-anchor="middle" font-size="14" font-weight="700" fill="#7A3D0E">Transit Gateway</text>
+            <text x="380" y="202" text-anchor="middle" font-size="9.5" fill="#9A5020">Route tables per attachment</text>
+            <text x="380" y="217" text-anchor="middle" font-size="9.5" fill="#9A5020">Transitive routing  ·  $0.05/attach-hr</text>
+            <!-- Hyperplane badge inside TGW -->
+            <rect x="302" y="228" width="156" height="18" rx="5" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.2"/>
+            <text x="380" y="241" text-anchor="middle" font-size="8.5" font-weight="700" fill="#6B4E06">▶ AWS Hyperplane data plane</text>
+            <!-- VPC-A (Prod) — top -->
+            <rect x="292" y="32" width="176" height="50" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.5"/>
+            <text x="380" y="52" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">VPC-A  (Prod)</text>
+            <text x="380" y="68" text-anchor="middle" font-size="9.5" fill="#3B73C4">10.1.0.0/16  |  attachment</text>
+            <!-- VPC-B (Dev) — right -->
+            <rect x="608" y="168" width="144" height="50" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.5"/>
+            <text x="680" y="188" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">VPC-B  (Dev)</text>
+            <text x="680" y="204" text-anchor="middle" font-size="9.5" fill="#3B73C4">10.2.0.0/16</text>
+            <!-- VPC-C (Shared Services) — bottom -->
+            <rect x="292" y="340" width="176" height="50" rx="8" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
+            <text x="380" y="360" text-anchor="middle" font-size="11" font-weight="700" fill="#0C4A43">VPC-C  (Shared Svcs)</text>
+            <text x="380" y="376" text-anchor="middle" font-size="9.5" fill="#1F9E8F">10.3.0.0/16  |  DNS, monitoring</text>
+            <!-- VPC-D (Mgmt) — left -->
+            <rect x="10" y="168" width="152" height="50" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.5"/>
+            <text x="86" y="188" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">VPC-D  (Mgmt)</text>
+            <text x="86" y="204" text-anchor="middle" font-size="9.5" fill="#3B73C4">10.4.0.0/16</text>
+            <!-- On-prem VPN attachment — bottom-right -->
+            <rect x="590" y="330" width="162" height="50" rx="8" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.5"/>
+            <text x="671" y="350" text-anchor="middle" font-size="10.5" font-weight="700" fill="#6E1626">On-Prem VPN</text>
+            <text x="671" y="366" text-anchor="middle" font-size="9" fill="#8A3040">Site-to-Site IPSec</text>
+            <!-- TGW route table inset (bottom-left) -->
+            <rect x="10" y="290" width="220" height="125" rx="8" fill="#f6f7f9" stroke="#D5D9E0" stroke-width="1.2"/>
+            <text x="120" y="308" text-anchor="middle" font-size="10" font-weight="700" fill="#1a1d24">TGW Route Table (Prod)</text>
+            <text x="20" y="324" font-size="9.5" fill="#5A6273">Destination         Next Hop</text>
+            <line x1="18" y1="328" x2="222" y2="328" stroke="#D5D9E0" stroke-width="1"/>
+            <text x="20" y="342" font-size="9.5" fill="#1a1d24">10.1.0.0/16</text><text x="140" y="342" font-size="9.5" fill="#3B73C4">vpc-a attach</text>
+            <text x="20" y="356" font-size="9.5" fill="#1a1d24">10.3.0.0/16</text><text x="140" y="356" font-size="9.5" fill="#1F9E8F">vpc-c attach</text>
+            <text x="20" y="370" font-size="9.5" fill="#1a1d24">10.4.0.0/16</text><text x="140" y="370" font-size="9.5" fill="#3B73C4">vpc-d attach</text>
+            <text x="20" y="384" font-size="9.5" fill="#1a1d24">192.168.0.0/16</text><text x="140" y="384" font-size="9.5" fill="#C8425A">vpn attach</text>
+            <text x="20" y="402" font-size="9.5" fill="#C8425A" font-style="italic">VPC-B excluded → isolated dev</text>
+            <!-- ARROWS: VPCs ↔ TGW -->
+            <!-- VPC-A ↔ TGW (top) -->
+            <line x1="380" y1="82" x2="380" y2="158" stroke="#5A6273" stroke-width="2" marker-start="url(#tgw-arr)" marker-end="url(#tgw-arr)"/>
+            <!-- VPC-B ↔ TGW (right) -->
+            <line x1="608" y1="193" x2="492" y2="206" stroke="#5A6273" stroke-width="2" marker-start="url(#tgw-arr)" marker-end="url(#tgw-arr)"/>
+            <!-- VPC-C ↔ TGW (bottom) -->
+            <line x1="380" y1="340" x2="380" y2="254" stroke="#5A6273" stroke-width="2" marker-start="url(#tgw-arr)" marker-end="url(#tgw-arr)"/>
+            <!-- VPC-D ↔ TGW (left) -->
+            <line x1="162" y1="193" x2="268" y2="206" stroke="#5A6273" stroke-width="2" marker-start="url(#tgw-arr)" marker-end="url(#tgw-arr)"/>
+            <!-- VPN ↔ TGW -->
+            <line x1="600" y1="348" x2="492" y2="248" stroke="#C8425A" stroke-width="1.8" stroke-dasharray="6,3" marker-start="url(#tgw-arr)" marker-end="url(#tgw-arr)"/>
+            <!-- Highlighted transitive path: VPC-A → TGW → VPC-C (green) -->
+            <line x1="380" y1="82" x2="380" y2="154" stroke="#1F9E8F" stroke-width="3.5" marker-end="url(#tgw-grn)" opacity="0.7"/>
+            <line x1="380" y1="254" x2="380" y2="340" stroke="#1F9E8F" stroke-width="3.5" marker-end="url(#tgw-grn)" opacity="0.7"/>
+            <!-- Transitive label: positioned RIGHT of TGW box, clear of all content -->
+            <rect x="498" y="172" width="152" height="46" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.8"/>
+            <text x="574" y="192" text-anchor="middle" font-size="11" fill="#0C4A43" font-weight="700">✓ Transitive routing</text>
+            <text x="574" y="209" text-anchor="middle" font-size="10" fill="#1F9E8F">VPC-A → TGW → VPC-C</text>
+            <!-- Small connector line from label to TGW right edge -->
+            <line x1="492" y1="206" x2="498" y2="206" stroke="#1F9E8F" stroke-width="1.5" stroke-dasharray="3,2"/>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-4.</b> Transit Gateway hub-and-spoke. All four VPCs and the on-premises VPN share one regional router. The green highlighted path shows transitive routing: VPC-A reaches VPC-C through TGW without a direct A↔C peering. The TGW route table for "Prod" excludes VPC-B — enforcing environment isolation. The TGW data plane runs on AWS Hyperplane, delivering sub-millisecond forwarding latency.</figcaption>
+      </figure>
+
+      <!-- ═══════════════════════════ 5. VPC PEERING ═══════════════════════════ -->
+      <h3 style="margin-top:32px;padding:9px 14px 9px 18px;background:var(--l-gov-bg);border-left:4px solid #4A9A3C;border-radius:0 6px 6px 0;font-size:15.5px">⑤ VPC Peering</h3>
+
+      <p>A VPC peering connection creates a <strong>direct, bilateral routing relationship</strong> between two VPCs — same account, cross-account, or cross-region. AWS injects routes into both VPCs' route tables pointing at the peering connection ID; traffic flows directly between the two VPCs on the AWS backbone with no intermediate hop. Security groups in the destination VPC apply normally and can reference the peering connection's CIDR or use the peer's security group ID (same-region only). The hard constraints are: (1) <strong>no transitive routing</strong> — if A↔B and B↔C are peered, A cannot reach C through B; AWS explicitly blocks it; (2) <strong>CIDR overlap is forbidden</strong> — if 10.0.0.0/16 is used in both VPCs, the peering request is rejected; (3) the <strong>125-connection limit per VPC</strong>. For a flat mesh of N VPCs you need N×(N−1)/2 connections — 10 VPCs need 45 peerings, 90 route table entries, and security groups referencing 9 peer CIDRs each.</p>
+      <p><strong>When to use it:</strong> Two-VPC, stable topologies. Classic example: a "data plane" VPC peered with a "shared services" VPC (DNS, monitoring, authentication). Never design a full mesh beyond 4–5 VPCs; switch to Transit Gateway.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 760 448" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="peer-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F9E8F"/></marker>
+              <marker id="peer-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C8425A"/></marker>
+            </defs>
+            <text x="380" y="15" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">VPC Peering — Bilateral Routing, No Transitive Routing, Mesh Explosion</text>
+
+            <!-- ══ SECTION 1: Simple peering ══ -->
+            <rect x="10" y="22" width="740" height="24" rx="5" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1"/>
+            <text x="380" y="38" text-anchor="middle" font-size="10.5" fill="#0C4A43" font-weight="600">Section 1 — Simple bilateral peering  ✓  Traffic stays on AWS backbone, no intermediate hops</text>
+            <rect x="55" y="54" width="148" height="46" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.6"/>
+            <text x="129" y="82" text-anchor="middle" font-size="14" font-weight="700" fill="#1E3A6B">VPC-A</text>
+            <line x1="203" y1="77" x2="308" y2="77" stroke="#1F9E8F" stroke-width="2.5" marker-start="url(#peer-grn)" marker-end="url(#peer-grn)"/>
+            <rect x="228" y="62" width="58" height="18" rx="4" fill="#fff" stroke="#1F9E8F" stroke-width="1"/>
+            <text x="257" y="75" text-anchor="middle" font-size="10" fill="#0C4A43" font-weight="600">pcx-ab</text>
+            <rect x="308" y="54" width="148" height="46" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.6"/>
+            <text x="382" y="82" text-anchor="middle" font-size="14" font-weight="700" fill="#1E3A6B">VPC-B</text>
+            <rect x="530" y="54" width="220" height="46" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="640" y="73" text-anchor="middle" font-size="10.5" fill="#0C4A43" font-weight="600">✓ A reaches B directly</text>
+            <text x="640" y="90" text-anchor="middle" font-size="10" fill="#5A6273">No hops · SGs apply normally</text>
+
+            <!-- ══ SECTION 2: No transitive routing ══ -->
+            <line x1="10" y1="112" x2="750" y2="112" stroke="#D5D9E0" stroke-width="1.2"/>
+            <rect x="10" y="116" width="740" height="24" rx="5" fill="#FBE9EC" stroke="#C8425A" stroke-width="1"/>
+            <text x="380" y="132" text-anchor="middle" font-size="10.5" fill="#C8425A" font-weight="600">Section 2 — No transitive routing  ✕  The fundamental VPC Peering constraint</text>
+
+            <!-- VPC boxes (large, clearly spaced) at y=188–234 -->
+            <rect x="50" y="188" width="148" height="46" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.6"/>
+            <text x="124" y="216" text-anchor="middle" font-size="14" font-weight="700" fill="#1E3A6B">VPC-A</text>
+            <rect x="278" y="188" width="148" height="46" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.6"/>
+            <text x="352" y="216" text-anchor="middle" font-size="14" font-weight="700" fill="#1E3A6B">VPC-B</text>
+            <rect x="506" y="188" width="148" height="46" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.6"/>
+            <text x="580" y="216" text-anchor="middle" font-size="14" font-weight="700" fill="#1E3A6B">VPC-C</text>
+
+            <!-- pcx-ab and pcx-bc arrows (below boxes to keep top clean) -->
+            <line x1="198" y1="225" x2="278" y2="225" stroke="#1F9E8F" stroke-width="2.3" marker-start="url(#peer-grn)" marker-end="url(#peer-grn)"/>
+            <rect x="214" y="231" width="58" height="18" rx="4" fill="#fff" stroke="#1F9E8F" stroke-width="1"/>
+            <text x="243" y="244" text-anchor="middle" font-size="10" fill="#0C4A43" font-weight="600">pcx-ab</text>
+            <line x1="426" y1="225" x2="506" y2="225" stroke="#1F9E8F" stroke-width="2.3" marker-start="url(#peer-grn)" marker-end="url(#peer-grn)"/>
+            <rect x="442" y="231" width="58" height="18" rx="4" fill="#fff" stroke="#1F9E8F" stroke-width="1"/>
+            <text x="471" y="244" text-anchor="middle" font-size="10" fill="#0C4A43" font-weight="600">pcx-bc</text>
+
+            <!-- Blocked arc curves HIGH above the VPC boxes (peaks at y=150) -->
+            <path d="M 124 188 Q 352 148 580 188" stroke="#C8425A" stroke-width="2.2" fill="none" stroke-dasharray="8,5" marker-end="url(#peer-red)"/>
+
+            <!-- Blocked label — solid-fill background rect ABOVE arc peak -->
+            <rect x="249" y="148" width="206" height="22" rx="5" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.5"/>
+            <text x="352" y="163" text-anchor="middle" font-size="11" fill="#C8425A" font-weight="700">✕  A cannot reach C through B</text>
+            <rect x="262" y="172" width="180" height="18" rx="4" fill="#fff" stroke="#f0c6ce" stroke-width="1"/>
+            <text x="352" y="184" text-anchor="middle" font-size="10" fill="#C8425A">Need a direct pcx-ac peering</text>
+
+            <!-- Explanation strip -->
+            <rect x="50" y="256" width="604" height="22" rx="5" fill="#fff" stroke="#f0c6ce" stroke-width="1.2"/>
+            <text x="352" y="271" text-anchor="middle" font-size="10" fill="#C8425A">AWS blocks route propagation through a peering — or use Transit Gateway to avoid managing the explosion</text>
+
+            <!-- ══ SECTION 3: Mesh explosion ══ -->
+            <line x1="10" y1="288" x2="750" y2="288" stroke="#D5D9E0" stroke-width="1.2"/>
+            <rect x="10" y="292" width="740" height="24" rx="5" fill="#f0f4f8" stroke="#D5D9E0" stroke-width="1"/>
+            <text x="380" y="308" text-anchor="middle" font-size="10.5" fill="#5A6273" font-weight="600">Section 3 — Full mesh:  N×(N−1)/2 connections  (why meshes don't scale)</text>
+
+            <!-- Pentagon of 5 VPCs — larger boxes, bigger labels -->
+            <rect x="218" y="320" width="68" height="38" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="252" y="344" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">VPC-1</text>
+            <rect x="328" y="354" width="68" height="38" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="362" y="378" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">VPC-2</text>
+            <rect x="288" y="400" width="68" height="38" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="322" y="424" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">VPC-3</text>
+            <rect x="148" y="400" width="68" height="38" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="182" y="424" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">VPC-4</text>
+            <rect x="108" y="354" width="68" height="38" rx="6" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="142" y="378" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">VPC-5</text>
+
+            <!-- All 10 peering lines (using box centers) -->
+            <line x1="252" y1="358" x2="362" y2="358" stroke="#8A94A6" stroke-width="1.3"/>
+            <line x1="252" y1="358" x2="322" y2="400" stroke="#8A94A6" stroke-width="1.3"/>
+            <line x1="252" y1="358" x2="182" y2="400" stroke="#8A94A6" stroke-width="1.3"/>
+            <line x1="252" y1="358" x2="142" y2="373" stroke="#8A94A6" stroke-width="1.3"/>
+            <line x1="362" y1="392" x2="322" y2="400" stroke="#8A94A6" stroke-width="1.3"/>
+            <line x1="362" y1="392" x2="182" y2="419" stroke="#8A94A6" stroke-width="1.3"/>
+            <line x1="362" y1="373" x2="142" y2="373" stroke="#8A94A6" stroke-width="1.3"/>
+            <line x1="322" y1="438" x2="182" y2="438" stroke="#8A94A6" stroke-width="1.3"/>
+            <line x1="322" y1="419" x2="142" y2="392" stroke="#8A94A6" stroke-width="1.3"/>
+            <line x1="182" y1="419" x2="142" y2="392" stroke="#8A94A6" stroke-width="1.3"/>
+
+            <!-- Annotation box right side -->
+            <rect x="458" y="320" width="292" height="120" rx="9" fill="#FBE9EC" stroke="#f0c6ce" stroke-width="1.4"/>
+            <text x="604" y="342" text-anchor="middle" font-size="11.5" font-weight="700" fill="#C8425A">Mesh cost grows quadratically</text>
+            <text x="604" y="362" text-anchor="middle" font-size="11" fill="#1a1d24">N =  5   →    10 peerings</text>
+            <text x="604" y="380" text-anchor="middle" font-size="11" fill="#1a1d24">N = 10  →    45 peerings</text>
+            <text x="604" y="398" text-anchor="middle" font-size="11" fill="#1a1d24">N = 20  →  190 peerings</text>
+            <line x1="466" y1="408" x2="742" y2="408" stroke="#f0c6ce" stroke-width="1"/>
+            <text x="604" y="424" text-anchor="middle" font-size="10" fill="#C8425A">+ 2 route entries &amp; SG rules per peering</text>
+            <text x="604" y="440" text-anchor="middle" font-size="11" fill="#C8425A" font-weight="700">→ Use Transit Gateway above N = 5</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-5.</b> VPC Peering mechanics. Section 1: simple bilateral peering works; traffic stays on the AWS backbone. Section 2: the no-transitive-routing constraint — AWS explicitly prohibits route propagation through a peering connection, requiring direct A↔C peering. Section 3: the N×(N−1)/2 mesh explosion — at 10 VPCs the management overhead (45 connections, 90 route entries, 9 peer CIDRs per security group) becomes untenable. Switch to Transit Gateway beyond 5 VPCs.</figcaption>
+      </figure>
+
+      <!-- ═══════════════════════════ 6. VPC ENDPOINTS ═══════════════════════════ -->
+      <h3 style="margin-top:32px;padding:9px 14px 9px 18px;background:var(--l-catalog-bg);border-left:4px solid #7E4FB5;border-radius:0 6px 6px 0;font-size:15.5px">⑥ VPC Endpoints — Gateway vs. Interface (PrivateLink)</h3>
+
+      <p>Both types keep traffic off the public internet, but they work through completely different mechanisms. A <strong>Gateway Endpoint</strong> is a free route-table-based construct: AWS injects a "prefix list" entry (a managed set of IP ranges for S3 or DynamoDB) into route tables you specify, redirecting matching traffic through the endpoint rather than the IGW or NAT GW. No ENI, no DNS change, no security group — the endpoint is invisible to the application. Access policy is controlled by an endpoint IAM policy and by the bucket's <code>aws:SourceVpce</code> condition key. Only S3 and DynamoDB are supported. An <strong>Interface Endpoint</strong> (powered by AWS PrivateLink) creates one or more ENIs in your subnets — real network interfaces with private IPs from your subnet's CIDR. AWS simultaneously overrides the service's public DNS name so it resolves to the ENI's private IP inside the VPC. The application connects to the same hostname (e.g., <code>s3.us-east-1.amazonaws.com</code>), but the VPC Resolver returns the ENI IP rather than the public IP. Traffic from the instance's Nitro hypervisor goes to the ENI, enters the Hyperplane fabric, and is forwarded directly to the provider's NLB backend — the packet never leaves the AWS data center.</p>
+      <p><strong>AWS Hyperplane connection:</strong> Interface Endpoints and PrivateLink are the canonical Hyperplane use case. The connection from the consumer ENI to the provider NLB is entirely within Hyperplane — a distributed NAT at the consumer's host forwards the packet over the physical inter-host fabric to the provider's NLB target. There is no intermediate proxy or gateway appliance. This is what makes PrivateLink both low-latency and infinitely scalable.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 760 390" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="ep-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4A9A3C"/></marker>
+              <marker id="ep-pur" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7E4FB5"/></marker>
+              <marker id="ep-amb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C99A1E"/></marker>
+            </defs>
+            <text x="380" y="15" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">VPC Endpoints — Gateway (free) vs Interface / PrivateLink (Hyperplane)</text>
+            <!-- Divider -->
+            <line x1="380" y1="28" x2="380" y2="385" stroke="#D5D9E0" stroke-width="1.5" stroke-dasharray="5,4"/>
+            <!-- ═══ LEFT: Gateway Endpoint ═══ -->
+            <text x="190" y="38" text-anchor="middle" font-size="11.5" font-weight="700" fill="#4A9A3C">Gateway Endpoint  (FREE)</text>
+            <!-- VPC-left boundary -->
+            <rect x="10" y="46" width="356" height="162" rx="9" fill="none" stroke="#3B73C4" stroke-width="1.5" stroke-dasharray="6,3"/>
+            <text x="22" y="41" font-size="9.5" fill="#3B73C4" font-weight="700">VPC</text>
+            <!-- Private subnet left -->
+            <rect x="22" y="56" width="200" height="142" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.3"/>
+            <text x="34" y="73" font-size="10" font-weight="700" fill="#432068">Private Subnet</text>
+            <!-- EC2 left -->
+            <rect x="34" y="80" width="176" height="46" rx="5" fill="#fff" stroke="#7E4FB5" stroke-width="1"/>
+            <text x="122" y="100" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068">EC2 / Spark Worker</text>
+            <text x="122" y="115" text-anchor="middle" font-size="9.5" fill="#5A6273">reads from S3</text>
+            <!-- Route table entry -->
+            <rect x="34" y="136" width="176" height="50" rx="5" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1"/>
+            <text x="122" y="153" text-anchor="middle" font-size="9.5" font-weight="700" fill="#234D1A">Route Table</text>
+            <text x="122" y="167" text-anchor="middle" font-size="9" fill="#234D1A">pl-xxxxx → vpce-xxx</text>
+            <text x="122" y="180" text-anchor="middle" font-size="8.5" fill="#4A9A3C">(S3 prefix list — no ENI)</text>
+            <!-- Arrow EC2 → Route table → AWS backbone → S3 -->
+            <line x1="122" y1="126" x2="122" y2="136" stroke="#4A9A3C" stroke-width="1.8" marker-end="url(#ep-grn)"/>
+            <!-- AWS backbone label in left half -->
+            <rect x="236" y="78" width="118" height="52" rx="6" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.2"/>
+            <text x="295" y="98" text-anchor="middle" font-size="9.5" font-weight="700" fill="#234D1A">AWS Backbone</text>
+            <text x="295" y="113" text-anchor="middle" font-size="8.5" fill="#4A9A3C">No internet</text>
+            <text x="295" y="126" text-anchor="middle" font-size="8.5" fill="#4A9A3C">No NAT GW</text>
+            <line x1="210" y1="126" x2="236" y2="106" stroke="#4A9A3C" stroke-width="1.8" marker-end="url(#ep-grn)"/>
+            <!-- S3 left -->
+            <rect x="236" y="142" width="118" height="54" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="295" y="163" text-anchor="middle" font-size="10.5" font-weight="700" fill="#3A4252">S3 Bucket</text>
+            <text x="295" y="178" text-anchor="middle" font-size="8.5" fill="#5A6273">+ DynamoDB</text>
+            <text x="295" y="192" text-anchor="middle" font-size="8.5" fill="#8A94A6">(only these 2 services)</text>
+            <line x1="295" y1="130" x2="295" y2="142" stroke="#4A9A3C" stroke-width="1.8" marker-end="url(#ep-grn)"/>
+            <!-- Cost badge left -->
+            <rect x="10" y="220" width="356" height="38" rx="7" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.2"/>
+            <text x="188" y="236" text-anchor="middle" font-size="10" font-weight="700" fill="#234D1A">✓  FREE — $0.00/GB — always deploy in private subnets</text>
+            <text x="188" y="252" text-anchor="middle" font-size="9" fill="#4A9A3C">No ENI · No DNS change · Endpoint IAM policy + aws:SourceVpce bucket condition</text>
+            <!-- ═══ RIGHT: Interface Endpoint / PrivateLink ═══ -->
+            <text x="570" y="38" text-anchor="middle" font-size="11.5" font-weight="700" fill="#7E4FB5">Interface Endpoint  (PrivateLink)</text>
+            <!-- VPC-right boundary -->
+            <rect x="390" y="46" width="356" height="162" rx="9" fill="none" stroke="#3B73C4" stroke-width="1.5" stroke-dasharray="6,3"/>
+            <text x="402" y="41" font-size="9.5" fill="#3B73C4" font-weight="700">Consumer VPC</text>
+            <!-- Private subnet right -->
+            <rect x="402" y="56" width="170" height="142" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.3"/>
+            <text x="414" y="73" font-size="10" font-weight="700" fill="#432068">Private Subnet</text>
+            <!-- EC2 right -->
+            <rect x="414" y="80" width="146" height="40" rx="5" fill="#fff" stroke="#7E4FB5" stroke-width="1"/>
+            <text x="487" y="98" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068">EC2 / App</text>
+            <text x="487" y="111" text-anchor="middle" font-size="9" fill="#5A6273">GET service.region.aws</text>
+            <!-- DNS resolve step -->
+            <rect x="414" y="130" width="146" height="56" rx="5" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1"/>
+            <text x="487" y="147" text-anchor="middle" font-size="9" font-weight="700" fill="#234D1A">VPC Resolver</text>
+            <text x="487" y="162" text-anchor="middle" font-size="8.5" fill="#1F9E8F">returns 10.0.3.47</text>
+            <text x="487" y="175" text-anchor="middle" font-size="8.5" fill="#5A6273">(ENI private IP!)</text>
+            <!-- DNS query arrow -->
+            <line x1="487" y1="120" x2="487" y2="130" stroke="#4A9A3C" stroke-width="1.8" marker-end="url(#ep-grn)"/>
+            <!-- ENI box -->
+            <rect x="584" y="56" width="154" height="56" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
+            <text x="661" y="76" text-anchor="middle" font-size="10.5" font-weight="700" fill="#432068">Interface Endpoint</text>
+            <text x="661" y="91" text-anchor="middle" font-size="9.5" fill="#7E4FB5">ENI: 10.0.3.47</text>
+            <text x="661" y="106" text-anchor="middle" font-size="8.5" fill="#5A6273">(private IP, your subnet)</text>
+            <!-- Arrow EC2 → ENI (after DNS resolves) -->
+            <line x1="560" y1="100" x2="584" y2="84" stroke="#7E4FB5" stroke-width="2" marker-end="url(#ep-pur)"/>
+            <text x="572" y="95" text-anchor="middle" font-size="7.5" fill="#7E4FB5">HTTPS</text>
+            <!-- Hyperplane layer -->
+            <rect x="584" y="124" width="154" height="38" rx="6" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.5"/>
+            <text x="661" y="140" text-anchor="middle" font-size="9" font-weight="700" fill="#6B4E06">▶ AWS Hyperplane</text>
+            <text x="661" y="154" text-anchor="middle" font-size="8.5" fill="#9A7B0A">Distributed NAT at Nitro host</text>
+            <!-- Provider NLB -->
+            <rect x="584" y="174" width="154" height="34" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.3"/>
+            <text x="661" y="191" text-anchor="middle" font-size="10" font-weight="600" fill="#7A3D0E">Provider NLB</text>
+            <text x="661" y="205" text-anchor="middle" font-size="8.5" fill="#9A5020">Provider VPC backend</text>
+            <!-- Arrows through stack -->
+            <line x1="661" y1="112" x2="661" y2="124" stroke="#C99A1E" stroke-width="2" marker-end="url(#ep-amb)"/>
+            <line x1="661" y1="162" x2="661" y2="174" stroke="#C99A1E" stroke-width="2" marker-end="url(#ep-amb)"/>
+            <!-- Cost / features badge right -->
+            <rect x="390" y="220" width="356" height="38" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+            <text x="568" y="236" text-anchor="middle" font-size="10" font-weight="700" fill="#432068">ENI in your subnet · DNS override · ~$0.01/GB + $0.01/hr per AZ</text>
+            <text x="568" y="252" text-anchor="middle" font-size="9" fill="#7E4FB5">Works for 150+ AWS services · cross-account · overlapping CIDRs OK</text>
+            <!-- Comparison band -->
+            <rect x="10" y="270" width="736" height="110" rx="9" fill="#f6f7f9" stroke="#D5D9E0" stroke-width="1.2"/>
+            <text x="380" y="290" text-anchor="middle" font-size="11" font-weight="700" fill="#1a1d24">Side-by-Side Comparison</text>
+            <text x="190" y="310" text-anchor="middle" font-size="10" font-weight="700" fill="#4A9A3C">Gateway Endpoint</text>
+            <text x="570" y="310" text-anchor="middle" font-size="10" font-weight="700" fill="#7E4FB5">Interface Endpoint</text>
+            <line x1="380" y1="298" x2="380" y2="375" stroke="#D5D9E0" stroke-width="1"/>
+            <text x="190" y="326" text-anchor="middle" font-size="9.5" fill="#5A6273">S3 + DynamoDB only</text>
+            <text x="570" y="326" text-anchor="middle" font-size="9.5" fill="#5A6273">150+ services, any NLB-backed service</text>
+            <text x="190" y="341" text-anchor="middle" font-size="9.5" fill="#5A6273">Route table only — no ENI created</text>
+            <text x="570" y="341" text-anchor="middle" font-size="9.5" fill="#5A6273">ENI injected in your subnet per AZ</text>
+            <text x="190" y="356" text-anchor="middle" font-size="9.5" fill="#5A6273">Free (no hourly, no per-GB charge)</text>
+            <text x="570" y="356" text-anchor="middle" font-size="9.5" fill="#5A6273">~$0.01/hr per AZ + $0.01/GB data</text>
+            <text x="190" y="372" text-anchor="middle" font-size="9.5" fill="#5A6273">No DNS change required</text>
+            <text x="570" y="372" text-anchor="middle" font-size="9.5" fill="#5A6273">Private DNS override (enable on VPC)</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-6.</b> Gateway vs Interface VPC Endpoints. Left: the Gateway Endpoint is a free route-table injection that redirects S3/DynamoDB traffic through the AWS backbone — no ENI, no DNS change, zero cost. Right: the Interface Endpoint creates a real ENI in your subnet; DNS resolves the service hostname to the ENI's private IP; traffic goes through the AWS Hyperplane distributed NAT to the provider's NLB — never touching the public internet. The Hyperplane layer is where PrivateLink's "no centralized proxy" property comes from.</figcaption>
+      </figure>
 
       <div class="callout key">
         <span class="tag">Key distinction</span>
-        <p>VPC Peering and Transit Gateway expose <em>entire networks</em> to each other — any ENI in VPC A can potentially reach any ENI in VPC B (modulo security groups). PrivateLink exposes a <em>single service</em>. This is why PrivateLink is the correct pattern for SaaS exposure, multi-tenant data services, and cross-account access to specific resources: the blast radius is one service, not one network.</p>
+        <p>VPC Peering and Transit Gateway expose <em>entire networks</em> to each other — any ENI in VPC A can potentially reach any ENI in VPC B (modulo security groups). PrivateLink exposes a <em>single service</em>. This is why PrivateLink is the correct pattern for SaaS exposure, multi-tenant data services, and cross-account access to specific resources: the blast radius is one service, not one network. Transit Gateway and VPC Peering are <strong>network-level</strong> connectors; PrivateLink is a <strong>service-level</strong> connector — and that distinction is the most important architectural decision in cloud network design.</p>
       </div>
 
       <h3>Azure equivalents</h3>
