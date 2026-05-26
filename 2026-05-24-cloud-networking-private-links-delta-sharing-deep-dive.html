@@ -600,9 +600,182 @@
       <!-- ═══════════════════════════ 2. NAT GATEWAY ═══════════════════════════ -->
       <h3 style="margin-top:32px;padding:9px 14px 9px 18px;background:var(--l-compute-bg);border-left:4px solid #1F9E8F;border-radius:0 6px 6px 0;font-size:15.5px">② NAT Gateway</h3>
 
-      <p>A NAT Gateway allows instances in <em>private</em> subnets to initiate outbound connections to the internet or to other VPCs while remaining inbound-unreachable. It performs <strong>SNAT</strong> (Source NAT): it rewrites the source IP of outgoing packets to its own Elastic IP and maintains a connection table to route responses back. Two modes exist: <em>Public NAT</em> (lives in a public subnet, has an EIP, traffic exits to the internet via the subnet's IGW); <em>Private NAT</em> (no EIP, used for VPC-to-VPC routing when address spaces overlap — it translates source IPs so both sides see non-conflicting addresses). NAT Gateways are <strong>zonal resources</strong>: one instance lives in one AZ. For high availability you must deploy one per AZ and configure each private subnet's route table to point at the NAT GW in the <em>same</em> AZ — cross-AZ NAT GW traffic incurs both latency and data transfer charges.</p>
-      <p><strong>AWS Hyperplane connection:</strong> NAT Gateway is one of the first AWS networking services to be explicitly powered by <strong>AWS Hyperplane</strong> — a fleet of Nitro-based bare-metal servers running a distributed, stateful NAT tracking engine. Unlike a software NAT running on a single EC2, the Hyperplane fleet scales out horizontally within the AZ; there is no single-point failure. The "NAT Gateway is highly available within an AZ" property comes directly from Hyperplane's fleet redundancy.</p>
-      <p><strong>Cost trap — S3 via NAT Gateway:</strong> $0.045/hr + $0.045/GB (us-east-1). Every gigabyte of S3 traffic routed through a NAT GW costs $0.045 that a free Gateway VPC Endpoint would eliminate. On a data platform moving 10 TB/day to S3 that is ~$450/day of avoidable cost.</p>
+      <h3>What the NAT Gateway actually does — SNAT mechanics</h3>
+      <p>A NAT Gateway performs <strong>SNAT (Source Network Address Translation)</strong>: when a private-subnet instance sends a packet to the internet, the NAT GW rewrites the packet's source address from the instance's private IP (e.g., <code>10.0.2.10</code>) to its own Elastic IP (e.g., <code>54.10.0.1</code>) before handing the packet to the IGW. Simultaneously it records a <em>connection tracking entry</em> — the 5-tuple of protocol, source IP, source port, destination IP, destination port — so it knows how to reverse-translate the response when it arrives. When the remote server replies to <code>54.10.0.1:ephemeral-port</code>, the NAT GW looks up the tracking table, rewrites the destination back to <code>10.0.2.10:original-port</code>, and delivers it to the instance. The instance never sees anything but private addresses; the public EIP exists only on the NAT GW itself.</p>
+      <p>This is <strong>many:1 SNAT</strong>, not 1:1 NAT like the IGW. Hundreds of instances in the private subnet can share a single NAT GW and a single EIP, each identified by a unique source-port in the connection table. The NAT GW supports up to 55,000 simultaneous connections per unique destination (IP + port + protocol), and up to 900 new connections per second to the same destination — beyond that, connection errors appear. AWS documentation calls this "port allocation exhaustion" and it is a real failure mode on high-fan-out workloads (e.g., a Lambda function invoking hundreds of external APIs per second).</p>
+
+      <h3>The public IP lives on the NAT Gateway, not on your instance</h3>
+      <p>Unlike the IGW case — where the <em>instance itself</em> holds an EIP and the IGW maps it — with a NAT Gateway the instance has <strong>no public IP whatsoever</strong>. Running <code>ip addr</code> inside the instance shows only its private RFC-1918 address. The EIP (<code>54.10.0.1</code>) is allocated to and owned by the NAT GW resource. This has an important implication: you cannot allowlist individual private-subnet instance IPs at an external firewall — you can only allowlist the NAT GW's EIP, which all instances in that subnet share. This is intentional (and a security feature), but it means IP-based allowlisting at a partner or SaaS service is tied to your NAT GW EIP, not any particular workload.</p>
+
+      <h3>Why the NAT Gateway must live in a public subnet</h3>
+      <p>This is the question that trips people up most often. A NAT Gateway needs to forward translated packets to the internet. For that to work, the subnet it lives in must have a route to an Internet Gateway (<code>0.0.0.0/0 → igw-xxx</code>). A <em>private</em> subnet has no such route — traffic sent to <code>0.0.0.0/0</code> either hits another NAT GW or goes nowhere. If you placed a public NAT GW in a private subnet, the forwarded packet would have nowhere to go after translation. The NAT GW's own subnet's route table is what gives outbound packets their path to the internet — so that subnet <em>must</em> be public by definition.</p>
+      <p>Said differently: the NAT GW sits at the boundary between the private subnet (no IGW route) and the public subnet (has IGW route). Private instances route their internet-bound traffic to the NAT GW. The NAT GW translates and re-injects the packet into the public subnet, where the IGW then performs its own 1:1 mapping from the NAT GW's EIP to itself and sends the packet out. There are <em>two hops</em> for outbound traffic from a private instance: <strong>private subnet → NAT GW (SNAT) → public subnet → IGW (EIP mapping) → internet</strong>.</p>
+
+      <div class="callout key">
+        <span class="tag">Key insight — NAT Gateway is not an ASG of EC2s</span>
+        <p>A tempting mental model: "NAT Gateway is just a fleet of EC2 instances auto-scaling behind a load balancer to do NAT." This is close enough to reason about <em>why it scales</em> but breaks down when you reason about failure modes or operational properties. NAT Gateway is a <strong>managed network appliance implemented in AWS Hyperplane</strong> — a fleet of Nitro-based bare-metal servers running stateful NAT tracking logic in the hypervisor/networking layer, not in userspace on EC2. There is no OS you could SSH into, no security group on the NAT GW itself (only NACLs apply to the subnet), no AMI, and no instance type choice. It is purpose-built, firmware-level translation logic.</p>
+        <p>The practical consequences: (1) <strong>No single-instance bottleneck</strong> — the Hyperplane fleet distributes connection tracking horizontally, so there is no "hot node" failure within an AZ. (2) <strong>Zonal, not regional</strong> — unlike an ASG that can span AZs, each NAT GW is strictly single-AZ. If the AZ fails, that NAT GW is gone with no automatic failover. (3) <strong>Scales to 100 Gbps</strong> automatically — you never provision capacity or choose an instance size. (4) <strong>Cost at idle</strong> — you pay $0.045/hr just for the NAT GW existing, which an ASG of stopped instances would not charge you for. This is the "always-on network appliance" cost model, not the "pay for compute you run" model.</p>
+      </div>
+
+      <h3>How the Hyperplane fleet shares one EIP — distributed connection tracking</h3>
+      <p>The EIP (<code>54.10.0.1</code>) is a <strong>logical routing label</strong>, not a property of any single physical host. AWS's internal fabric is configured to deliver all packets destined for that EIP to this AZ's Hyperplane fleet — analogous to anycast, but entirely within AWS's network. The fleet can have many Nitro bare-metal nodes, and any of them can handle any connection because they all share a <strong>distributed connection tracking state</strong>. This is the key mechanism: the 5-tuple mapping (<code>EIP:source-port ↔ private-IP:original-port</code>) is replicated across nodes, not stored locally on whichever node first handled the connection. So if Node 1 fails mid-connection, Node 2 already has the tracking entry and can serve the response packet without any disruption to the instance.</p>
+      <p>The EIP's uniqueness guarantee is maintained through <strong>ephemeral source port allocation</strong>. Because every instance's outbound connection is NAT'd to the same EIP but a distinct source port, the full 5-tuple (protocol + EIP + source-port + destination-IP + destination-port) remains unique per connection. The internet sees one address; the fleet's connection table turns that address + port into the correct private instance. This is also why the limit is <em>per destination</em> — two different EC2 instances connecting to the same external server on the same port can exhaust the ~55,000 available ephemeral ports for that destination before they exhaust any other resource.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 468" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="hp-org" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D9772E"/></marker>
+              <marker id="hp-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C8425A"/></marker>
+              <marker id="hp-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F9E8F"/></marker>
+            </defs>
+
+            <text x="410" y="15" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">One EIP, Many Hyperplane Nodes — Distributed Connection Tracking</text>
+
+            <!-- INTERNET BAND -->
+            <rect x="10" y="24" width="800" height="44" rx="8" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.3"/>
+            <text x="100" y="50" text-anchor="middle" font-size="11" font-weight="700" fill="#3A4252">🌐  Internet</text>
+            <rect x="296" y="30" width="228" height="32" rx="6" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.6"/>
+            <text x="410" y="44" text-anchor="middle" font-size="10.5" font-weight="700" fill="#6B4E06">EIP: 54.10.0.1</text>
+            <text x="410" y="57" text-anchor="middle" font-size="8.5" fill="#9A7010">logical routing label — no single physical host</text>
+            <rect x="540" y="28" width="268" height="36" rx="5" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="556" y="42" font-size="9" fill="#5A6273">AWS internal fabric: packets for 54.10.0.1 →</text>
+            <text x="556" y="56" font-size="9" fill="#5A6273">anycast-style delivery to this AZ's Hyperplane fleet</text>
+
+            <!-- Internet ↔ Fleet arrows (outbound up, responses down) -->
+            <line x1="420" y1="68" x2="420" y2="97" stroke="#D9772E" stroke-width="2" marker-end="url(#hp-org)"/>
+            <line x1="404" y1="97" x2="404" y2="68" stroke="#1F9E8F" stroke-width="2" marker-end="url(#hp-grn)"/>
+            <text x="430" y="85" font-size="8.5" fill="#D9772E">outbound</text>
+            <text x="356" y="85" font-size="8.5" fill="#1F9E8F" text-anchor="middle">responses ↑</text>
+
+            <!-- HYPERPLANE FLEET BOX -->
+            <rect x="10" y="100" width="800" height="198" rx="10" fill="#FBF4DC" stroke="#C99A1E" stroke-width="1.8"/>
+            <text x="26" y="118" font-size="10" font-weight="700" fill="#6B4E06" letter-spacing="0.04em">HYPERPLANE FLEET — Availability Zone A  (all nodes share the same connection state)</text>
+
+            <!-- Node 1 -->
+            <rect x="28" y="126" width="182" height="60" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.4"/>
+            <text x="119" y="146" text-anchor="middle" font-size="11" font-weight="700" fill="#7A3D0E">Node 1</text>
+            <text x="119" y="160" text-anchor="middle" font-size="9" fill="#9A5020">Nitro bare-metal</text>
+            <text x="119" y="173" text-anchor="middle" font-size="8.5" fill="#5A6273">handles :12345 → 10.0.2.10</text>
+            <text x="119" y="184" text-anchor="middle" font-size="8.5" fill="#5A6273">also takes over Node 3 entries</text>
+
+            <!-- Node 2 -->
+            <rect x="319" y="126" width="182" height="60" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.4"/>
+            <text x="410" y="146" text-anchor="middle" font-size="11" font-weight="700" fill="#7A3D0E">Node 2</text>
+            <text x="410" y="160" text-anchor="middle" font-size="9" fill="#9A5020">Nitro bare-metal</text>
+            <text x="410" y="173" text-anchor="middle" font-size="8.5" fill="#5A6273">handles :12346 → 10.0.2.11</text>
+            <text x="410" y="184" text-anchor="middle" font-size="8.5" fill="#5A6273"> </text>
+
+            <!-- Node 3 — failed -->
+            <rect x="610" y="126" width="182" height="60" rx="7" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.6" stroke-dasharray="5,3"/>
+            <text x="701" y="146" text-anchor="middle" font-size="11" font-weight="700" fill="#C8425A">Node 3  ✕  failed</text>
+            <text x="701" y="160" text-anchor="middle" font-size="9" fill="#C8425A">node crashed mid-flight</text>
+            <text x="701" y="173" text-anchor="middle" font-size="8.5" fill="#C8425A">state already replicated →</text>
+            <text x="701" y="184" text-anchor="middle" font-size="8.5" fill="#C8425A">Node 1 serves response</text>
+
+            <!-- Shared state replication lines between nodes -->
+            <line x1="210" y1="156" x2="319" y2="156" stroke="#C99A1E" stroke-width="1.2" stroke-dasharray="4,3"/>
+            <text x="264" y="150" text-anchor="middle" font-size="8.5" fill="#9A7010">state sync</text>
+            <line x1="501" y1="156" x2="610" y2="156" stroke="#C99A1E" stroke-width="1.2" stroke-dasharray="4,3"/>
+            <text x="555" y="150" text-anchor="middle" font-size="8.5" fill="#9A7010">state sync</text>
+
+            <!-- Distributed connection tracking table -->
+            <rect x="28" y="200" width="764" height="86" rx="6" fill="#fff" stroke="#C99A1E" stroke-width="1.2"/>
+            <text x="410" y="218" text-anchor="middle" font-size="10" font-weight="700" fill="#6B4E06">Distributed Connection Tracking Table — replicated to all nodes</text>
+            <!-- Column headers -->
+            <text x="44"  y="234" font-size="9" font-weight="700" fill="#3A4252">EIP : src-port</text>
+            <text x="200" y="234" font-size="9" font-weight="700" fill="#3A4252">Private IP : port</text>
+            <text x="370" y="234" font-size="9" font-weight="700" fill="#3A4252">Destination</text>
+            <text x="530" y="234" font-size="9" font-weight="700" fill="#3A4252">Proto</text>
+            <text x="610" y="234" font-size="9" font-weight="700" fill="#3A4252">Owning node</text>
+            <line x1="34" y1="237" x2="786" y2="237" stroke="#D5D9E0" stroke-width="0.8"/>
+            <!-- Row 1 -->
+            <text x="44"  y="251" font-size="9" fill="#5A6273">54.10.0.1:12345</text>
+            <text x="200" y="251" font-size="9" fill="#5A6273">10.0.2.10 : 4400</text>
+            <text x="370" y="251" font-size="9" fill="#5A6273">203.0.113.5 : 443</text>
+            <text x="530" y="251" font-size="9" fill="#5A6273">TCP</text>
+            <text x="610" y="251" font-size="9" fill="#1F9E8F" font-weight="600">Node 1</text>
+            <!-- Row 2 -->
+            <text x="44"  y="265" font-size="9" fill="#5A6273">54.10.0.1:12346</text>
+            <text x="200" y="265" font-size="9" fill="#5A6273">10.0.2.11 : 5500</text>
+            <text x="370" y="265" font-size="9" fill="#5A6273">203.0.113.5 : 443</text>
+            <text x="530" y="265" font-size="9" fill="#5A6273">TCP</text>
+            <text x="610" y="265" font-size="9" fill="#1F9E8F" font-weight="600">Node 2</text>
+            <!-- Row 3 (failed node) -->
+            <text x="44"  y="279" font-size="9" fill="#C8425A">54.10.0.1:12347</text>
+            <text x="200" y="279" font-size="9" fill="#C8425A">10.0.2.12 : 6600</text>
+            <text x="370" y="279" font-size="9" fill="#C8425A">198.51.100.7 : 80</text>
+            <text x="530" y="279" font-size="9" fill="#C8425A">TCP</text>
+            <text x="610" y="279" font-size="9" fill="#C8425A" font-weight="600">Node 3 ✕ → Node 1</text>
+
+            <!-- PRIVATE SUBNET -->
+            <rect x="10" y="310" width="800" height="112" rx="9" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="26" y="328" font-size="10" font-weight="700" fill="#432068">Private Subnet — 10.0.2.0/24</text>
+            <text x="26" y="342" font-size="9" fill="#7E4FB5">Route: 0.0.0.0/0 → NAT GW  |  All instances share EIP 54.10.0.1 outbound — distinguished only by ephemeral source port</text>
+
+            <!-- EC2 boxes -->
+            <rect x="40"  y="350" width="185" height="60" rx="6" fill="#fff" stroke="#7E4FB5" stroke-width="1.1"/>
+            <text x="132" y="369" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068">EC2-1  (10.0.2.10)</text>
+            <text x="132" y="384" text-anchor="middle" font-size="9" fill="#5A6273">src port 4400</text>
+            <text x="132" y="398" text-anchor="middle" font-size="8.5" fill="#D9772E">SNAT → 54.10.0.1 : 12345</text>
+
+            <rect x="317" y="350" width="185" height="60" rx="6" fill="#fff" stroke="#7E4FB5" stroke-width="1.1"/>
+            <text x="409" y="369" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068">EC2-2  (10.0.2.11)</text>
+            <text x="409" y="384" text-anchor="middle" font-size="9" fill="#5A6273">src port 5500</text>
+            <text x="409" y="398" text-anchor="middle" font-size="8.5" fill="#D9772E">SNAT → 54.10.0.1 : 12346</text>
+
+            <rect x="594" y="350" width="185" height="60" rx="6" fill="#fff" stroke="#7E4FB5" stroke-width="1.1"/>
+            <text x="686" y="369" text-anchor="middle" font-size="10.5" font-weight="600" fill="#432068">EC2-3  (10.0.2.12)</text>
+            <text x="686" y="384" text-anchor="middle" font-size="9" fill="#C8425A">src port 6600</text>
+            <text x="686" y="398" text-anchor="middle" font-size="8.5" fill="#C8425A">SNAT → 54.10.0.1 : 12347</text>
+
+            <!-- Arrows EC2 → fleet (outbound, going up) -->
+            <line x1="132" y1="350" x2="119" y2="295" stroke="#D9772E" stroke-width="1.8" marker-end="url(#hp-org)"/>
+            <line x1="409" y1="350" x2="410" y2="295" stroke="#D9772E" stroke-width="1.8" marker-end="url(#hp-org)"/>
+            <line x1="686" y1="350" x2="700" y2="295" stroke="#C8425A" stroke-width="1.8" stroke-dasharray="4,3" marker-end="url(#hp-red)"/>
+
+            <!-- Arrows fleet → EC2 (responses, going down) -->
+            <line x1="106" y1="295" x2="118" y2="350" stroke="#1F9E8F" stroke-width="1.5" marker-end="url(#hp-grn)"/>
+            <line x1="422" y1="295" x2="422" y2="350" stroke="#1F9E8F" stroke-width="1.5" marker-end="url(#hp-grn)"/>
+            <!-- Node 3 failed: response served by Node 1, arrow goes to EC2-3 from Node 1 region -->
+            <line x1="155" y1="295" x2="668" y2="350" stroke="#1F9E8F" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#hp-grn)"/>
+            <rect x="356" y="317" width="148" height="14" rx="3" fill="#fff" fill-opacity="0.9" stroke="#D5D9E0" stroke-width="0.6"/>
+            <text x="430" y="328" text-anchor="middle" font-size="8.5" fill="#1F9E8F" font-weight="600">Node 1 serves response for failed Node 3</text>
+
+            <!-- Bottom footnote -->
+            <rect x="10" y="428" width="800" height="30" rx="5" fill="#f6f7f9" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="410" y="440" text-anchor="middle" font-size="9" fill="#5A6273">Port uniqueness in the 5-tuple is what keeps every connection distinct behind a single EIP. The 55,000-connection-per-destination limit is a per-(EIP, dest-IP, dest-port, protocol) port-space ceiling, not a fleet node ceiling.</text>
+            <text x="410" y="454" text-anchor="middle" font-size="9" fill="#5A6273">EIP is a routing label pointing to the fleet. The internet sees one address; the fleet's distributed table maps every port back to the correct private instance.</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-2b.</b> One EIP across the Hyperplane fleet. The EIP is a logical routing label — AWS's internal fabric delivers packets for <code>54.10.0.1</code> to whichever fleet node is available. Connection tracking state is replicated across nodes, so a node failure (Node 3) is invisible to the instance: another node (Node 1) already holds the tracking entry and serves the response. Source-port uniqueness in the 5-tuple is the mechanism that lets hundreds of private instances share a single EIP without collision.</figcaption>
+      </figure>
+
+      <h3>Public NAT vs Private NAT Gateway</h3>
+      <p><em>Public NAT Gateway</em> is the default and common case: it lives in a public subnet, holds an EIP, and is used to give private-subnet resources outbound internet access. All traffic it forwards exits to the internet via the subnet's IGW.</p>
+      <p><em>Private NAT Gateway</em> has no EIP and never sends traffic to the internet. Its purpose is entirely different: resolving <strong>overlapping CIDR</strong> problems between VPCs connected via Transit Gateway or VPC Peering. Suppose VPC-A (<code>10.0.0.0/16</code>) and VPC-B (<code>10.0.0.0/16</code>) need to communicate — their address spaces overlap, so standard routing cannot differentiate them. A Private NAT GW in one VPC translates the source IP of outgoing packets to an address in a non-overlapping range before they traverse the peering or TGW attachment. The receiving VPC sees a translated source IP and can route responses back. This is a niche but important use case for legacy multi-VPC environments or post-merger integrations where CIDR re-numbering is not feasible.</p>
+
+      <h3>Zonal design and the HA pattern</h3>
+      <p>A NAT Gateway is a <strong>zonal resource</strong>: one NAT GW lives in exactly one Availability Zone and cannot span AZs. AWS guarantees high availability <em>within</em> the AZ (via Hyperplane fleet redundancy) but provides zero protection against AZ failure. The correct HA pattern is: <strong>one NAT GW per AZ</strong>, and each private subnet's route table points to the NAT GW in the <em>same</em> AZ. If AZ-a fails and takes its NAT GW down, only AZ-a private subnets lose internet egress — AZ-b and AZ-c are unaffected because they each have their own NAT GW.</p>
+      <p>A common mistake is deploying a single NAT GW in one AZ and routing all private subnets — including those in other AZs — to it. This saves ~$0.045/hr per skipped NAT GW but creates a single point of failure and adds cross-AZ data transfer charges ($0.01/GB in us-east-1). On a data platform with significant S3 or API traffic, the cross-AZ transfer cost can easily exceed the NAT GW hourly fee within days.</p>
+
+      <h3>Why a private-subnet instance can still fail to reach the internet</h3>
+      <p>Having a route to a NAT GW is necessary but not sufficient. Failure order by frequency:</p>
+      <ol>
+        <li><strong>No <code>0.0.0.0/0 → nat-gw-xxx</code> route in the private subnet's route table</strong> — the most common cause. The NAT GW exists but the subnet was never wired to it. The instance sends internet-bound packets to the local VPC router, which has no route and drops them silently.</li>
+        <li><strong>Security group outbound rules</strong> — security groups on the instance deny outbound traffic on the target port. Default SGs allow all outbound; custom SGs often restrict it.</li>
+        <li><strong>NACL outbound + inbound rules</strong> — stateless, so both directions must be open. Must allow outbound on the destination port and inbound on ephemeral return ports (1024–65535). Forgetting ephemeral inbound silently drops all responses.</li>
+        <li><strong>NAT GW is in wrong AZ</strong> — the route table points to a NAT GW in a different AZ. Traffic flows but incurs cross-AZ charges, and if the remote AZ fails, so does this instance's egress.</li>
+        <li><strong>NAT GW subnet has no IGW route</strong> — the NAT GW was created in a private subnet (misplaced). It exists but can't forward packets anywhere. The NAT GW will show as "available" in the console but traffic silently fails.</li>
+        <li><strong>EIP not associated</strong> — rare, but if the EIP was disassociated after NAT GW creation, outbound packets have no public source address and the IGW rejects them.</li>
+        <li><strong>Connection tracking exhaustion</strong> — high-concurrency workloads hitting the 55,000 simultaneous connections or 900 new connections/sec per destination limit. New connections fail with timeout; existing ones continue normally.</li>
+      </ol>
+      <p>Debug order: route table on private subnet → NAT GW subnet has IGW route → security group outbound → NACL outbound+inbound-ephemeral → NAT GW state is "available" → CloudWatch NAT GW error metrics (<code>ErrorPortAllocation</code>, <code>PacketsDropCount</code>).</p>
+
+      <h3>Cost traps</h3>
+      <p><strong>S3 via NAT Gateway:</strong> $0.045/hr + $0.045/GB (us-east-1). Every gigabyte of S3 traffic routed through a NAT GW costs $0.045 that a free <strong>Gateway VPC Endpoint</strong> would eliminate. On a data platform moving 10 TB/day to S3 that is ~$450/day of avoidable cost. Gateway Endpoints for S3 and DynamoDB are free and should always be deployed in any private subnet that accesses those services — you add a route-table entry pointing S3's prefix list to the endpoint and traffic bypasses the NAT GW entirely.</p>
+      <p><strong>Cross-AZ NAT:</strong> Routing private subnets in AZ-b through a NAT GW in AZ-a incurs $0.01/GB cross-AZ data transfer on top of the normal $0.045/GB NAT processing fee. At scale this is a meaningful cost; always co-locate NAT GW and private subnets in the same AZ.</p>
+      <p><strong>Idle cost:</strong> Unlike EC2, a NAT GW charges $0.045/hr even when zero bytes pass through it. In dev/test environments with many isolated VPCs, idle NAT GWs can become a significant line item. The pattern here is to use a single shared NAT GW per AZ across multiple non-prod VPCs via Transit Gateway, rather than one NAT GW per VPC.</p>
 
       <figure>
         <div class="diagram">
