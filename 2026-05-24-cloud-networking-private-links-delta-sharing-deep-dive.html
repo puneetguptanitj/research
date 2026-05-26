@@ -212,13 +212,13 @@
     <section id="tldr" class="tldr">
       <h2>TL;DR</h2>
       <p>Cloud VPC networking gives you a private, isolated network slice. The primitives you use to connect that slice to the world — or to other slices — each trade off scope, security, cost, and operational burden in distinct ways. Choosing the wrong one is how platforms end up with either an over-exposed attack surface or an $80k/year transit gateway bill for shuffling internal data.</p>
-      <p>Delta Sharing is architecturally interesting precisely because it sidesteps the cross-account/cross-cloud networking problem entirely: instead of requiring a PrivateLink or VPN between two organizations, it vends short-lived, scope-limited object-storage credentials over HTTPS. The recipient only needs to reach the Databricks control plane and cloud object storage — both of which are already reachable over the internet with TLS.</p>
+      <p>Delta Sharing is architecturally interesting because it <em>can</em> sidestep the cross-account/cross-cloud networking problem — but only under a specific storage posture. Instead of requiring a PrivateLink or VPN between two organizations, it vends short-lived, scope-limited pre-signed URLs or STS tokens over HTTPS. Pre-signed URLs are not the same as making a bucket public: they are SigV4-signed, time-limited credential delegations that work even with S3 Block Public Access fully enabled. <strong>However</strong>, if the provider's bucket policy includes an <code>aws:SourceVpce</code> condition — restricting access to traffic that arrives through a specific VPC Endpoint — then pre-signed URL requests arriving from the recipient's internet egress IP are denied outright, regardless of signing. This is the correct posture for a production data lakehouse, and it means Delta Sharing does <em>not</em> eliminate networking work in that case. Databricks addresses this with the <strong>Delta Sharing Network Gateway</strong> (a proxy in the provider's VPC that fetches from the private bucket and streams to recipients over HTTPS) and <strong>NCC + PrivateLink</strong> (private connectivity between workspaces). The accurate framing: Delta Sharing sidesteps cross-org networking when storage is internet-reachable; for VPC-endpoint-only buckets, you still need a gateway proxy or PrivateLink — just at a higher layer than raw VPC peering.</p>
       <ol class="takeaways">
         <li><strong>Internet Gateway ≠ NAT Gateway ≠ VPN Gateway ≠ Transit Gateway.</strong> Each serves a different traffic direction and scope. Conflating them is the root of most network architecture mistakes.</li>
         <li><strong>PrivateLink exposes a specific service, not a network.</strong> This is the critical distinction from VPC Peering: no transitive routing, no broad blast radius, works across overlapping CIDRs. Use it for SaaS patterns and data platform services (Databricks, S3 Interface Endpoint, Redshift).</li>
         <li><strong>VPC Peering is fine for two VPCs; Transit Gateway is the answer beyond that.</strong> The N*(N-1)/2 peering math, combined with the 125-connection limit and no transitive routing, makes peering unworkable at mesh scale.</li>
         <li><strong>"Punching a hole" has a right and a wrong way.</strong> The right way is PrivateLink or a tightly-scoped security group rule with your own service behind an NLB. The wrong way is opening a CIDR range in a NACL without a compensating security group, or enabling full VPC peering when you only need service-level access.</li>
-        <li><strong>Delta Sharing replaces PrivateLink as the connectivity model for cross-org data sharing.</strong> The protocol vends pre-signed URLs / STS tokens scoped to exactly the files the recipient queried — no network plumbing between orgs required. For fully private storage (no public endpoints), a Delta Sharing Network Gateway or NCC + PrivateLink pattern closes the gap.</li>
+        <li><strong>Delta Sharing reduces — but does not always eliminate — cross-org networking work.</strong> The protocol vends pre-signed URLs / STS tokens scoped to exactly the queried files. This works over the internet when storage is internet-reachable (Block Public Access ≠ no pre-signed URLs). But if the provider's bucket policy restricts access via <code>aws:SourceVpce</code> — the right posture for a production lakehouse — internet-originating pre-signed requests are denied. In that case you need a <strong>Delta Sharing Network Gateway</strong> (provider-side proxy) or <strong>NCC + PrivateLink</strong> between workspaces. Delta Sharing still eliminates the need for a <em>bilateral network relationship</em>; it does not eliminate the need to think about storage reachability.</li>
         <li><strong>Gateway VPC Endpoints for S3 are free and should always be deployed</strong> in any private subnet that reads from S3. Using NAT Gateway for S3 traffic instead costs roughly $0.045/GB that could be zero.</li>
       </ol>
     </section>
@@ -351,63 +351,250 @@
       <!-- ═══════════════════════════ 1. IGW ═══════════════════════════ -->
       <h3 style="margin-top:32px;padding:9px 14px 9px 18px;background:var(--l-oper-bg);border-left:4px solid #D9772E;border-radius:0 6px 6px 0;font-size:15.5px">① Internet Gateway (IGW)</h3>
 
-      <p>The IGW is a horizontally-scaled, redundant, highly-available VPC component. It performs <strong>1:1 static NAT</strong> between an instance's Elastic IP and its private IP in <em>both</em> directions — no port reuse, no ephemeral port state. "1:1" means there is exactly one NAT table entry per Elastic IP: the public IP is simply rewritten to/from the private IP at the packet level. A subnet becomes <em>public</em> the instant its route table gains a <code>0.0.0.0/0 → igw-xxx</code> entry; delete that entry and it becomes private. Crucially, an EC2 instance with <em>no</em> Elastic IP or auto-assigned public IP is invisible to the IGW even inside a public subnet — the IGW has nothing to translate. One VPC, one IGW: you cannot attach two.</p>
-      <p><strong>AWS Hyperplane connection:</strong> There is no central IGW appliance. The address translation logic runs in the <strong>AWS Hyperplane</strong> — the distributed SDN data-plane fabric embedded in every Nitro hypervisor host. Packets are NAT'd at the physical host of the sending or receiving instance. This is why AWS documentation says the IGW "scales horizontally" and is "never a bottleneck": the work is spread across every server in the region that hosts a VPC EC2 instance.</p>
+      <h3>What makes a subnet "public"</h3>
+      <p>There is no "public subnet" flag in AWS. A subnet is public if — and only if — its <strong>route table has a <code>0.0.0.0/0 → igw-xxx</code> entry</strong>. Delete that entry and the subnet instantly becomes private. The subnet itself has no property that changes. This is the entire distinction: public subnets route default traffic to an IGW; private subnets route it to a NAT Gateway or nowhere.</p>
 
+      <h3>The public IP does not live on the instance</h3>
+      <p>This is the most common mental model mistake. If you SSH into an EC2 and run <code>ip addr</code> or <code>ifconfig</code>, you will only see the <strong>private IP</strong> (e.g., <code>10.0.1.5</code>). The public IP (e.g., <code>54.23.1.10</code>) exists only in <strong>AWS's mapping table</strong> — it is never configured on the network interface of the instance. The IGW holds this mapping and applies it to every packet crossing the VPC boundary.</p>
+      <p>This has a critical implication: even if an instance is in a public subnet (route table has IGW entry), if it has <em>no public IP assigned</em> — either no auto-assign at launch or no Elastic IP attached — the IGW has nothing to map. The instance is invisible to the internet regardless of route tables or security groups.</p>
+
+      <h3>What the IGW actually does</h3>
+      <p>The IGW performs <strong>1:1 static NAT</strong> in both directions. Inbound: a packet arrives destined for <code>54.23.1.10</code>; the IGW rewrites the destination to <code>10.0.1.5</code> and forwards it into the VPC. Outbound: a packet leaves with source <code>10.0.1.5</code>; the IGW rewrites the source to <code>54.23.1.10</code> before it exits to the internet. Without this translation, the internet would see an RFC-1918 private address as the packet source and have no route back.</p>
+      <p>The IGW has <strong>no IP address of its own</strong>, is not a hop in a traceroute, and has no single-device implementation. It is a <strong>distributed mapping function</strong> — address translation logic embedded in the AWS Hyperplane fabric running across every Nitro hypervisor host in the region. "Internet Gateway" is a conceptual name for a VPC boundary, not a description of a physical appliance. One VPC can have at most one IGW attached.</p>
+
+      <div class="callout key">
+        <span class="tag">Key insight</span>
+        <p>The IGW is really a distributed NAT translation service that marks the logical boundary between your VPC's private address space and the public internet. It would be more technically accurate to call it a "VPC NAT boundary service." The name "gateway" is retained because it is easy to reason about on architecture diagrams — it represents the <em>concept</em> of a boundary crossing even though physically it is metadata that influences AWS Hyperplane behavior.</p>
+      </div>
+
+      <h3>How internet routers know about the public IP — BGP</h3>
+      <p>The IGW has nothing to do with how the internet routes traffic to AWS. That is handled entirely by <strong>BGP (Border Gateway Protocol)</strong> at a completely different layer — AWS's <strong>edge routers</strong> that peer with ISPs and internet exchanges (Equinix, DE-CIX, etc.). AWS owns large blocks of public IP ranges (publicly listed at <code>ip-ranges.amazonaws.com/ip-ranges.json</code>) and announces these prefixes to the global internet via BGP from its edge routers.</p>
+      <p>Internet routers do not have a specific route for your instance's IP like <code>54.23.1.10/32</code>. They hold a route for the aggregated block — something like <code>54.0.0.0/8 → AWS</code>. This <strong>prefix aggregation</strong> keeps the global routing table manageable. Once the packet reaches AWS's network edge, AWS's internal routing takes over and delivers it to the right VPC and IGW. The IGW is never involved in BGP and never speaks to the outside internet directly — by the time a packet reaches the IGW, it has already traversed the entire global routing system and arrived inside AWS's network.</p>
+
+      <h3>Why a public-subnet EC2 can still be unreachable</h3>
+      <p>Having an IGW route + public IP is necessary but not sufficient. In rough order of how often each blocks traffic:</p>
+      <ol>
+        <li><strong>Security Group inbound rules</strong> — the most common cause. No rule allowing the port (22, 443, etc.) means the packet is dropped before reaching the OS. Security groups are stateful, so only inbound rules matter for externally-initiated connections.</li>
+        <li><strong>Network ACLs (NACLs)</strong> — subnet-level, stateless. A NACL must allow inbound on the destination port <em>and</em> outbound on the ephemeral return port range (1024–65535). Forgetting the outbound ephemeral rule silently kills connections.</li>
+        <li><strong>No public IP on the instance</strong> — launched without auto-assign public IP and no Elastic IP attached. The IGW has no mapping to apply.</li>
+        <li><strong>OS-level firewall</strong> — <code>iptables</code> or <code>ufw</code> blocking the port regardless of AWS-level controls.</li>
+        <li><strong>Service not listening</strong> — the connection reaches the OS but nothing is bound to that port.</li>
+        <li><strong>Instance not running / crashed</strong> — no response at the IP/port.</li>
+      </ol>
+      <p>Debug order: route table → security group inbound → NACL in+out → public IP exists → OS firewall → service listening. Security groups catch ~90% of cases.</p>
+
+      <!-- Figure A-1: 1:1 NAT + public IP mapping -->
       <figure>
         <div class="diagram">
-          <svg viewBox="0 0 760 282" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+          <svg viewBox="0 0 800 320" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
             <defs>
               <marker id="igw-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F9E8F"/></marker>
               <marker id="igw-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C8425A"/></marker>
+              <marker id="igw-org" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D9772E"/></marker>
             </defs>
-            <text x="380" y="15" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">Internet Gateway — 1:1 NAT, Subnet Visibility, AWS Hyperplane</text>
+            <text x="400" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">Internet Gateway — 1:1 NAT · Public IP lives in AWS mapping table, NOT on instance</text>
+
             <!-- Internet -->
-            <rect x="10" y="48" width="94" height="172" rx="14" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.5"/>
-            <text x="57" y="104" text-anchor="middle" font-size="26" fill="#8A94A6">🌐</text>
-            <text x="57" y="127" text-anchor="middle" font-size="11" font-weight="700" fill="#5A6273">Internet</text>
-            <text x="57" y="143" text-anchor="middle" font-size="9" fill="#8A94A6">Public IPv4</text>
-            <!-- Arrow Internet ↔ IGW (public level, y=105) -->
-            <line x1="105" y1="105" x2="184" y2="105" stroke="#1F9E8F" stroke-width="2.2" marker-start="url(#igw-grn)" marker-end="url(#igw-grn)"/>
-            <text x="144" y="98" text-anchor="middle" font-size="8.5" fill="#1F9E8F" font-weight="600">in + out</text>
-            <!-- Blocked dashed line at private subnet level (y=211) -->
-            <line x1="105" y1="211" x2="288" y2="211" stroke="#C8425A" stroke-width="1.5" stroke-dasharray="5,4"/>
-            <text x="195" y="204" text-anchor="middle" font-size="8.5" fill="#C8425A">no route → blocked</text>
+            <rect x="10" y="36" width="90" height="180" rx="12" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.5"/>
+            <text x="55" y="90" text-anchor="middle" font-size="22">🌐</text>
+            <text x="55" y="112" text-anchor="middle" font-size="11" font-weight="700" fill="#5A6273">Internet</text>
+            <text x="55" y="128" text-anchor="middle" font-size="9" fill="#8A94A6">BGP-routed</text>
+            <text x="55" y="142" text-anchor="middle" font-size="9" fill="#8A94A6">to AWS edge</text>
+
+            <!-- Arrow: Internet ↔ IGW -->
+            <line x1="100" y1="110" x2="176" y2="110" stroke="#1F9E8F" stroke-width="2.2" marker-start="url(#igw-grn)" marker-end="url(#igw-grn)"/>
+            <text x="138" y="104" text-anchor="middle" font-size="8" fill="#1F9E8F" font-weight="600">in + out</text>
+
+            <!-- Blocked: internet → private subnet -->
+            <line x1="100" y1="230" x2="210" y2="230" stroke="#C8425A" stroke-width="1.5" stroke-dasharray="5,4"/>
+            <text x="155" y="223" text-anchor="middle" font-size="8" fill="#C8425A">no route → blocked</text>
+            <text x="215" y="234" font-size="15" fill="#C8425A" font-weight="700">✕</text>
+
             <!-- IGW box -->
-            <rect x="184" y="80" width="98" height="52" rx="8" fill="#FCE4D4" stroke="#D9772E" stroke-width="2"/>
-            <text x="233" y="104" text-anchor="middle" font-size="13" font-weight="700" fill="#7A3D0E">IGW</text>
-            <text x="233" y="120" text-anchor="middle" font-size="9" fill="#9A5020">1:1 static NAT</text>
-            <!-- Hyperplane badge -->
-            <rect x="186" y="138" width="94" height="18" rx="4" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.2"/>
-            <text x="233" y="151" text-anchor="middle" font-size="8.5" font-weight="700" fill="#6B4E06">▶ AWS Hyperplane</text>
-            <!-- Arrow IGW ↔ public subnet -->
-            <line x1="282" y1="105" x2="340" y2="105" stroke="#1F9E8F" stroke-width="2.2" marker-start="url(#igw-grn)" marker-end="url(#igw-grn)"/>
-            <!-- ✕ block at private level -->
-            <text x="296" y="220" text-anchor="middle" font-size="17" fill="#C8425A" font-weight="700">✕</text>
+            <rect x="176" y="84" width="110" height="60" rx="8" fill="#FCE4D4" stroke="#D9772E" stroke-width="2"/>
+            <text x="231" y="108" text-anchor="middle" font-size="13" font-weight="700" fill="#7A3D0E">IGW</text>
+            <text x="231" y="123" text-anchor="middle" font-size="9" fill="#9A5020">1:1 static NAT</text>
+            <text x="231" y="136" text-anchor="middle" font-size="8.5" fill="#9A5020">no IP of its own</text>
+
+            <!-- AWS mapping table callout -->
+            <rect x="158" y="152" width="148" height="38" rx="6" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.4"/>
+            <text x="232" y="168" text-anchor="middle" font-size="9" font-weight="700" fill="#6B4E06">AWS Mapping Table (Hyperplane)</text>
+            <text x="232" y="182" text-anchor="middle" font-size="9" fill="#6B4E06">54.23.1.10  ↔  10.0.1.5</text>
+
+            <!-- Arrow: IGW ↔ public subnet -->
+            <line x1="286" y1="110" x2="342" y2="110" stroke="#1F9E8F" stroke-width="2.2" marker-start="url(#igw-grn)" marker-end="url(#igw-grn)"/>
+
             <!-- VPC boundary -->
-            <rect x="328" y="28" width="424" height="244" rx="10" fill="none" stroke="#3B73C4" stroke-width="1.8" stroke-dasharray="7,4"/>
-            <text x="340" y="23" font-size="10.5" font-weight="700" fill="#3B73C4">VPC — 10.0.0.0/16</text>
+            <rect x="340" y="28" width="448" height="278" rx="10" fill="none" stroke="#3B73C4" stroke-width="1.8" stroke-dasharray="7,4"/>
+            <text x="352" y="23" font-size="10.5" font-weight="700" fill="#3B73C4">VPC — 10.0.0.0/16</text>
+
             <!-- Public Subnet -->
-            <rect x="342" y="44" width="400" height="108" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
-            <text x="354" y="62" font-size="11" font-weight="700" fill="#0C4A43">Public Subnet — 10.0.1.0/24</text>
-            <text x="354" y="77" font-size="9.5" fill="#1F9E8F">Route table:  0.0.0.0/0 → igw-xxx   |   local → local</text>
-            <rect x="490" y="82" width="236" height="60" rx="6" fill="#fff" stroke="#1F9E8F" stroke-width="1.2"/>
-            <text x="502" y="100" font-size="10.5" font-weight="700" fill="#0C4A43">EC2 Instance</text>
-            <text x="502" y="115" font-size="10" fill="#1F9E8F">Elastic IP : 54.23.1.10  (public)</text>
-            <text x="502" y="130" font-size="10" fill="#5A6273">Private IP  : 10.0.1.5</text>
-            <rect x="354" y="92" width="128" height="18" rx="3" fill="#D9772E" fill-opacity="0.15"/>
-            <text x="418" y="105" text-anchor="middle" font-size="10" fill="#7A3D0E" font-weight="700">54.23.1.10 ↔ 10.0.1.5  (1:1)</text>
+            <rect x="354" y="42" width="420" height="130" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
+            <text x="366" y="60" font-size="11" font-weight="700" fill="#0C4A43">Public Subnet — 10.0.1.0/24</text>
+            <text x="366" y="75" font-size="9.5" fill="#1F9E8F">Route table:  0.0.0.0/0 → igw-xxx   |   local → local</text>
+
+            <!-- EC2 with public IP -->
+            <rect x="500" y="84" width="254" height="78" rx="6" fill="#fff" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="514" y="104" font-size="10.5" font-weight="700" fill="#0C4A43">EC2 Instance</text>
+            <text x="514" y="120" font-size="10" fill="#5A6273">$ ip addr → only sees: 10.0.1.5</text>
+            <text x="514" y="136" font-size="9" fill="#C8425A" font-weight="600">54.23.1.10 NOT visible on interface</text>
+            <text x="514" y="151" font-size="9" fill="#5A6273">Public IP exists only in IGW mapping table</text>
+
+            <!-- Mapping label inside public subnet -->
+            <rect x="366" y="100" width="124" height="18" rx="3" fill="#D9772E" fill-opacity="0.15"/>
+            <text x="428" y="113" text-anchor="middle" font-size="10" fill="#7A3D0E" font-weight="700">54.23.1.10 ↔ 10.0.1.5</text>
+
             <!-- Private Subnet -->
-            <rect x="342" y="164" width="400" height="100" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
-            <text x="354" y="182" font-size="11" font-weight="700" fill="#432068">Private Subnet — 10.0.2.0/24</text>
-            <text x="354" y="197" font-size="9.5" fill="#7E4FB5">Route table:  local → local  (no 0.0.0.0/0 entry)</text>
-            <rect x="490" y="200" width="236" height="52" rx="6" fill="#fff" stroke="#7E4FB5" stroke-width="1.2"/>
-            <text x="502" y="218" font-size="10.5" font-weight="700" fill="#432068">EC2 Instance</text>
-            <text x="502" y="233" font-size="10" fill="#5A6273">Private IP : 10.0.2.5  (no public IP)</text>
-            <text x="354" y="250" font-size="9" fill="#C8425A">↳ No IGW route → unreachable from the internet regardless of SG rules</text>
+            <rect x="354" y="184" width="420" height="110" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.5"/>
+            <text x="366" y="202" font-size="11" font-weight="700" fill="#432068">Private Subnet — 10.0.2.0/24</text>
+            <text x="366" y="217" font-size="9.5" fill="#7E4FB5">Route table:  local → local  (no 0.0.0.0/0 entry)</text>
+            <rect x="500" y="224" width="254" height="58" rx="6" fill="#fff" stroke="#7E4FB5" stroke-width="1.2"/>
+            <text x="514" y="244" font-size="10.5" font-weight="700" fill="#432068">EC2 Instance</text>
+            <text x="514" y="260" font-size="10" fill="#5A6273">Private IP : 10.0.2.5  (no public IP)</text>
+            <text x="366" y="284" font-size="9" fill="#C8425A">↳ No IGW route → unreachable from internet regardless of SG rules</text>
           </svg>
         </div>
-        <figcaption><b>Figure A-1.</b> IGW 1:1 static NAT. The IGW itself is stateless — it simply rewrites IP headers. Translation logic runs in the AWS Hyperplane at the source Nitro host; there is no centralized gateway device. A subnet's "public" status is determined solely by its route table entry, not by any subnet property.</figcaption>
+        <figcaption><b>Figure A-1.</b> IGW 1:1 static NAT. The public IP (<code>54.23.1.10</code>) is <em>never</em> configured on the EC2 network interface — <code>ip addr</code> inside the instance only shows the private IP. The mapping exists exclusively in AWS's Hyperplane table. The IGW applies it at the VPC boundary. A subnet's "public" status is entirely determined by whether its route table has a <code>0.0.0.0/0 → igw-xxx</code> entry.</figcaption>
+      </figure>
+
+      <!-- Figure A-1b: BGP routing chain -->
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 800 230" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="bgp-blu" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3B73C4"/></marker>
+              <marker id="bgp-org" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D9772E"/></marker>
+            </defs>
+            <text x="400" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">How Internet Routers Know About Your Public IP — BGP + AWS Edge</text>
+
+            <!-- Step 1: Your laptop -->
+            <rect x="10" y="38" width="108" height="68" rx="8" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.5"/>
+            <text x="64" y="62" text-anchor="middle" font-size="11" font-weight="700" fill="#3A4252">Your Laptop</text>
+            <text x="64" y="78" text-anchor="middle" font-size="9" fill="#5A6273">src: 1.2.3.4</text>
+            <text x="64" y="92" text-anchor="middle" font-size="9" fill="#5A6273">dst: 54.23.1.10</text>
+
+            <!-- Arrow 1 -->
+            <line x1="118" y1="72" x2="158" y2="72" stroke="#3B73C4" stroke-width="2" marker-end="url(#bgp-blu)"/>
+
+            <!-- Step 2: Internet routers (BGP) -->
+            <rect x="158" y="28" width="148" height="88" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.5"/>
+            <text x="232" y="50" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">Internet Routers</text>
+            <text x="232" y="66" text-anchor="middle" font-size="9" fill="#3B73C4">BGP table says:</text>
+            <text x="232" y="80" text-anchor="middle" font-size="9" fill="#3B73C4">54.0.0.0/8 → AWS</text>
+            <text x="232" y="95" text-anchor="middle" font-size="8.5" fill="#5A6273">(prefix aggregation,</text>
+            <text x="232" y="108" text-anchor="middle" font-size="8.5" fill="#5A6273">not individual IPs)</text>
+
+            <!-- Arrow 2 -->
+            <line x1="306" y1="72" x2="346" y2="72" stroke="#3B73C4" stroke-width="2" marker-end="url(#bgp-blu)"/>
+
+            <!-- Step 3: AWS Edge routers (BGP announcer) -->
+            <rect x="346" y="28" width="148" height="88" rx="8" fill="#FBF0CF" stroke="#C99A1E" stroke-width="2"/>
+            <text x="420" y="50" text-anchor="middle" font-size="11" font-weight="700" fill="#6B4E06">AWS Edge Routers</text>
+            <text x="420" y="65" text-anchor="middle" font-size="9" fill="#6B4E06">Announce AWS IP</text>
+            <text x="420" y="79" text-anchor="middle" font-size="9" fill="#6B4E06">blocks via BGP</text>
+            <text x="420" y="95" text-anchor="middle" font-size="8.5" fill="#9A7010">Physical border routers</text>
+            <text x="420" y="108" text-anchor="middle" font-size="8.5" fill="#9A7010">peer with ISPs/IXPs</text>
+            <text x="346" y="24" font-size="9" fill="#C99A1E" font-weight="700">BGP happens here — NOT in IGW</text>
+
+            <!-- Arrow 3 -->
+            <line x1="494" y1="72" x2="534" y2="72" stroke="#D9772E" stroke-width="2" marker-end="url(#bgp-org)"/>
+
+            <!-- Step 4: AWS internal network -->
+            <rect x="534" y="38" width="118" height="68" rx="8" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.5"/>
+            <text x="593" y="62" text-anchor="middle" font-size="11" font-weight="700" fill="#7A3D0E">AWS Internal</text>
+            <text x="593" y="77" text-anchor="middle" font-size="9" fill="#9A5020">Routes to correct</text>
+            <text x="593" y="91" text-anchor="middle" font-size="9" fill="#9A5020">region / VPC / IGW</text>
+
+            <!-- Arrow 4 -->
+            <line x1="652" y1="72" x2="692" y2="72" stroke="#D9772E" stroke-width="2" marker-end="url(#bgp-org)"/>
+
+            <!-- Step 5: IGW → EC2 -->
+            <rect x="692" y="28" width="96" height="88" rx="8" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
+            <text x="740" y="52" text-anchor="middle" font-size="11" font-weight="700" fill="#0C4A43">IGW → EC2</text>
+            <text x="740" y="68" text-anchor="middle" font-size="9" fill="#1F9E8F">54.23.1.10</text>
+            <text x="740" y="82" text-anchor="middle" font-size="9" fill="#1F9E8F">→ 10.0.1.5</text>
+            <text x="740" y="98" text-anchor="middle" font-size="8.5" fill="#5A6273">(1:1 NAT)</text>
+            <text x="740" y="112" text-anchor="middle" font-size="8.5" fill="#5A6273">Hyperplane</text>
+
+            <!-- Step labels below -->
+            <text x="64" y="130" text-anchor="middle" font-size="9" fill="#8A94A6">① send packet</text>
+            <text x="232" y="140" text-anchor="middle" font-size="9" fill="#3B73C4">② BGP routing to AWS</text>
+            <text x="420" y="140" text-anchor="middle" font-size="9" fill="#C99A1E" font-weight="600">③ AWS edge receives</text>
+            <text x="593" y="130" text-anchor="middle" font-size="9" fill="#D9772E">④ internal routing</text>
+            <text x="740" y="140" text-anchor="middle" font-size="9" fill="#1F9E8F">⑤ NAT + deliver</text>
+
+            <!-- Separator line -->
+            <line x1="330" y1="155" x2="330" y2="210" stroke="#D5D9E0" stroke-width="1" stroke-dasharray="4,3"/>
+
+            <!-- Left note -->
+            <rect x="10" y="158" width="316" height="60" rx="6" fill="#f6f7f9" stroke="#D5D9E0" stroke-width="1"/>
+            <text x="163" y="177" text-anchor="middle" font-size="10" font-weight="700" fill="#1a1d24">Left of dashed line: public internet + AWS edge</text>
+            <text x="163" y="192" text-anchor="middle" font-size="9" fill="#5A6273">BGP announces whole IP blocks — not per-instance routes</text>
+            <text x="163" y="206" text-anchor="middle" font-size="9" fill="#5A6273">IGW has zero involvement in BGP or routing announcements</text>
+
+            <!-- Right note -->
+            <rect x="334" y="158" width="454" height="60" rx="6" fill="#f6f7f9" stroke="#D5D9E0" stroke-width="1"/>
+            <text x="561" y="177" text-anchor="middle" font-size="10" font-weight="700" fill="#1a1d24">Right of dashed line: inside AWS network</text>
+            <text x="561" y="192" text-anchor="middle" font-size="9" fill="#5A6273">AWS internal routing delivers to the right VPC + IGW</text>
+            <text x="561" y="206" text-anchor="middle" font-size="9" fill="#5A6273">IGW applies 1:1 NAT — the only step it owns</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-1b.</b> The full routing chain from a laptop to your EC2. BGP is handled exclusively by AWS edge routers peering with ISPs — they announce AWS-owned IP prefixes (e.g., <code>54.0.0.0/8</code>) to the global internet. Internet routers route to AWS based on those announcements. The IGW is never involved in BGP; it only applies the 1:1 NAT once traffic has already arrived inside AWS's network. This is why you cannot use arbitrary public IPs — they must be announced via BGP, which only AWS's edge routers do for AWS-owned ranges (or on your behalf for BYOIP ranges).</figcaption>
+      </figure>
+
+      <!-- Figure A-1c: IGW vs NAT GW comparison -->
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 800 210" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <text x="400" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">IGW vs NAT Gateway — Where the Public IP Lives</text>
+
+            <!-- IGW side -->
+            <rect x="10" y="28" width="374" height="170" rx="9" fill="#FEF9EC" stroke="#C99A1E" stroke-width="1.5"/>
+            <text x="197" y="48" text-anchor="middle" font-size="11" font-weight="700" fill="#6B4E06">Internet Gateway (IGW) — 1:1 NAT</text>
+
+            <rect x="24" y="58" width="100" height="50" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="74" y="80" text-anchor="middle" font-size="10" fill="#3A4252">Internet</text>
+            <line x1="124" y1="83" x2="162" y2="83" stroke="#1F9E8F" stroke-width="2" marker-end="url(#igw-grn)"/>
+            <rect x="162" y="62" width="88" height="44" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.8"/>
+            <text x="206" y="82" text-anchor="middle" font-size="10" font-weight="700" fill="#7A3D0E">IGW</text>
+            <text x="206" y="97" text-anchor="middle" font-size="8.5" fill="#9A5020">no IP of its own</text>
+            <line x1="250" y1="83" x2="290" y2="83" stroke="#1F9E8F" stroke-width="2" marker-end="url(#igw-grn)"/>
+            <rect x="290" y="58" width="80" height="50" rx="6" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="330" y="77" text-anchor="middle" font-size="10" fill="#0C4A43">EC2</text>
+            <text x="330" y="91" text-anchor="middle" font-size="9" fill="#1F9E8F">has EIP</text>
+            <text x="330" y="103" text-anchor="middle" font-size="9" fill="#5A6273">54.x.x.x</text>
+
+            <rect x="24" y="122" width="350" height="66" rx="5" fill="#fff" stroke="#D5D9E0" stroke-width="1"/>
+            <text x="34" y="140" font-size="9.5" fill="#1a1d24">✓ Instance MUST have its own public IP (EIP or auto-assigned)</text>
+            <text x="34" y="155" font-size="9.5" fill="#1a1d24">✓ Inbound connections from internet: YES</text>
+            <text x="34" y="170" font-size="9.5" fill="#1a1d24">✓ Outbound to internet: YES</text>
+            <text x="34" y="183" font-size="9.5" fill="#C8425A">✕ Public IP is NOT visible inside the instance (ip addr)</text>
+
+            <!-- NAT GW side -->
+            <rect x="416" y="28" width="374" height="170" rx="9" fill="#EEF4FB" stroke="#3B73C4" stroke-width="1.5"/>
+            <text x="603" y="48" text-anchor="middle" font-size="11" font-weight="700" fill="#1E3A6B">NAT Gateway — Many:1 SNAT</text>
+
+            <rect x="430" y="58" width="100" height="50" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="480" y="80" text-anchor="middle" font-size="10" fill="#3A4252">Internet</text>
+            <line x1="530" y1="83" x2="568" y2="83" stroke="#D9772E" stroke-width="2" marker-end="url(#igw-org)"/>
+            <rect x="568" y="58" width="108" height="50" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.8"/>
+            <text x="622" y="77" text-anchor="middle" font-size="10" font-weight="700" fill="#7A3D0E">NAT Gateway</text>
+            <text x="622" y="91" text-anchor="middle" font-size="8.5" fill="#9A5020">has its own EIP</text>
+            <text x="622" y="103" text-anchor="middle" font-size="8.5" fill="#9A5020">54.y.y.y</text>
+            <line x1="676" y1="83" x2="716" y2="83" stroke="#D9772E" stroke-width="2" marker-end="url(#igw-org)"/>
+            <rect x="716" y="58" width="60" height="50" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+            <text x="746" y="77" text-anchor="middle" font-size="10" fill="#432068">EC2</text>
+            <text x="746" y="91" text-anchor="middle" font-size="9" fill="#5A6273">private</text>
+            <text x="746" y="103" text-anchor="middle" font-size="9" fill="#5A6273">only</text>
+
+            <rect x="430" y="122" width="350" height="66" rx="5" fill="#fff" stroke="#D5D9E0" stroke-width="1"/>
+            <text x="440" y="140" font-size="9.5" fill="#1a1d24">✓ Instance needs NO public IP — NAT GW holds the EIP</text>
+            <text x="440" y="155" font-size="9.5" fill="#C8425A">✕ Inbound connections from internet: NO (outbound only)</text>
+            <text x="440" y="170" font-size="9.5" fill="#1a1d24">✓ Outbound to internet: YES (many instances share one EIP)</text>
+            <text x="440" y="183" font-size="9.5" fill="#1a1d24">✓ Used for private subnet instances (package downloads etc.)</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-1c.</b> IGW vs NAT Gateway. The key difference: with IGW, the instance holds its own public IP and the IGW maps it. With NAT Gateway, the NAT GW holds the public IP; private instances share it for outbound traffic only — no inbound connections are possible through a NAT GW.</figcaption>
       </figure>
 
       <!-- ═══════════════════════════ 2. NAT GATEWAY ═══════════════════════════ -->
