@@ -1125,8 +1125,38 @@
       <!-- ═══════════════════════════ 6. VPC ENDPOINTS ═══════════════════════════ -->
       <h3 style="margin-top:32px;padding:9px 14px 9px 18px;background:var(--l-catalog-bg);border-left:4px solid #7E4FB5;border-radius:0 6px 6px 0;font-size:15.5px">⑥ VPC Endpoints — Gateway vs. Interface (PrivateLink)</h3>
 
-      <p>Both types keep traffic off the public internet, but they work through completely different mechanisms. A <strong>Gateway Endpoint</strong> is a free route-table-based construct: AWS injects a "prefix list" entry (a managed set of IP ranges for S3 or DynamoDB) into route tables you specify, redirecting matching traffic through the endpoint rather than the IGW or NAT GW. No ENI, no DNS change, no security group — the endpoint is invisible to the application. Access policy is controlled by an endpoint IAM policy and by the bucket's <code>aws:SourceVpce</code> condition key. Only S3 and DynamoDB are supported. An <strong>Interface Endpoint</strong> (powered by AWS PrivateLink) creates one or more ENIs in your subnets — real network interfaces with private IPs from your subnet's CIDR. AWS simultaneously overrides the service's public DNS name so it resolves to the ENI's private IP inside the VPC. The application connects to the same hostname (e.g., <code>s3.us-east-1.amazonaws.com</code>), but the VPC Resolver returns the ENI IP rather than the public IP. Traffic from the instance's Nitro hypervisor goes to the ENI, enters the Hyperplane fabric, and is forwarded directly to the provider's NLB backend — the packet never leaves the AWS data center.</p>
-      <p><strong>AWS Hyperplane connection:</strong> Interface Endpoints and PrivateLink are the canonical Hyperplane use case. The connection from the consumer ENI to the provider NLB is entirely within Hyperplane — a distributed NAT at the consumer's host forwards the packet over the physical inter-host fabric to the provider's NLB target. There is no intermediate proxy or gateway appliance. This is what makes PrivateLink both low-latency and infinitely scalable.</p>
+      <p>Both endpoint types keep traffic off the NAT GW path, but through completely different mechanisms. The table below captures the key distinctions at a glance.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Property</th><th>Gateway Endpoint</th><th>Interface Endpoint (PrivateLink)</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Mechanism</strong></td><td>Route-table entry only — managed prefix list injected by AWS; no device created</td><td>ENI injected in your subnet + private DNS override (VPC Resolver returns ENI IP)</td></tr>
+            <tr><td><strong>Services</strong></td><td>S3 and DynamoDB only</td><td>150+ AWS services; any NLB-backed custom service</td></tr>
+            <tr><td><strong>Cost</strong></td><td><strong>Free</strong> — $0.00/hr, $0.00/GB</td><td>$0.01/hr per AZ + $0.01/GB data processed</td></tr>
+            <tr><td><strong>ENI created?</strong></td><td>No</td><td>Yes — one per specified subnet per AZ</td></tr>
+            <tr><td><strong>DNS change?</strong></td><td>No — hostname resolves to same public IP; route table redirects transparently</td><td>Yes — private hosted zone overrides public hostname to ENI private IP</td></tr>
+            <tr><td><strong>Security group?</strong></td><td>No (no ENI) — use endpoint IAM policy + <code>aws:SourceVpce</code> bucket condition</td><td>Yes — SG on each ENI; most common failure point</td></tr>
+            <tr><td><strong>Same-region only?</strong></td><td><strong>Yes</strong> — prefix list covers same-region IPs only; cross-region traffic falls to NAT GW</td><td>Yes by default; cross-region via S3 MRAPs</td></tr>
+            <tr><td><strong>Overlapping CIDRs?</strong></td><td>N/A</td><td>OK — no VPC-level routing relationship needed</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Gateway Endpoint mechanics</h3>
+      <p>AWS maintains a <em>managed prefix list</em> for each supported service — a named set of IP CIDR ranges (e.g., <code>pl-63a5400a</code> for S3 in us-east-1) that it updates automatically. Creating a Gateway Endpoint injects <code>pl-xxxxx → vpce-xxx</code> into the route tables you specify. Any packet whose destination IP falls within the prefix list now skips the NAT GW entirely and goes directly over the AWS backbone. The application is unaware: <code>s3.amazonaws.com</code> still resolves to the same public IP — the route table is what changes the path. For same-region S3, traffic via NAT GW <em>also</em> stays within AWS's regional infrastructure; the Gateway Endpoint's benefit is purely <strong>eliminating the $0.045/GB NAT processing charge</strong> and enabling <code>aws:SourceVpce</code> enforcement — not a different physical network.</p>
+
+      <div class="callout warn">
+        <span class="tag">Same-region constraint</span>
+        <p>The prefix list contains S3 IPs for the <strong>same region only</strong>. An EC2 in <code>us-east-1</code> accessing <code>s3.eu-west-1.amazonaws.com</code> will not match the <code>us-east-1</code> prefix list — the route falls through to <code>0.0.0.0/0 → nat-gw</code>, incurring the $0.045/GB charge even with a Gateway Endpoint deployed. Silent cost trap on multi-region data platforms. Cross-region options: NAT GW (default), Interface Endpoint in the remote region's VPC via TGW/peering, or S3 Multi-Region Access Points (MRAPs) + Interface Endpoint.</p>
+      </div>
+
+      <h3>The <code>aws:SourceVpce</code> condition — enforcing VPC-only bucket access</h3>
+      <p>Add <code>"Condition": {"StringNotEquals": {"aws:SourceVpce": "vpce-xxxx"}}</code> to a bucket <code>Deny</code> statement and the bucket rejects any request that does not arrive through that specific endpoint — regardless of IAM identity. <code>aws:SourceVpce</code> evaluates the <strong>network path</strong>, not the credentials. This is the correct production posture: a stolen IAM key cannot exfiltrate data from outside the authorized VPC.</p>
+      <p>This is also why Delta Sharing's pre-signed URL approach breaks when <code>aws:SourceVpce</code> is present. A pre-signed URL carries valid SigV4 credentials but encodes no routing information — a recipient hitting the URL from their internet egress IP is denied on the path condition. The <strong>Delta Sharing Network Gateway</strong> resolves this by fetching from S3 inside the provider's VPC (satisfying the endpoint condition) and proxying the bytes to the recipient over HTTPS.</p>
+
+      <h3>Why Gateway Endpoints only exist for S3 and DynamoDB</h3>
+      <p>Route-table injection requires a service to be reachable at a stable, published, non-overlapping IP range — something only S3 and DynamoDB have as AWS-managed prefix lists. Most other services (KMS, Secrets Manager, ECR, STS, etc.) share IP space or change IPs too frequently. More fundamentally, prefix-list redirection works without DNS override, which is only safe when the service hostname is irrelevant to the path — for everything else, the application must connect to a private IP, which requires DNS override, which requires an ENI. That means Interface Endpoint.</p>
 
       <figure>
         <div class="diagram">
@@ -1161,8 +1191,8 @@
             <!-- AWS backbone label in left half -->
             <rect x="236" y="78" width="118" height="52" rx="6" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.2"/>
             <text x="295" y="98" text-anchor="middle" font-size="9.5" font-weight="700" fill="#234D1A">AWS Backbone</text>
-            <text x="295" y="113" text-anchor="middle" font-size="8.5" fill="#4A9A3C">No internet</text>
-            <text x="295" y="126" text-anchor="middle" font-size="8.5" fill="#4A9A3C">No NAT GW</text>
+            <text x="295" y="113" text-anchor="middle" font-size="8.5" fill="#4A9A3C">No NAT GW</text>
+            <text x="295" y="126" text-anchor="middle" font-size="8.5" fill="#4A9A3C">No NAT charge</text>
             <line x1="210" y1="126" x2="236" y2="106" stroke="#4A9A3C" stroke-width="1.8" marker-end="url(#ep-grn)"/>
             <!-- S3 left -->
             <rect x="236" y="142" width="118" height="54" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.2"/>
@@ -1234,6 +1264,498 @@
         </div>
         <figcaption><b>Figure A-6.</b> Gateway vs Interface VPC Endpoints. Left: the Gateway Endpoint is a free route-table injection that redirects S3/DynamoDB traffic through the AWS backbone — no ENI, no DNS change, zero cost. Right: the Interface Endpoint creates a real ENI in your subnet; DNS resolves the service hostname to the ENI's private IP; traffic goes through the AWS Hyperplane distributed NAT to the provider's NLB — never touching the public internet. The Hyperplane layer is where PrivateLink's "no centralized proxy" property comes from.</figcaption>
       </figure>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 400" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="ep2-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C8425A"/></marker>
+              <marker id="ep2-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4A9A3C"/></marker>
+              <marker id="ep2-org" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D9772E"/></marker>
+            </defs>
+            <text x="410" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">Gateway Endpoint — Route-Table Injection, No ENI · Saves $0.045/GB NAT cost · Enables aws:SourceVpce</text>
+
+            <!-- ── LEFT: Without Gateway Endpoint (NAT path) ── -->
+            <rect x="10" y="26" width="388" height="24" rx="5" fill="#FBE9EC" stroke="#C8425A" stroke-width="1"/>
+            <text x="204" y="42" text-anchor="middle" font-size="10.5" fill="#C8425A" font-weight="700">Without Gateway Endpoint — S3 via NAT GW  →  $0.045/GB</text>
+
+            <rect x="10" y="56" width="388" height="310" rx="9" fill="#f9f0f0" stroke="#C8425A" stroke-width="1.2"/>
+
+            <!-- Private subnet -->
+            <rect x="24" y="68" width="180" height="60" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.3"/>
+            <text x="36" y="86" font-size="10" font-weight="700" fill="#432068">Private Subnet</text>
+            <rect x="36" y="92" width="156" height="28" rx="5" fill="#fff" stroke="#7E4FB5" stroke-width="1"/>
+            <text x="114" y="111" text-anchor="middle" font-size="10" fill="#432068">EC2 / Spark Worker</text>
+
+            <!-- Public subnet + NAT GW -->
+            <rect x="24" y="142" width="180" height="66" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.3"/>
+            <text x="36" y="160" font-size="10" font-weight="700" fill="#0C4A43">Public Subnet</text>
+            <rect x="36" y="166" width="156" height="34" rx="5" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.4"/>
+            <text x="114" y="182" text-anchor="middle" font-size="10.5" font-weight="700" fill="#7A3D0E">NAT Gateway</text>
+            <text x="114" y="196" text-anchor="middle" font-size="9" fill="#9A5020">EIP: 54.10.0.1  (SNAT)</text>
+
+            <!-- IGW -->
+            <rect x="36" y="222" width="156" height="34" rx="5" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.4"/>
+            <text x="114" y="243" text-anchor="middle" font-size="10.5" font-weight="700" fill="#7A3D0E">Internet Gateway</text>
+
+            <!-- AWS Backbone band — same backbone as right side, just reached via NAT GW + IGW -->
+            <rect x="24" y="270" width="180" height="30" rx="5" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1"/>
+            <text x="114" y="283" text-anchor="middle" font-size="8.5" font-weight="700" fill="#234D1A">AWS Backbone</text>
+            <text x="114" y="296" text-anchor="middle" font-size="8" fill="#4A9A3C">(same backbone — cost is from NAT GW)</text>
+
+            <!-- S3 -->
+            <rect x="226" y="68" width="160" height="60" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.3"/>
+            <text x="306" y="90" text-anchor="middle" font-size="10.5" font-weight="700" fill="#3A4252">S3 Bucket</text>
+            <text x="306" y="106" text-anchor="middle" font-size="9" fill="#5A6273">Public endpoint</text>
+            <text x="306" y="120" text-anchor="middle" font-size="9" fill="#5A6273">s3.amazonaws.com</text>
+
+            <!-- Route table (bad) -->
+            <rect x="226" y="148" width="160" height="50" rx="5" fill="#FBE9EC" stroke="#C8425A" stroke-width="1"/>
+            <text x="306" y="166" text-anchor="middle" font-size="9.5" font-weight="700" fill="#C8425A">Route Table</text>
+            <text x="306" y="181" text-anchor="middle" font-size="9" fill="#C8425A">0.0.0.0/0 → nat-gw</text>
+            <text x="306" y="194" text-anchor="middle" font-size="8.5" fill="#C8425A">(S3 traffic via NAT GW)</text>
+
+            <!-- Cost callout -->
+            <rect x="226" y="214" width="160" height="86" rx="5" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.2"/>
+            <text x="306" y="232" text-anchor="middle" font-size="10" font-weight="700" fill="#C8425A">Cost per GB to S3</text>
+            <text x="306" y="249" text-anchor="middle" font-size="9.5" fill="#1a1d24">NAT processing: $0.045</text>
+            <text x="306" y="264" text-anchor="middle" font-size="9.5" fill="#1a1d24">+ cross-AZ (if any): $0.010</text>
+            <line x1="234" y1="272" x2="378" y2="272" stroke="#f0c6ce" stroke-width="1"/>
+            <text x="306" y="288" text-anchor="middle" font-size="11" font-weight="700" fill="#C8425A">≥ $0.045/GB</text>
+
+            <!-- Arrows left side -->
+            <line x1="114" y1="120" x2="114" y2="142" stroke="#C8425A" stroke-width="2" marker-end="url(#ep2-red)"/>
+            <line x1="114" y1="200" x2="114" y2="222" stroke="#C8425A" stroke-width="2" marker-end="url(#ep2-red)"/>
+            <line x1="114" y1="256" x2="114" y2="270" stroke="#C8425A" stroke-width="2" marker-end="url(#ep2-red)"/>
+            <!-- AWS regional network → S3 (diagonal up-right, stays within AWS) -->
+            <line x1="204" y1="280" x2="260" y2="105" stroke="#8A94A6" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ep2-red)"/>
+            <rect x="168" y="178" width="100" height="22" rx="3" fill="#fff" fill-opacity="0.95" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="218" y="188" text-anchor="middle" font-size="8" fill="#5A6273">stays within AWS</text>
+            <text x="218" y="198" text-anchor="middle" font-size="8" fill="#C8425A">but costs $0.045/GB</text>
+
+            <!-- ── RIGHT: With Gateway Endpoint ── -->
+            <rect x="422" y="26" width="388" height="24" rx="5" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1"/>
+            <text x="616" y="42" text-anchor="middle" font-size="10.5" fill="#234D1A" font-weight="700">With Gateway Endpoint — S3 via AWS Backbone  →  $0.00/GB</text>
+
+            <rect x="422" y="56" width="388" height="310" rx="9" fill="#f0f8f0" stroke="#4A9A3C" stroke-width="1.2"/>
+
+            <!-- Private subnet right -->
+            <rect x="436" y="68" width="180" height="60" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.3"/>
+            <text x="448" y="86" font-size="10" font-weight="700" fill="#432068">Private Subnet</text>
+            <rect x="448" y="92" width="156" height="28" rx="5" fill="#fff" stroke="#7E4FB5" stroke-width="1"/>
+            <text x="526" y="111" text-anchor="middle" font-size="10" fill="#432068">EC2 / Spark Worker</text>
+
+            <!-- Route table (good) -->
+            <rect x="436" y="142" width="180" height="58" rx="7" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.4"/>
+            <text x="448" y="160" font-size="10" font-weight="700" fill="#234D1A">Route Table</text>
+            <text x="526" y="175" text-anchor="middle" font-size="9" fill="#234D1A">pl-xxxxx → vpce-xxx</text>
+            <text x="526" y="189" text-anchor="middle" font-size="8.5" fill="#4A9A3C">(S3 prefix list → endpoint)</text>
+            <text x="526" y="201" text-anchor="middle" font-size="8.5" fill="#5A6273">No ENI created — route only</text>
+
+            <!-- AWS Backbone box -->
+            <rect x="436" y="214" width="180" height="40" rx="7" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.4"/>
+            <text x="526" y="232" text-anchor="middle" font-size="10.5" font-weight="700" fill="#234D1A">AWS Backbone</text>
+            <text x="526" y="247" text-anchor="middle" font-size="9" fill="#4A9A3C">No internet traversal</text>
+
+            <!-- S3 right -->
+            <rect x="638" y="68" width="160" height="60" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.3"/>
+            <text x="718" y="90" text-anchor="middle" font-size="10.5" font-weight="700" fill="#3A4252">S3 Bucket</text>
+            <text x="718" y="106" text-anchor="middle" font-size="9" fill="#5A6273">Same hostname resolves</text>
+            <text x="718" y="120" text-anchor="middle" font-size="9" fill="#5A6273">to same public IP —</text>
+
+            <!-- aws:SourceVpce policy box -->
+            <rect x="638" y="142" width="160" height="80" rx="7" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.4"/>
+            <text x="718" y="160" text-anchor="middle" font-size="9.5" font-weight="700" fill="#6B4E06">Bucket Policy</text>
+            <text x="718" y="175" text-anchor="middle" font-size="8.5" fill="#6B4E06">Deny if</text>
+            <text x="718" y="188" text-anchor="middle" font-size="8" fill="#6B4E06" font-style="italic">aws:SourceVpce ≠</text>
+            <text x="718" y="201" text-anchor="middle" font-size="8" fill="#6B4E06" font-style="italic">vpce-xxx</text>
+            <text x="718" y="215" text-anchor="middle" font-size="8.5" fill="#9A7010">Internet requests → denied</text>
+
+            <!-- Cost callout right -->
+            <rect x="638" y="236" width="160" height="64" rx="5" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.2"/>
+            <text x="718" y="254" text-anchor="middle" font-size="10" font-weight="700" fill="#234D1A">Cost per GB to S3</text>
+            <text x="718" y="270" text-anchor="middle" font-size="9.5" fill="#1a1d24">Gateway Endpoint: $0.00</text>
+            <line x1="646" y1="278" x2="790" y2="278" stroke="#4A9A3C" stroke-width="1"/>
+            <text x="718" y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#4A9A3C">$0.00/GB  ✓</text>
+
+            <!-- Arrows right side -->
+            <line x1="526" y1="120" x2="526" y2="142" stroke="#4A9A3C" stroke-width="2" marker-end="url(#ep2-grn)"/>
+            <line x1="526" y1="200" x2="526" y2="214" stroke="#4A9A3C" stroke-width="2" marker-end="url(#ep2-grn)"/>
+            <!-- Backbone → S3 -->
+            <line x1="616" y1="234" x2="660" y2="110" stroke="#4A9A3C" stroke-width="2" marker-end="url(#ep2-grn)"/>
+            <rect x="614" y="168" width="60" height="14" rx="3" fill="#fff" fill-opacity="0.9"/>
+            <text x="644" y="179" text-anchor="middle" font-size="8.5" fill="#4A9A3C">backbone only</text>
+
+            <!-- Vs divider -->
+            <line x1="410" y1="50" x2="410" y2="370" stroke="#D5D9E0" stroke-width="2" stroke-dasharray="5,4"/>
+            <rect x="392" y="195" width="36" height="22" rx="11" fill="#1a1d24"/>
+            <text x="410" y="210" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">vs</text>
+
+          </svg>
+        </div>
+        <figcaption><b>Figure A-6b.</b> S3 via NAT Gateway vs Gateway Endpoint. Left: without a Gateway Endpoint, S3-bound traffic routes through the NAT GW (SNAT) and the IGW — costing $0.045/GB in NAT processing. For same-region S3, this traffic stays within AWS's regional infrastructure; it does not traverse ISP routers. The cost is the problem, not internet exposure. Right: with a Gateway Endpoint, the route table injects a prefix-list entry that bypasses NAT GW entirely — zero NAT processing cost. The secondary benefit: the bucket policy's <code>aws:SourceVpce</code> condition can now enforce that access must arrive via the VPC endpoint, blocking requests that arrive via a public EIP (including valid pre-signed URLs originating outside the VPC). Always deploy Gateway Endpoints for S3 and DynamoDB in any private subnet.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="diagram" style="padding:0;overflow-x:auto;">
+          <div id="fabric-diag-fig">
+<style>
+#fabric-diag-fig *{box-sizing:border-box;margin:0;padding:0}
+#fabric-diag-fig .fd{font-family:'Inter',ui-sans-serif,sans-serif;font-size:11px;background:#1e293b}
+#fabric-diag-fig .fd-tbar{background:#1e293b;color:#94a3b8;text-align:center;padding:7px;font-size:11px;letter-spacing:.8px}
+#fabric-diag-fig .fd-inet{background:#dbeafe;border:1.5px solid #93c5fd;margin:4px 6px 0;padding:9px;text-align:center;font-weight:700;font-size:12px;color:#1e40af;border-radius:4px}
+#fabric-diag-fig .fd-region{border:2px dashed #3b82f6;border-radius:6px;margin:4px 6px;padding:8px}
+#fabric-diag-fig .fd-rlabel{color:#2563eb;font-size:10.5px;font-weight:700;margin-bottom:6px;letter-spacing:.3px}
+#fabric-diag-fig .fd-igw{background:#ffedd5;border:1.5px solid #ea580c;border-radius:4px;padding:8px;text-align:center;font-size:11px;font-weight:700;color:#c2410c;margin-bottom:8px}
+#fabric-diag-fig .fd-azrow{display:flex;gap:8px;margin-bottom:8px;align-items:flex-start}
+#fabric-diag-fig .fd-aza{flex:0 0 680px;background:#eff6ff;border:1.5px solid #3b82f6;border-radius:5px;padding:8px}
+#fabric-diag-fig .fd-azb{flex:0 0 680px;background:#f0fdf4;border:1.5px solid #16a34a;border-radius:5px;padding:8px}
+#fabric-diag-fig .fd-azlabel{font-size:10.5px;font-weight:700;margin-bottom:6px}
+#fabric-diag-fig .fd-aza .fd-azlabel{color:#1d4ed8}
+#fabric-diag-fig .fd-azb .fd-azlabel{color:#15803d}
+#fabric-diag-fig .fd-dc{border-radius:4px;padding:8px;margin-bottom:8px}
+#fabric-diag-fig .fd-aza .fd-dc{background:#dbeafe;border:1px solid #60a5fa}
+#fabric-diag-fig .fd-azb .fd-dc{background:#dcfce7;border:1px solid #4ade80}
+#fabric-diag-fig .fd-dclabel{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px}
+#fabric-diag-fig .fd-aza .fd-dclabel{color:#1e40af}
+#fabric-diag-fig .fd-azb .fd-dclabel{color:#166534}
+#fabric-diag-fig .fd-llabel{font-size:9px;font-weight:700;color:#6b7280;letter-spacing:.8px;text-transform:uppercase;margin-bottom:3px;margin-top:3px}
+#fabric-diag-fig .fd-lrow{display:flex;gap:6px;margin-bottom:2px}
+#fabric-diag-fig .fd-spine{flex:1;background:#fef3c7;border:1px solid #d97706;border-radius:3px;padding:8px 12px;text-align:center;font-weight:700;font-size:11px;color:#78350f}
+#fabric-diag-fig .fd-leaf{flex:1;background:#ffedd5;border:1px solid #ea580c;border-radius:3px;padding:8px;text-align:center;font-weight:700;font-size:11px;color:#7c2d12}
+#fabric-diag-fig .fd-tor{flex:1;background:#f3f4f6;border:1px solid #9ca3af;border-radius:3px;padding:6px 4px;text-align:center;font-size:10px;color:#374151}
+#fabric-diag-fig .fd-arrs{display:flex;gap:6px;padding:3px 0}
+#fabric-diag-fig .fd-arr{flex:1;text-align:center;color:#9ca3af;font-size:14px;line-height:1}
+#fabric-diag-fig .fd-srow{display:flex;gap:8px;margin-top:4px}
+#fabric-diag-fig .fd-srv{flex:1;border-radius:4px;padding:8px}
+#fabric-diag-fig .fd-srv.fd-ec2{background:#ede9fe;border:1.5px solid #7c3aed}
+#fabric-diag-fig .fd-srv.fd-nat{background:#fff7ed;border:1.5px solid #ea580c}
+#fabric-diag-fig .fd-srv.fd-s3f{background:#f0fdf4;border:1.5px solid #16a34a}
+#fabric-diag-fig .fd-stitle{font-weight:700;font-size:12px;text-align:center;margin-bottom:2px}
+#fabric-diag-fig .fd-ec2 .fd-stitle{color:#5b21b6}
+#fabric-diag-fig .fd-nat .fd-stitle{color:#9a3412}
+#fabric-diag-fig .fd-s3f .fd-stitle{color:#15803d}
+#fabric-diag-fig .fd-ssub{font-size:9px;text-align:center;font-style:italic;margin-bottom:6px}
+#fabric-diag-fig .fd-ec2 .fd-ssub{color:#7c3aed}
+#fabric-diag-fig .fd-nat .fd-ssub{color:#c2410c}
+#fabric-diag-fig .fd-s3f .fd-ssub{color:#16a34a}
+#fabric-diag-fig .fd-ibox{border-radius:3px;padding:6px 8px;margin-bottom:4px;font-size:10px;text-align:center;line-height:1.4}
+#fabric-diag-fig .fd-ibox.fd-vm{background:#ddd6fe;border:1px solid #8b5cf6;color:#4c1d95}
+#fabric-diag-fig .fd-ibox.fd-vm .fd-isub{font-style:italic;font-size:9px;color:#5b21b6}
+#fabric-diag-fig .fd-ibox.fd-snat{background:#fed7aa;border:1px solid #f97316;color:#7c2d12}
+#fabric-diag-fig .fd-ibox.fd-snat .fd-isub{font-size:9px;color:#9a3412}
+#fabric-diag-fig .fd-ibox.fd-s3r{background:#bbf7d0;border:1px solid #22c55e;color:#166534}
+#fabric-diag-fig .fd-ibox.fd-s3r .fd-isub{font-size:9px;color:#16a34a}
+#fabric-diag-fig .fd-ibox.fd-nitro{background:#fef3c7;border:1.5px solid #d97706;font-weight:700;color:#78350f}
+#fabric-diag-fig .fd-ibox.fd-nitro .fd-isub{font-weight:400;font-size:9px;color:#92400e}
+#fabric-diag-fig .fd-snote{font-size:9px;text-align:center;margin-top:5px;line-height:1.4}
+#fabric-diag-fig .fd-npurple{color:#7c3aed}
+#fabric-diag-fig .fd-npink{color:#db2777}
+#fabric-diag-fig .fd-ngreen{color:#16a34a}
+#fabric-diag-fig .fd-ngray{color:#6b7280}
+#fabric-diag-fig .fd-fab{background:#fef9c3;border:1.5px dashed #ca8a04;border-radius:4px;padding:10px 12px;margin-bottom:8px}
+#fabric-diag-fig .fd-fabt{font-weight:700;color:#854d0e;margin-bottom:4px;font-size:11px}
+#fabric-diag-fig .fd-fabb{color:#854d0e;font-size:10.5px;line-height:1.55}
+#fabric-diag-fig .fd-traf{background:#f8fafc;border:1px solid #94a3b8;border-radius:4px;padding:10px 12px}
+#fabric-diag-fig .fd-trft{font-weight:700;color:#1e293b;text-align:center;margin-bottom:8px;font-size:11px}
+#fabric-diag-fig .fd-path{margin-bottom:8px}
+#fabric-diag-fig .fd-phd{font-weight:700;font-size:11px;margin-bottom:3px;display:flex;align-items:center;gap:6px}
+#fabric-diag-fig .fd-pdot{width:12px;height:12px;border-radius:2px;flex-shrink:0}
+#fabric-diag-fig .fd-dgreen{background:#16a34a}
+#fabric-diag-fig .fd-dred{background:#ea580c}
+#fabric-diag-fig .fd-pdet{color:#475569;margin-left:18px;font-size:10.5px;line-height:1.45}
+#fabric-diag-fig .fd-pnote{color:#db2777;margin-left:18px;font-size:9.5px;font-style:italic;margin-top:2px}
+#fabric-diag-fig .fd-whyb{padding:10px 12px;font-size:10.5px;line-height:1.55}
+#fabric-diag-fig .fd-whyt{font-weight:700;color:#1e293b;text-align:center;margin-bottom:6px;font-size:11px}
+#fabric-diag-fig .fd-whybdy{color:#374151}
+#fabric-diag-fig .fd-wred{color:#dc2626}
+#fabric-diag-fig .fd-wbold{font-weight:700}
+#fabric-diag-fig .fd-iaz{background:#e0e7ff;border:1.5px solid #6366f1;border-radius:4px;padding:8px;text-align:center;font-weight:600;font-size:11px;color:#3730a3}
+#fabric-diag-fig .fd-leg{background:#1e293b;padding:10px 14px}
+#fabric-diag-fig .fd-legt{font-weight:700;color:#e2e8f0;margin-bottom:7px;font-size:11px}
+#fabric-diag-fig .fd-legrow{display:flex;flex-wrap:wrap;gap:7px 18px}
+#fabric-diag-fig .fd-legi{display:flex;align-items:center;gap:5px;font-size:10px;color:#94a3b8}
+#fabric-diag-fig .fd-lsw{width:16px;height:12px;border-radius:2px;flex-shrink:0}
+#fabric-diag-fig .fd-legnote{margin-top:7px;font-size:9.5px;color:#64748b;font-style:italic}
+</style>
+<div class="fd">
+<div class="fd-tbar">AWS Region · AZ · Data Center · The Fabric</div>
+<div class="fd-inet">🌐 Internet (ISPs · BGP routing · public IP space)</div>
+<div class="fd-region">
+  <div class="fd-rlabel">REGION: us-east-1 — geographic cluster of data centers, interconnected by AWS-owned fiber</div>
+  <div class="fd-igw">Internet Gateway (IGW) — logical boundary, not a physical switch</div>
+  <div class="fd-azrow">
+    <div class="fd-aza">
+      <div class="fd-azlabel">AVAILABILITY ZONE A — independent power, cooling &amp; network</div>
+      <div class="fd-dc">
+        <div class="fd-dclabel">DATA CENTER (physical building)</div>
+        <div class="fd-llabel">SPINE</div>
+        <div class="fd-lrow"><div class="fd-spine">Spine Switches — backbone; connect every leaf switch to every other</div></div>
+        <div class="fd-arrs"><div class="fd-arr">↓</div><div class="fd-arr">↓</div></div>
+        <div class="fd-llabel">LEAF</div>
+        <div class="fd-lrow"><div class="fd-leaf">Leaf Switch 1</div><div class="fd-leaf">Leaf Switch 2</div></div>
+        <div class="fd-arrs"><div class="fd-arr">↓</div><div class="fd-arr">↓</div><div class="fd-arr">↓</div><div class="fd-arr">↓</div></div>
+        <div class="fd-llabel">ToR</div>
+        <div class="fd-lrow"><div class="fd-tor">Top-of-Rack A1</div><div class="fd-tor">Top-of-Rack A2</div><div class="fd-tor">Top-of-Rack A3</div><div class="fd-tor">Top-of-Rack A4</div></div>
+        <div class="fd-arrs"><div class="fd-arr">↓</div><div class="fd-arr">↓</div><div class="fd-arr">↓</div></div>
+        <div class="fd-llabel">SERVERS</div>
+        <div class="fd-srow">
+          <div class="fd-srv fd-ec2">
+            <div class="fd-stitle">EC2 Host</div><div class="fd-ssub">physical server</div>
+            <div class="fd-ibox fd-vm">EC2 instances (your VMs)<div class="fd-isub">hypervisor manages CPU/mem</div></div>
+            <div class="fd-ibox fd-nitro">Nitro card (ENA NIC)<div class="fd-isub">enforces VPC rules in hardware</div></div>
+            <div class="fd-snote fd-npurple">sets aws:SourceVpce tag<br>on packets leaving this host</div>
+          </div>
+          <div class="fd-srv fd-nat">
+            <div class="fd-stitle">NAT GW Host</div><div class="fd-ssub">bare-metal Hyperplane node</div>
+            <div class="fd-ibox fd-snat">Hyperplane SNAT logic<div class="fd-isub">connection-tracking table</div></div>
+            <div class="fd-ibox fd-nitro">Nitro card (ENA NIC)<div class="fd-isub">same fabric entry point</div></div>
+            <div class="fd-snote fd-npink">extra hop = $0.045/GB charge<br>skipped by Gateway Endpoint</div>
+          </div>
+          <div class="fd-srv fd-s3f">
+            <div class="fd-stitle">S3 Frontend</div><div class="fd-ssub">AWS-managed server</div>
+            <div class="fd-ibox fd-s3r">S3 request handler<div class="fd-isub">reads auth + endpoint tag</div></div>
+            <div class="fd-ibox fd-nitro">Nitro card (ENA NIC)<div class="fd-isub">same fabric entry point</div></div>
+            <div class="fd-snote fd-ngreen">sees vpce-xxx tag set by<br>EC2's Nitro card upstream</div>
+          </div>
+        </div>
+      </div>
+      <div class="fd-fab">
+        <div class="fd-fabt">▶ "The Fabric" = Nitro cards + ToR switches + Leaf switches + Spine switches + inter-AZ fiber</div>
+        <div class="fd-fabb">Every server (EC2, NAT GW, S3 frontend) connects to the same physical switch hierarchy.<br>Hyperplane programs forwarding rules on the Nitro cards — it is the control plane for the fabric, not a separate network.</div>
+      </div>
+      <div class="fd-traf">
+        <div class="fd-trft">Traffic paths through the fabric (same physical switches, different hops)</div>
+        <div class="fd-path">
+          <div class="fd-phd"><div class="fd-pdot fd-dgreen"></div>Gateway Endpoint path:</div>
+          <div class="fd-pdet">EC2 Nitro → ToR A1 → Leaf 1 → Spine → Leaf 1 → ToR A3 → S3 Nitro</div>
+          <div class="fd-pnote">Nitro card tags packet with vpce-xxx · S3 reads tag · aws:SourceVpce condition satisfied</div>
+        </div>
+        <div class="fd-path">
+          <div class="fd-phd" style="color:#c2410c"><div class="fd-pdot fd-dred"></div>NAT GW path (same fabric, two extra hops):</div>
+          <div class="fd-pdet">EC2 Nitro → ToR A1 → Leaf 1 → Spine → Leaf 1 → ToR A2 → NAT GW Nitro (SNAT) → Spine → IGW → S3</div>
+          <div class="fd-pnote">No vpce tag · bucket aws:SourceVpce Deny fires · also incurs $0.045/GB NAT processing charge</div>
+        </div>
+      </div>
+    </div>
+    <div class="fd-azb">
+      <div class="fd-azlabel">AVAILABILITY ZONE B — separate failure domain</div>
+      <div class="fd-dc">
+        <div class="fd-dclabel">DATA CENTER 2</div>
+        <div class="fd-llabel">SPINE</div>
+        <div class="fd-lrow"><div class="fd-spine">Spine Switches</div></div>
+        <div class="fd-arrs"><div class="fd-arr">↓</div><div class="fd-arr">↓</div></div>
+        <div class="fd-llabel">LEAF</div>
+        <div class="fd-lrow"><div class="fd-leaf">Leaf Switch 1</div><div class="fd-leaf">Leaf Switch 2</div></div>
+        <div class="fd-arrs"><div class="fd-arr">↓</div><div class="fd-arr">↓</div><div class="fd-arr">↓</div><div class="fd-arr">↓</div></div>
+        <div class="fd-llabel">ToR</div>
+        <div class="fd-lrow"><div class="fd-tor">ToR B1</div><div class="fd-tor">ToR B2</div><div class="fd-tor">ToR B3</div><div class="fd-tor">ToR B4</div></div>
+        <div class="fd-arrs"><div class="fd-arr">↓</div><div class="fd-arr">↓</div></div>
+        <div class="fd-llabel">SERVERS</div>
+        <div class="fd-srow">
+          <div class="fd-srv fd-ec2">
+            <div class="fd-stitle">EC2 Host</div>
+            <div class="fd-ibox fd-vm">EC2 instances</div>
+            <div class="fd-ibox fd-nitro">Nitro card<div class="fd-isub">same fabric</div></div>
+            <div class="fd-snote fd-ngray">→ ToR B1 above</div>
+          </div>
+          <div class="fd-srv fd-s3f">
+            <div class="fd-stitle">S3 Frontend</div>
+            <div class="fd-ibox fd-s3r">S3 request handler</div>
+            <div class="fd-ibox fd-nitro">Nitro card<div class="fd-isub">same fabric</div></div>
+            <div class="fd-snote fd-ngray">→ ToR B3 above</div>
+          </div>
+        </div>
+      </div>
+      <div class="fd-whyb">
+        <div class="fd-whyt">Why AZ-b has its own fabric</div>
+        <div class="fd-whybdy">AZ-a and AZ-b have completely separate spine/leaf/ToR infrastructure and power.<br><br>A NAT GW in AZ-a cannot serve AZ-b without <span class="fd-wred">crossing the inter-AZ fiber → $0.01/GB charge.</span><br><br><span class="fd-wbold">→ Deploy one NAT GW (and endpoint ENIs) per AZ.</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="fd-iaz">↔ Inter-AZ high-speed fiber (AWS-owned · &lt;2ms RTT · part of the fabric · used by NAT GW, TGW, PrivateLink) ↔</div>
+</div>
+<div class="fd-leg">
+  <div class="fd-legt">Layer colors:</div>
+  <div class="fd-legrow">
+    <div class="fd-legi"><div class="fd-lsw" style="background:#fef3c7;border:1px solid #d97706"></div>Spine switches</div>
+    <div class="fd-legi"><div class="fd-lsw" style="background:#ffedd5;border:1px solid #ea580c"></div>Leaf switches</div>
+    <div class="fd-legi"><div class="fd-lsw" style="background:#f3f4f6;border:1px solid #9ca3af"></div>ToR switches</div>
+    <div class="fd-legi"><div class="fd-lsw" style="background:#fef3c7;border:1.5px solid #d97706"></div>Nitro cards (fabric edge)</div>
+    <div class="fd-legi"><div class="fd-lsw" style="background:#ede9fe;border:1px solid #7c3aed"></div>EC2 host</div>
+    <div class="fd-legi"><div class="fd-lsw" style="background:#fff7ed;border:1px solid #ea580c"></div>NAT GW host (Hyperplane)</div>
+    <div class="fd-legi"><div class="fd-lsw" style="background:#f0fdf4;border:1px solid #16a34a"></div>S3 frontend host</div>
+  </div>
+  <div class="fd-legnote">All three are the same kind of physical server connected to the same ToR → Leaf → Spine hierarchy.</div>
+</div>
+</div>
+          </div>
+        </div>
+        <figcaption><b>Figure A-6c.</b> Physical reality behind the Gateway Endpoint path. Every host — EC2, NAT GW, and S3 Frontend — is the same kind of bare-metal Nitro server attached to the same Spine → Leaf → ToR switch hierarchy. The Gateway Endpoint does not create a different network; it inserts a route-table entry that skips the NAT GW <em>hop</em>, eliminating the $0.045/GB NAT processing charge and enabling <code>aws:SourceVpce</code> enforcement. Hyperplane is the control plane that programs each Nitro card with forwarding rules (including vpce-xxx tag recognition) — it is not a separate packet-forwarding network. AZ-b has an identical, physically independent fabric; deploy one NAT GW and one endpoint ENI per AZ to avoid cross-AZ charges.</figcaption>
+      </figure>
+
+      <h3>What the Interface Endpoint actually does — ENI creation and DNS override</h3>
+      <p>When you create an Interface Endpoint and specify subnets (one per AZ), AWS creates one <strong>ENI per subnet</strong>. Each ENI receives a private IP from that subnet's CIDR — e.g., <code>10.0.3.47</code>. These are visible in the EC2 console as "interface endpoint ENIs." Simultaneously, if <em>Enable Private DNS Names</em> is selected (requires <em>enableDnsHostnames</em> and <em>enableDnsSupport</em> both set to <code>true</code> on the VPC), AWS creates a <strong>private hosted zone</strong> that overrides the service's public DNS name. For example, creating an Interface Endpoint for S3 overrides <code>s3.us-east-1.amazonaws.com</code> so the VPC Resolver returns <code>10.0.3.47</code> instead of S3's public IP. The application does not change — it still calls the same hostname — but inside the VPC the resolver returns the ENI's private IP. Traffic to <code>10.0.3.47</code> goes to the endpoint, never reaching the internet.</p>
+      <p>Unlike a Gateway Endpoint, the Interface Endpoint ENI has a <strong>security group</strong>. You must manage inbound rules on it: by default the auto-created security group allows all traffic, but in practice you should restrict inbound to port 443 (or the service port) from the consumer's CIDR or security group. The EC2's outbound rules must also permit traffic to the ENI. This is the single most common Interface Endpoint failure mode — DNS resolves correctly to the ENI IP, but the ENI's security group blocks the connection, and the application sees a timeout indistinguishable from a routing failure.</p>
+
+      <h3>How PrivateLink traverses Hyperplane — no centralized proxy in the path</h3>
+      <p>The endpoint ENI is not a standard Nitro-card-backed network interface on a specific physical host. It is an <strong>endpoint ENI</strong> — a logical handle backed by the Hyperplane fleet. When traffic from your EC2's Nitro hypervisor is destined for the ENI's private IP, the hypervisor recognizes the destination as a PrivateLink endpoint and intercepts the packet, injecting it directly into the Hyperplane inter-host fabric rather than routing it through the subnet's standard path. Hyperplane performs a <strong>distributed DNAT at the source host</strong>: the packet's destination is rewritten from the endpoint ENI IP to the actual NLB target IP in the provider VPC, and the packet is forwarded across the physical datacenter fabric. The source IP is simultaneously translated to a Hyperplane-managed address in the provider's range, so the NLB sees a routable source for responses.</p>
+      <p>The consequence is that there is <strong>no single appliance or proxy in the PrivateLink path</strong> — no centralized "PrivateLink gateway" that all traffic must traverse. Each consumer EC2 host's Nitro hypervisor handles the translation independently. This is why PrivateLink has no per-endpoint throughput ceiling (it scales with the number of consumer hosts) and adds only microseconds of latency (one Hyperplane control-plane lookup, then direct physical-fabric forwarding). The availability of PrivateLink is identical to the availability of Hyperplane itself — the same fabric that powers NAT Gateway, Transit Gateway, and core VPC routing. If there is a Hyperplane event, PrivateLink, NAT GW, and TGW all degrade together.</p>
+
+      <div class="callout key">
+        <span class="tag">Key insight — PrivateLink is a service connector, not a network connector</span>
+        <p>VPC Peering and Transit Gateway expose <em>entire networks</em> to each other — any ENI in VPC-A can potentially reach any ENI in VPC-B once connected. PrivateLink exposes a <em>single service</em>: specifically, whatever is behind one NLB. A consumer who creates an Interface Endpoint to your service cannot scan your VPC, cannot reach other services in your VPC, and cannot determine your VPC's CIDR. The blast radius is one service, not one network. This also means PrivateLink works with <strong>overlapping CIDRs</strong> — two VPCs both using <code>10.0.0.0/16</code> can use PrivateLink between them with no conflicts, because there is no routing relationship between the VPCs at all. This is the architectural distinction that makes PrivateLink the correct pattern for SaaS exposure, multi-tenant data services, Databricks workspace connectivity, and cross-account resource access.</p>
+      </div>
+
+      <h3>The provider side — NLB, endpoint service, and acceptance workflow</h3>
+      <p>Exposing a service via PrivateLink requires three things. First, the service must run behind a <strong>Network Load Balancer</strong> — not an ALB. NLB is required because PrivateLink operates at L4; Hyperplane hands off a TCP/UDP connection to the NLB and relies on the NLB preserving the 5-tuple for connection tracking. ALBs operate at L7 (HTTP/HTTPS) and do not interoperate with the Hyperplane PrivateLink path. Second, you create a <strong>VPC Endpoint Service</strong> resource referencing the NLB ARN. AWS assigns a service name: <code>com.amazonaws.vpce.us-east-1.vpce-svc-xxx</code>. Third, configure <em>acceptance</em>: by default, new endpoint connection requests require manual approval from the service owner. You can whitelist specific AWS account IDs or enable auto-accept (appropriate for internal org services, not for multi-tenant SaaS). Share the service name with consumers; they create Interface Endpoints referencing it.</p>
+      <p>One operational nuance: the Endpoint Service is <strong>zonal within the provider VPC</strong>. It serves traffic in the AZs where the NLB has healthy targets. A consumer ENI in AZ-a connects to the NLB target in AZ-a. If the provider has no healthy NLB target in AZ-b, consumer ENIs in AZ-b fail to connect. Always ensure the NLB has healthy targets in every AZ where consumers will create endpoint ENIs — this is the provider-side HA obligation.</p>
+
+      <h3>Zonal design and the per-AZ ENI pattern</h3>
+      <p>Interface Endpoints are <strong>VPC-scoped</strong> (one endpoint per VPC per service), but ENIs are <strong>subnet-scoped</strong>. You specify one subnet per AZ when creating the endpoint; AWS creates one ENI per specified subnet. The VPC Resolver returns the ENI IP in the same AZ as the caller — no cross-AZ traffic. If you only specify one AZ's subnet, all EC2s in other AZs still reach the endpoint ENI, but traffic crosses AZs and incurs the standard <strong>$0.01/GB cross-AZ charge</strong> on top of the endpoint's $0.01/GB processing fee. On a platform reading terabytes per day from a service, this silently doubles endpoint cost and adds a single-AZ failure dependency.</p>
+      <p>Cost model: <strong>$0.01/hr per AZ</strong> where an ENI exists + <strong>$0.01/GB</strong> data processed through the endpoint. Three AZs × $0.01/hr = ~$21.60/month for the endpoint to exist at idle. For S3 specifically, compare this to the Gateway Endpoint which is completely free. Use Interface Endpoints for S3 only when you need the DNS override (for client libraries that bypass prefix-list routing) or when your architecture specifically requires the private DNS behavior.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 460" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'Segoe UI',Roboto,sans-serif">
+            <defs>
+              <marker id="pl-pur" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7E4FB5"/></marker>
+              <marker id="pl-org" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D9772E"/></marker>
+              <marker id="pl-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F9E8F"/></marker>
+              <marker id="pl-amb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C99A1E"/></marker>
+            </defs>
+            <text x="410" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1d24">PrivateLink — Hyperplane Distributed DNAT · No Centralized Proxy · Provider Setup</text>
+
+            <!-- ── CONSUMER VPC ── -->
+            <rect x="10" y="28" width="376" height="300" rx="9" fill="none" stroke="#3B73C4" stroke-width="1.8" stroke-dasharray="6,3"/>
+            <text x="22" y="24" font-size="10" font-weight="700" fill="#3B73C4">Consumer VPC</text>
+
+            <!-- EC2 -->
+            <rect x="24" y="40" width="170" height="62" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="36" y="58" font-size="10" font-weight="700" fill="#432068">EC2 App</text>
+            <text x="109" y="75" text-anchor="middle" font-size="9.5" fill="#5A6273">GET service.region.amazonaws.com</text>
+            <text x="109" y="89" text-anchor="middle" font-size="9" fill="#432068">resolves → 10.0.3.47 (ENI IP)</text>
+
+            <!-- DNS resolver callout -->
+            <rect x="24" y="116" width="170" height="46" rx="6" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1"/>
+            <text x="109" y="133" text-anchor="middle" font-size="9" font-weight="700" fill="#234D1A">VPC Resolver</text>
+            <text x="109" y="147" text-anchor="middle" font-size="8.5" fill="#4A9A3C">Private hosted zone override:</text>
+            <text x="109" y="159" text-anchor="middle" font-size="8.5" fill="#4A9A3C">service hostname → ENI private IP</text>
+            <line x1="109" y1="102" x2="109" y2="116" stroke="#4A9A3C" stroke-width="1.5" marker-end="url(#pl-grn)"/>
+
+            <!-- Endpoint ENI -->
+            <rect x="24" y="176" width="170" height="56" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.6"/>
+            <text x="109" y="195" text-anchor="middle" font-size="10" font-weight="700" fill="#432068">Interface Endpoint ENI</text>
+            <text x="109" y="209" text-anchor="middle" font-size="9.5" fill="#7E4FB5">10.0.3.47  (subnet private IP)</text>
+            <text x="109" y="223" text-anchor="middle" font-size="8.5" fill="#5A6273">SG: allow inbound 443 from EC2</text>
+            <line x1="109" y1="162" x2="109" y2="176" stroke="#7E4FB5" stroke-width="2" marker-end="url(#pl-pur)"/>
+
+            <!-- Nitro hypervisor intercept note -->
+            <rect x="204" y="40" width="170" height="70" rx="6" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.4"/>
+            <text x="289" y="58" text-anchor="middle" font-size="9.5" font-weight="700" fill="#6B4E06">Nitro Hypervisor</text>
+            <text x="289" y="73" text-anchor="middle" font-size="8.5" fill="#9A7010">Intercepts packet to ENI IP</text>
+            <text x="289" y="86" text-anchor="middle" font-size="8.5" fill="#9A7010">Does NOT route normally</text>
+            <text x="289" y="99" text-anchor="middle" font-size="8.5" fill="#9A7010">Injects into Hyperplane fabric</text>
+            <line x1="194" y1="71" x2="204" y2="71" stroke="#C99A1E" stroke-width="1.5" marker-end="url(#pl-amb)"/>
+
+            <!-- Hyperplane distributed DNAT -->
+            <rect x="204" y="124" width="170" height="88" rx="7" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.8"/>
+            <text x="289" y="143" text-anchor="middle" font-size="10" font-weight="700" fill="#6B4E06">▶ AWS Hyperplane</text>
+            <text x="289" y="158" text-anchor="middle" font-size="8.5" fill="#9A7010">Distributed DNAT at source host</text>
+            <text x="289" y="171" text-anchor="middle" font-size="8.5" fill="#5A6273">dst 10.0.3.47 → NLB target IP</text>
+            <text x="289" y="184" text-anchor="middle" font-size="8.5" fill="#5A6273">src → Hyperplane-managed addr</text>
+            <text x="289" y="197" text-anchor="middle" font-size="8.5" fill="#5A6273">No centralized proxy appliance</text>
+            <line x1="289" y1="110" x2="289" y2="124" stroke="#C99A1E" stroke-width="2" marker-end="url(#pl-amb)"/>
+
+            <!-- Physical fabric arrow -->
+            <rect x="204" y="226" width="170" height="36" rx="6" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="289" y="244" text-anchor="middle" font-size="9.5" font-weight="700" fill="#3A4252">Physical Datacenter Fabric</text>
+            <text x="289" y="257" text-anchor="middle" font-size="8.5" fill="#5A6273">Direct host-to-host forwarding</text>
+            <line x1="289" y1="212" x2="289" y2="226" stroke="#C99A1E" stroke-width="2" marker-end="url(#pl-amb)"/>
+
+            <!-- No NAT label -->
+            <rect x="24" y="244" width="170" height="34" rx="5" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.2"/>
+            <text x="109" y="259" text-anchor="middle" font-size="10" font-weight="700" fill="#234D1A">✓ No NAT GW · No $0.045/GB charge</text>
+            <text x="109" y="273" text-anchor="middle" font-size="9" fill="#4A9A3C">+ aws:SourceVpce enforcement enabled</text>
+
+            <!-- ── Arrow Consumer → Provider ── -->
+            <line x1="386" y1="240" x2="446" y2="240" stroke="#C99A1E" stroke-width="2.5" marker-end="url(#pl-amb)"/>
+            <rect x="386" y="228" width="60" height="14" rx="3" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1"/>
+            <text x="416" y="239" text-anchor="middle" font-size="8.5" fill="#6B4E06">Hyperplane</text>
+
+            <!-- ── PROVIDER VPC ── -->
+            <rect x="446" y="28" width="364" height="300" rx="9" fill="none" stroke="#D9772E" stroke-width="1.8" stroke-dasharray="6,3"/>
+            <text x="458" y="24" font-size="10" font-weight="700" fill="#D9772E">Provider VPC</text>
+
+            <!-- NLB -->
+            <rect x="460" y="40" width="160" height="62" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.6"/>
+            <text x="540" y="60" text-anchor="middle" font-size="10.5" font-weight="700" fill="#7A3D0E">Network Load Balancer</text>
+            <text x="540" y="75" text-anchor="middle" font-size="9" fill="#9A5020">(L4 — required, not ALB)</text>
+            <text x="540" y="89" text-anchor="middle" font-size="8.5" fill="#5A6273">Preserves 5-tuple for tracking</text>
+            <line x1="446" y1="220" x2="460" y2="71" stroke="#D9772E" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#pl-org)"/>
+
+            <!-- Endpoint Service -->
+            <rect x="460" y="118" width="160" height="72" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.4"/>
+            <text x="540" y="137" text-anchor="middle" font-size="9.5" font-weight="700" fill="#7A3D0E">VPC Endpoint Service</text>
+            <text x="540" y="152" text-anchor="middle" font-size="8.5" fill="#9A5020">com.amazonaws.vpce</text>
+            <text x="540" y="164" text-anchor="middle" font-size="8.5" fill="#9A5020">.region.vpce-svc-xxx</text>
+            <text x="540" y="178" text-anchor="middle" font-size="8.5" fill="#5A6273">Acceptance: manual or auto</text>
+            <line x1="540" y1="102" x2="540" y2="118" stroke="#D9772E" stroke-width="1.5" marker-end="url(#pl-org)"/>
+
+            <!-- Backend service -->
+            <rect x="460" y="206" width="160" height="56" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="540" y="225" text-anchor="middle" font-size="10" font-weight="700" fill="#0C4A43">Backend Service</text>
+            <text x="540" y="240" text-anchor="middle" font-size="9" fill="#1F9E8F">EC2 / ECS / Lambda</text>
+            <text x="540" y="254" text-anchor="middle" font-size="8.5" fill="#5A6273">Sees Hyperplane source IP</text>
+            <line x1="540" y1="190" x2="540" y2="206" stroke="#D9772E" stroke-width="1.5" marker-end="url(#pl-org)"/>
+
+            <!-- Account whitelist / acceptance callout -->
+            <rect x="638" y="40" width="160" height="130" rx="7" fill="#f6f7f9" stroke="#D5D9E0" stroke-width="1.2"/>
+            <text x="718" y="59" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1a1d24">Provider Setup Steps</text>
+            <text x="648" y="77" font-size="9" fill="#5A6273">① Service behind NLB</text>
+            <text x="648" y="93" font-size="9" fill="#5A6273">② Create Endpoint Service</text>
+            <text x="648" y="109" font-size="9" fill="#5A6273">③ Whitelist accounts</text>
+            <text x="648" y="125" font-size="9" fill="#5A6273">④ Share service name</text>
+            <text x="648" y="141" font-size="9" fill="#5A6273">⑤ Approve connections</text>
+            <text x="648" y="157" font-size="9" fill="#5A6273">   (if acceptance required)</text>
+
+            <!-- Zonal ENI note -->
+            <rect x="638" y="186" width="160" height="80" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.2"/>
+            <text x="718" y="205" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1E3A6B">Zonal ENI Pattern</text>
+            <text x="648" y="221" font-size="8.5" fill="#3B73C4">1 ENI per AZ specified</text>
+            <text x="648" y="235" font-size="8.5" fill="#3B73C4">Resolver returns same-AZ ENI</text>
+            <text x="648" y="249" font-size="8.5" fill="#C8425A">⚠ Missing AZ → cross-AZ</text>
+            <text x="648" y="262" font-size="8.5" fill="#C8425A">   transfer charges apply</text>
+
+            <!-- Bottom cost strip -->
+            <rect x="10" y="340" width="800" height="40" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+            <text x="410" y="357" text-anchor="middle" font-size="10" font-weight="700" fill="#432068">Interface Endpoint Cost: $0.01/hr per AZ (ENI exists) + $0.01/GB data processed</text>
+            <text x="410" y="373" text-anchor="middle" font-size="9.5" fill="#7E4FB5">3 AZs × $0.01/hr = ~$21.60/month idle  ·  Use Gateway Endpoint for S3 (free)  ·  Specify all AZ subnets to avoid cross-AZ charges</text>
+
+            <!-- Bottom note: no internet -->
+            <rect x="10" y="392" width="800" height="58" rx="7" fill="#f6f7f9" stroke="#D5D9E0" stroke-width="1.1"/>
+            <text x="410" y="412" text-anchor="middle" font-size="10" font-weight="700" fill="#1a1d24">PrivateLink availability = Hyperplane availability</text>
+            <text x="410" y="428" text-anchor="middle" font-size="9.5" fill="#5A6273">The same Hyperplane fabric powers NAT Gateway, Transit Gateway, and VPC routing. A regional Hyperplane event</text>
+            <text x="410" y="443" text-anchor="middle" font-size="9.5" fill="#5A6273">degrades PrivateLink, NAT GW, and TGW simultaneously — not independently. Plan failure modes accordingly.</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-6c.</b> PrivateLink end-to-end path. The consumer EC2's Nitro hypervisor intercepts the packet to the endpoint ENI IP and injects it into the Hyperplane fabric, which performs a distributed DNAT at the source host — rewriting the destination to the provider NLB's target IP and forwarding directly across the physical datacenter fabric. No centralized proxy exists in the path. Provider setup requires an NLB (not ALB), a VPC Endpoint Service, and an acceptance workflow. One ENI per AZ is needed to avoid cross-AZ charges; the VPC Resolver returns the same-AZ ENI IP for each caller.</figcaption>
+      </figure>
+
+      <h3>Why Interface Endpoint failures look like DNS problems — debug order</h3>
+      <ol>
+        <li><strong>DNS resolves to a public IP, not the ENI IP</strong> — <em>Enable Private DNS Names</em> is not set, or the VPC has <em>enableDnsHostnames</em> or <em>enableDnsSupport</em> set to <code>false</code>. Fix: enable both VPC DNS attributes; update the endpoint to enable private DNS. Verify with <code>nslookup service.region.amazonaws.com</code> — an RFC-1918 result (<code>10.x.x.x</code>) means the override is working.</li>
+        <li><strong>Connection timeout after correct DNS</strong> — the endpoint ENI's security group blocks inbound on the service port (443 for most AWS services), or the EC2's outbound SG blocks the connection. Fix: allow inbound 443 on the endpoint SG from the EC2's CIDR or SG ID; allow outbound 443 from the EC2.</li>
+        <li><strong>HTTP 403 from the service</strong> — a <code>aws:SourceVpce</code> condition on the bucket/resource policy requires a specific endpoint ID, but the request came through a different endpoint or the internet. Fix: verify the endpoint ID in the bucket policy matches the endpoint in use, or remove the condition if cross-endpoint access is intentional.</li>
+        <li><strong>Endpoint ENI in wrong AZ — traffic succeeds but incurs cross-AZ cost</strong> — subnets for some AZs were not specified when creating the endpoint. Fix: modify the endpoint to add the missing AZ subnets.</li>
+        <li><strong>Endpoint state is "pending" or "failed"</strong> — the endpoint service requires manual acceptance and the connection has not been approved. Fix: approve the connection from the service owner's account in the VPC console under <em>Endpoint Services → Endpoint connections</em>.</li>
+        <li><strong>Service not available via PrivateLink in this region</strong> — not all AWS services support Interface Endpoints in every region. Check AWS documentation for the specific service. Verify the service name is correct; an invalid service name creates an endpoint that stays in "pending" indefinitely.</li>
+      </ol>
+
+      <h3>Cost traps</h3>
+      <p><strong>Interface Endpoint for S3 instead of Gateway Endpoint:</strong> Interface Endpoint for S3 costs $0.01/GB; the Gateway Endpoint for S3 is free. On a data platform moving 10 TB/day through S3, the difference is ~$100/day. Always use the Gateway Endpoint for S3 and DynamoDB. Reserve Interface Endpoints for S3 for cases where the DNS override is specifically required (e.g., path-style S3 access in a client library that bypasses prefix-list routing).</p>
+      <p><strong>Idle per-AZ cost in large environments:</strong> Each AZ where an Interface Endpoint has an ENI costs $0.01/hr regardless of traffic. Three AZs × 10 Interface Endpoints (KMS, Secrets Manager, ECR, STS, SSM, etc.) = $0.30/hr = ~$216/month for endpoints to exist at idle. In dev/test VPCs with light traffic, this fixed cost can exceed the per-GB cost of routing the same services through a NAT GW. One pattern: deploy Interface Endpoints only in prod; dev/test workloads use NAT GW.</p>
+      <p><strong>Single-AZ endpoint with multi-AZ workloads:</strong> Underspecifying subnets at endpoint creation means consumers in other AZs pay $0.01/GB cross-AZ transfer on top of $0.01/GB endpoint processing — silently doubling the effective endpoint cost for multi-AZ workloads. Always specify all AZ subnets at creation time.</p>
 
       <div class="callout key">
         <span class="tag">Key distinction</span>
