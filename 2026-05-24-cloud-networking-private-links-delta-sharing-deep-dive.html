@@ -1139,6 +1139,10 @@
             <tr><td><strong>Security group?</strong></td><td>No (no ENI) — use endpoint IAM policy + <code>aws:SourceVpce</code> bucket condition</td><td>Yes — SG on each ENI; most common failure point</td></tr>
             <tr><td><strong>Same-region only?</strong></td><td><strong>Yes</strong> — prefix list covers same-region IPs only; cross-region traffic falls to NAT GW</td><td>Yes by default; cross-region via S3 MRAPs</td></tr>
             <tr><td><strong>Overlapping CIDRs?</strong></td><td>N/A</td><td>OK — no VPC-level routing relationship needed</td></tr>
+            <tr><td><strong>Security tagging</strong></td><td><code>aws:SourceVpce</code> set by Nitro hypervisor on the source host</td><td><code>aws:SourceVpce</code> set by Hyperplane; requires private DNS enabled</td></tr>
+            <tr><td><strong>Consumes subnet IPs?</strong></td><td>No — route table only, no ENI allocated</td><td>Yes — one private IP per AZ per endpoint</td></tr>
+            <tr><td><strong>Routing domain bridge</strong></td><td>Nitro intercepts at L3 based on known stable IPs; no bridge needed</td><td>Hyperplane bridges VPC routing domain → AWS internal service network</td></tr>
+            <tr><td><strong>Why it works</strong></td><td>Service has stable, published IP ranges → prefix list possible → route entry writable</td><td>Works for any service; IP stability not required because DNS+ENI sidesteps the IP problem</td></tr>
           </tbody>
         </table>
       </div>
@@ -1151,12 +1155,133 @@
         <p>The prefix list contains S3 IPs for the <strong>same region only</strong>. An EC2 in <code>us-east-1</code> accessing <code>s3.eu-west-1.amazonaws.com</code> will not match the <code>us-east-1</code> prefix list — the route falls through to <code>0.0.0.0/0 → nat-gw</code>, incurring the $0.045/GB charge even with a Gateway Endpoint deployed. Silent cost trap on multi-region data platforms. Cross-region options: NAT GW (default), Interface Endpoint in the remote region's VPC via TGW/peering, or S3 Multi-Region Access Points (MRAPs) + Interface Endpoint.</p>
       </div>
 
+      <h3>How <code>pl-xxxx</code> actually works at the data plane</h3>
+      <p>The <code>pl-63a5400a</code> you see in the route table is a <em>management-plane name</em> for a container of IP CIDRs — for S3 in us-east-1 that is currently 40+ ranges: <code>52.216.0.0/15</code>, <code>54.231.0.0/17</code>, <code>3.5.0.0/19</code>, <code>52.92.0.0/17</code>, and dozens more. The VPC router's data plane <strong>expands the prefix list to its constituent CIDRs and performs normal longest-prefix-match</strong> against all of them. At the packet-forwarding level, it is indistinguishable from having 40+ individual CIDR rows all pointing at the same next-hop. The <code>pl-xxxx</code> name exists purely so AWS can silently update those CIDRs when S3 adds new IP blocks — your route table entry never changes. Inspect the current CIDRs any time: <code>aws ec2 get-managed-prefix-list-entries --prefix-list-id pl-63a5400a</code></p>
+
+      <h3>What <code>vpce-xxx</code> actually is — a Nitro-level forwarding token, not an IP</h3>
+      <p><code>vpce-0abc1234</code> is not an IP address, not an ENI, and not a physical device. It is a <em>logical forwarding token</em> that the Nitro hypervisor on the sending EC2 host recognises as a special instruction. When a packet's destination IP matches one of the prefix-list CIDRs and the next-hop is a gateway endpoint, the Nitro hypervisor does three things: it does <strong>not</strong> forward the packet toward the Internet Gateway or NAT Gateway; it routes the packet directly to S3's fleet over AWS's internal network fabric; and it <strong>tags the request with the endpoint ID</strong> as metadata. That tag is what populates <code>aws:SourceVpce</code> on the S3 side — S3 receives the HTTP request already annotated with the vpce identity, which is how bucket policies enforce VPC-only access. Without this tag, S3 has no way to distinguish the request from one arriving over a public EIP.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 440" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Gateway endpoint packet flow: prefix list expansion, Nitro interception, tagging">
+            <defs>
+              <marker id="ep3-arr" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+            <!-- EC2 -->
+            <rect x="310" y="16" width="200" height="46" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.8"/>
+            <text x="410" y="38" text-anchor="middle" font-size="13" font-weight="600" fill="#0C4A43">EC2 Instance</text>
+            <text x="410" y="54" text-anchor="middle" font-size="11" fill="#0C4A43">dst: 52.216.42.1 (S3 public IP)</text>
+            <line x1="410" y1="62" x2="410" y2="98" stroke="#5A6273" stroke-width="1.5" marker-end="url(#ep3-arr)"/>
+            <!-- Route Table band -->
+            <rect x="20" y="100" width="780" height="130" rx="8" fill="#F5F6F8" stroke="#D5D9E0"/>
+            <text x="36" y="120" font-size="10.5" font-weight="700" fill="#5A6273" letter-spacing="0.5">VPC ROUTE TABLE — DATA PLANE EVALUATION</text>
+            <!-- Route entry -->
+            <rect x="40" y="128" width="320" height="52" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.8"/>
+            <text x="200" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#1E3A6B">pl-63a5400a  →  vpce-0abc1234</text>
+            <text x="200" y="168" text-anchor="middle" font-size="10.5" fill="#1E3A6B">Managed prefix list → Gateway Endpoint token</text>
+            <!-- Dashed line to expansion box -->
+            <line x1="360" y1="154" x2="418" y2="154" stroke="#3B73C4" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#ep3-arr)"/>
+            <!-- Prefix list expansion -->
+            <rect x="420" y="120" width="360" height="98" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="600" y="140" text-anchor="middle" font-size="11" font-weight="700" fill="#432068">pl-63a5400a expands to 40+ CIDRs:</text>
+            <text x="600" y="157" text-anchor="middle" font-size="10.5" fill="#432068">52.216.0.0/15  ·  54.231.0.0/17</text>
+            <text x="600" y="173" text-anchor="middle" font-size="10.5" fill="#432068">3.5.0.0/19  ·  52.92.0.0/17  · …</text>
+            <text x="600" y="190" text-anchor="middle" font-size="10" fill="#6E4498">Longest-prefix-match: 52.216.42.1 → hit</text>
+            <text x="600" y="206" text-anchor="middle" font-size="10" font-weight="700" fill="#6E4498">Next-hop: vpce-0abc1234 (Nitro token)</text>
+            <!-- Arrow to Nitro -->
+            <line x1="410" y1="230" x2="410" y2="268" stroke="#5A6273" stroke-width="1.5" marker-end="url(#ep3-arr)"/>
+            <!-- Nitro band -->
+            <rect x="20" y="270" width="780" height="80" rx="8" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.6"/>
+            <text x="36" y="290" font-size="10.5" font-weight="700" fill="#7A3D0E" letter-spacing="0.5">NITRO HYPERVISOR (SOURCE HOST)</text>
+            <text x="410" y="314" text-anchor="middle" font-size="13" font-weight="600" fill="#7A3D0E">Intercepts packet · routes to internal fabric · skips IGW &amp; NAT GW</text>
+            <text x="410" y="332" text-anchor="middle" font-size="11" fill="#7A3D0E">Tags request metadata: aws:SourceVpce = vpce-0abc1234</text>
+            <!-- Skipped box -->
+            <rect x="28" y="293" width="120" height="36" rx="6" fill="#F5F6F8" stroke="#B0B8C8" stroke-width="1.2"/>
+            <text x="88" y="310" text-anchor="middle" font-size="10" fill="#9AA3B2">IGW / NAT GW</text>
+            <text x="88" y="324" text-anchor="middle" font-size="10" fill="#9AA3B2">SKIPPED ✗</text>
+            <line x1="28" y1="293" x2="42" y2="307" stroke="#C8425A" stroke-width="1.8"/>
+            <line x1="42" y1="293" x2="28" y2="307" stroke="#C8425A" stroke-width="1.8"/>
+            <!-- Arrow to fabric -->
+            <line x1="410" y1="350" x2="410" y2="382" stroke="#5A6273" stroke-width="1.5" marker-end="url(#ep3-arr)"/>
+            <!-- Internal Fabric -->
+            <rect x="20" y="384" width="480" height="46" rx="7" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="260" y="412" text-anchor="middle" font-size="13" font-weight="600" fill="#3A4252">AWS Internal Network Fabric</text>
+            <line x1="500" y1="407" x2="540" y2="407" stroke="#5A6273" stroke-width="1.5" marker-end="url(#ep3-arr)"/>
+            <!-- S3 Fleet -->
+            <rect x="542" y="384" width="258" height="46" rx="7" fill="#EADDF7" stroke="#111418" stroke-width="2.5"/>
+            <text x="671" y="406" text-anchor="middle" font-size="13" font-weight="700" fill="#432068">S3 Fleet</text>
+            <text x="671" y="422" text-anchor="middle" font-size="10.5" fill="#432068">receives aws:SourceVpce = vpce-0abc1234</text>
+            <circle cx="537" cy="384" r="5" fill="#111418"/>
+          </svg>
+          <div class="legend">
+            <span><i style="background:#D6F0EE;border-color:#1F9E8F"></i>EC2</span>
+            <span><i style="background:#DCE8FB;border-color:#3B73C4"></i>Route entry</span>
+            <span><i style="background:#EADDF7;border-color:#7E4FB5"></i>Prefix list expansion / S3 Fleet</span>
+            <span><i style="background:#FCE4D4;border-color:#D9772E"></i>Nitro Hypervisor</span>
+            <span><i style="background:#E8EBF0;border-color:#8A94A6"></i>AWS Internal Fabric</span>
+          </div>
+        </div>
+        <figcaption><b>Figure A-6d.</b> Gateway Endpoint data-plane mechanics. The prefix list <code>pl-63a5400a</code> expands to 40+ CIDRs at the data plane; the VPC router does normal longest-prefix-match against all of them. <code>vpce-0abc1234</code> is a Nitro hypervisor token — not an IP — that causes the packet to bypass IGW/NAT and reach S3 over the internal fabric, tagged with endpoint identity for <code>aws:SourceVpce</code> policy evaluation.</figcaption>
+      </figure>
+
+      <div class="callout key">
+        <span class="tag">Key mechanic</span>
+        <p>A Gateway Endpoint route entry is really two things simultaneously: a <em>data-plane CIDR expansion</em> (the managed prefix list expands to individual CIDRs at forwarding time) and a <em>Nitro-level forwarding policy</em> (the <code>vpce-xxx</code> token is not a network hop, it is an instruction to the hypervisor). Neither is a traditional IP next-hop.</p>
+      </div>
+
       <h3>The <code>aws:SourceVpce</code> condition — enforcing VPC-only bucket access</h3>
       <p>Add <code>"Condition": {"StringNotEquals": {"aws:SourceVpce": "vpce-xxxx"}}</code> to a bucket <code>Deny</code> statement and the bucket rejects any request that does not arrive through that specific endpoint — regardless of IAM identity. <code>aws:SourceVpce</code> evaluates the <strong>network path</strong>, not the credentials. This is the correct production posture: a stolen IAM key cannot exfiltrate data from outside the authorized VPC.</p>
       <p>This is also why Delta Sharing's pre-signed URL approach breaks when <code>aws:SourceVpce</code> is present. A pre-signed URL carries valid SigV4 credentials but encodes no routing information — a recipient hitting the URL from their internet egress IP is denied on the path condition. The <strong>Delta Sharing Network Gateway</strong> resolves this by fetching from S3 inside the provider's VPC (satisfying the endpoint condition) and proxying the bytes to the recipient over HTTPS.</p>
 
       <h3>Why Gateway Endpoints only exist for S3 and DynamoDB</h3>
       <p>Route-table injection requires a service to be reachable at a stable, published, non-overlapping IP range — something only S3 and DynamoDB have as AWS-managed prefix lists. Most other services (KMS, Secrets Manager, ECR, STS, etc.) share IP space or change IPs too frequently. More fundamentally, prefix-list redirection works without DNS override, which is only safe when the service hostname is irrelevant to the path — for everything else, the application must connect to a private IP, which requires DNS override, which requires an ENI. That means Interface Endpoint.</p>
+      <p>The deciding factor is whether the service's IP ranges are stable and enumerable. S3 and DynamoDB have always had their ranges published in AWS's <code>ip-ranges.json</code>. Services like SQS, KMS, Secrets Manager, and SSM are accessed by DNS hostname; their backend IPs are opaque, not published, and scale dynamically as capacity adjusts. There is no prefix list to build, and therefore no route table entry to write.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 280" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="S3 and DynamoDB with stable published IPs vs other services with opaque dynamic IPs">
+            <!-- Left: S3 / DynamoDB -->
+            <rect x="20" y="10" width="370" height="260" rx="9" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.6"/>
+            <text x="205" y="36" text-anchor="middle" font-size="13" font-weight="700" fill="#234D1A">S3 and DynamoDB</text>
+            <text x="205" y="54" text-anchor="middle" font-size="11" fill="#234D1A">✓ Gateway Endpoint supported</text>
+            <rect x="40" y="68" width="330" height="52" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.4"/>
+            <text x="205" y="89" text-anchor="middle" font-size="11.5" font-weight="600" fill="#0C4A43">Stable, published IP ranges</text>
+            <text x="205" y="107" text-anchor="middle" font-size="10.5" fill="#0C4A43">Listed in ip-ranges.json · AWS-controlled</text>
+            <rect x="40" y="132" width="330" height="52" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="205" y="153" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1E3A6B">Managed prefix list (pl-xxxx) possible</text>
+            <text x="205" y="171" text-anchor="middle" font-size="10.5" fill="#1E3A6B">AWS owns · silently updated · route table stable</text>
+            <rect x="40" y="196" width="330" height="52" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.4"/>
+            <text x="205" y="217" text-anchor="middle" font-size="11.5" font-weight="600" fill="#432068">Route-table CIDR interception</text>
+            <text x="205" y="235" text-anchor="middle" font-size="10.5" fill="#432068">No DNS · No ENI · No per-AZ cost · Free</text>
+            <!-- Right: Other services -->
+            <rect x="430" y="10" width="370" height="260" rx="9" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.6"/>
+            <text x="615" y="36" text-anchor="middle" font-size="13" font-weight="700" fill="#6E1626">SQS · KMS · Secrets Manager · SSM…</text>
+            <text x="615" y="54" text-anchor="middle" font-size="11" fill="#6E1626">✗ Gateway Endpoint not possible</text>
+            <rect x="450" y="68" width="330" height="52" rx="7" fill="#F5F6F8" stroke="#B0B8C8" stroke-width="1.4"/>
+            <text x="615" y="89" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5A6273">Opaque, dynamic IP ranges</text>
+            <text x="615" y="107" text-anchor="middle" font-size="10.5" fill="#5A6273">Not published · fleet scales freely</text>
+            <rect x="450" y="132" width="330" height="52" rx="7" fill="#F5F6F8" stroke="#B0B8C8" stroke-width="1.4"/>
+            <text x="615" y="153" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5A6273">No prefix list possible</text>
+            <text x="615" y="171" text-anchor="middle" font-size="10.5" fill="#5A6273">Can't enumerate → can't write route entry</text>
+            <rect x="450" y="196" width="330" height="52" rx="7" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.8"/>
+            <text x="615" y="214" text-anchor="middle" font-size="11.5" font-weight="600" fill="#7A3D0E">Requires Interface Endpoint</text>
+            <text x="615" y="232" text-anchor="middle" font-size="10.5" fill="#7A3D0E">DNS override + ENI + Hyperplane bridge</text>
+          </svg>
+        </div>
+        <figcaption><b>Figure A-6e.</b> Why only S3 and DynamoDB qualify for Gateway Endpoints. The critical property is stable, published IP ranges: without them, there is no prefix list to build and no route-table entry to write. Every other service requires the Interface Endpoint path.</figcaption>
+      </figure>
+
+      <div class="callout note">
+        <span class="tag">Historical context</span>
+        <p>Gateway Endpoints (2017) predate Interface Endpoints / PrivateLink (2018). They were AWS's first private-access mechanism. When PrivateLink launched as a generalised solution for any service, AWS kept Gateway Endpoints for S3 and DynamoDB because they work, are completely free (no ENI hourly charge, no data-processing fee), and require no per-AZ planning. They are effectively a legacy mechanism with no reason to deprecate — but PrivateLink is the right mental model for everything else.</p>
+      </div>
 
       <figure>
         <div class="diagram">
@@ -1598,6 +1723,114 @@
       <p>When you create an Interface Endpoint and specify subnets (one per AZ), AWS creates one <strong>ENI per subnet</strong>. Each ENI receives a private IP from that subnet's CIDR — e.g., <code>10.0.3.47</code>. These are visible in the EC2 console as "interface endpoint ENIs." Simultaneously, if <em>Enable Private DNS Names</em> is selected (requires <em>enableDnsHostnames</em> and <em>enableDnsSupport</em> both set to <code>true</code> on the VPC), AWS creates a <strong>private hosted zone</strong> that overrides the service's public DNS name. For example, creating an Interface Endpoint for S3 overrides <code>s3.us-east-1.amazonaws.com</code> so the VPC Resolver returns <code>10.0.3.47</code> instead of S3's public IP. The application does not change — it still calls the same hostname — but inside the VPC the resolver returns the ENI's private IP. Traffic to <code>10.0.3.47</code> goes to the endpoint, never reaching the internet.</p>
       <p>Unlike a Gateway Endpoint, the Interface Endpoint ENI has a <strong>security group</strong>. You must manage inbound rules on it: by default the auto-created security group allows all traffic, but in practice you should restrict inbound to port 443 (or the service port) from the consumer's CIDR or security group. The EC2's outbound rules must also permit traffic to the ENI. This is the single most common Interface Endpoint failure mode — DNS resolves correctly to the ENI IP, but the ENI's security group blocks the connection, and the application sees a timeout indistinguishable from a routing failure.</p>
 
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 480" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Interface Endpoint flow: DNS override steps, ENI, Nitro, Hyperplane, backend fleet">
+            <defs>
+              <marker id="ep3-arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+              <marker id="ep3-arr3b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#C8425A"/>
+              </marker>
+            </defs>
+            <!-- VPC boundary -->
+            <rect x="10" y="8" width="580" height="462" rx="10" fill="none" stroke="#D5D9E0" stroke-width="1.5" stroke-dasharray="6,4"/>
+            <text x="26" y="30" font-size="10" font-weight="700" fill="#8A94A6" letter-spacing="0.5">YOUR VPC  (10.0.0.0/16)</text>
+            <!-- EC2 -->
+            <rect x="30" y="44" width="180" height="46" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.8"/>
+            <text x="120" y="65" text-anchor="middle" font-size="13" font-weight="600" fill="#0C4A43">EC2 Instance</text>
+            <text x="120" y="81" text-anchor="middle" font-size="10.5" fill="#0C4A43">calls sqs.us-east-1.amazonaws.com</text>
+            <!-- DNS query -->
+            <line x1="210" y1="67" x2="310" y2="67" stroke="#C8425A" stroke-width="1.5" marker-end="url(#ep3-arr3b)"/>
+            <rect x="218" y="54" width="84" height="18" rx="9" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="260" y="67" text-anchor="middle" font-size="10" fill="#C8425A">① DNS query</text>
+            <!-- Route 53 PHZ -->
+            <rect x="312" y="44" width="220" height="56" rx="7" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.6"/>
+            <text x="422" y="65" text-anchor="middle" font-size="12" font-weight="600" fill="#6E1626">Route 53 Private Zone</text>
+            <text x="422" y="81" text-anchor="middle" font-size="10.5" fill="#6E1626">sqs.us-east-1.amazonaws.com → 10.0.3.47</text>
+            <text x="422" y="95" text-anchor="middle" font-size="9.5" fill="#6E1626">(private DNS override — same hostname, private IP)</text>
+            <!-- DNS response -->
+            <line x1="312" y1="90" x2="210" y2="106" stroke="#C8425A" stroke-width="1.5" marker-end="url(#ep3-arr3b)"/>
+            <rect x="218" y="90" width="86" height="18" rx="9" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="261" y="103" text-anchor="middle" font-size="10" fill="#C8425A">② 10.0.3.47</text>
+            <!-- Packet to ENI -->
+            <line x1="120" y1="110" x2="120" y2="178" stroke="#5A6273" stroke-width="1.5" marker-end="url(#ep3-arr3)"/>
+            <rect x="42" y="130" width="156" height="18" rx="9" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="120" y="143" text-anchor="middle" font-size="10" fill="#3A4252">③ packet dst: 10.0.3.47</text>
+            <!-- Nitro band -->
+            <rect x="20" y="180" width="560" height="70" rx="8" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.6"/>
+            <text x="36" y="198" font-size="10" font-weight="700" fill="#7A3D0E" letter-spacing="0.5">NITRO HYPERVISOR</text>
+            <text x="300" y="222" text-anchor="middle" font-size="12" font-weight="600" fill="#7A3D0E">Recognises 10.0.3.47 as Hyperplane endpoint</text>
+            <text x="300" y="240" text-anchor="middle" font-size="11" fill="#7A3D0E">Encapsulates · routes to Hyperplane substrate  (no normal VPC routing)</text>
+            <!-- ENI badge -->
+            <rect x="420" y="188" width="148" height="52" rx="7" fill="#F5F6F8" stroke="#111418" stroke-width="2.5"/>
+            <text x="494" y="209" text-anchor="middle" font-size="12" font-weight="700" fill="#111418">ENI (vpce)</text>
+            <text x="494" y="225" text-anchor="middle" font-size="10.5" fill="#3A4252">IP: 10.0.3.47</text>
+            <text x="494" y="238" text-anchor="middle" font-size="10" fill="#5A6273">virtual · no EC2 behind it</text>
+            <circle cx="570" cy="188" r="5" fill="#111418"/>
+            <!-- Arrow to Hyperplane -->
+            <line x1="300" y1="250" x2="300" y2="298" stroke="#5A6273" stroke-width="1.5" marker-end="url(#ep3-arr3)"/>
+            <rect x="218" y="260" width="164" height="18" rx="9" fill="#fff" stroke="#D5D9E0" stroke-width="0.8"/>
+            <text x="300" y="273" text-anchor="middle" font-size="10" fill="#3A4252">④ encapsulated to substrate</text>
+            <!-- Hyperplane band -->
+            <rect x="20" y="300" width="560" height="70" rx="8" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.6"/>
+            <text x="36" y="318" font-size="10" font-weight="700" fill="#7A3D0E" letter-spacing="0.5">HYPERPLANE FLEET NODE (AWS SUBSTRATE)</text>
+            <text x="300" y="342" text-anchor="middle" font-size="12" font-weight="600" fill="#7A3D0E">Decapsulates · health-checks · DNAT to backend</text>
+            <text x="300" y="360" text-anchor="middle" font-size="11" fill="#7A3D0E">Load-balances across service fleet · no centralized proxy</text>
+            <!-- AWS internal band -->
+            <rect x="20" y="390" width="560" height="68" rx="8" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
+            <text x="36" y="408" font-size="10" font-weight="700" fill="#5A6273" letter-spacing="0.5">AWS INTERNAL SERVICE NETWORK</text>
+            <text x="300" y="432" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">SQS / KMS / Secrets Manager fleet</text>
+            <text x="300" y="449" text-anchor="middle" font-size="10.5" fill="#5A6273">Opaque IPs · scales dynamically · not routable from VPC</text>
+            <line x1="300" y1="370" x2="300" y2="388" stroke="#5A6273" stroke-width="1.5" marker-end="url(#ep3-arr3)"/>
+            <!-- Public internet crossed out -->
+            <rect x="640" y="44" width="166" height="56" rx="7" fill="#F5F6F8" stroke="#B0B8C8" stroke-width="1.2"/>
+            <text x="723" y="67" text-anchor="middle" font-size="11.5" fill="#9AA3B2">Public Internet</text>
+            <text x="723" y="83" text-anchor="middle" font-size="10.5" fill="#9AA3B2">Not used</text>
+            <line x1="648" y1="52" x2="660" y2="64" stroke="#C8425A" stroke-width="2"/>
+            <line x1="660" y1="52" x2="648" y2="64" stroke="#C8425A" stroke-width="2"/>
+          </svg>
+          <div class="legend">
+            <span><i style="background:#D6F0EE;border-color:#1F9E8F"></i>EC2</span>
+            <span><i style="background:#FAD9DC;border-color:#C8425A"></i>DNS / R53 Private Zone</span>
+            <span><i style="background:#FCE4D4;border-color:#D9772E"></i>Nitro / Hyperplane</span>
+            <span><i style="background:#E8EBF0;border-color:#8A94A6"></i>AWS Internal Network</span>
+            <span><i style="background:#F5F6F8;border-color:#111418"></i>ENI (virtual entry point)</span>
+          </div>
+        </div>
+        <figcaption><b>Figure A-6f.</b> Interface Endpoint flow with numbered steps. DNS override ①② redirects the service hostname to the ENI's private IP inside the VPC. Nitro intercepts the packet ③ — recognising the ENI IP as a Hyperplane endpoint, not a real EC2 — and encapsulates it to the Hyperplane substrate ④. Hyperplane performs DNAT to a healthy fleet backend. The public internet is never involved.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="diagram">
+          <div class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#FCE4D4','primaryBorderColor':'#D9772E','primaryTextColor':'#7A3D0E','lineColor':'#5A6273','fontFamily':'-apple-system, Segoe UI, Roboto, sans-serif','fontSize':'13px'}}}%%
+sequenceDiagram
+    autonumber
+    participant EC2 as EC2 Instance
+    participant R53 as Route 53 (Private Zone)
+    participant Nitro as Nitro Hypervisor
+    participant HP as Hyperplane Node
+    participant SVC as SQS / KMS Fleet
+
+    EC2->>R53: resolve sqs.us-east-1.amazonaws.com
+    R53-->>EC2: 10.0.3.47 (ENI IP — private DNS override)
+    EC2->>Nitro: packet dst=10.0.3.47
+    Note over Nitro: Recognises 10.0.3.47 as Hyperplane endpoint<br/>No EC2 instance behind it — virtual entry point
+    Nitro->>HP: encapsulated packet (Nitro substrate tunnel)
+    HP->>HP: Decapsulate · health-check · select backend
+    HP->>SVC: DNAT to fleet member (opaque backend IP)
+    SVC-->>HP: response
+    HP-->>Nitro: SNAT response back toward EC2
+    Nitro-->>EC2: response arrives (src: 10.0.3.47)
+          </div>
+        </div>
+        <figcaption><b>Figure A-6g.</b> Interface Endpoint request lifecycle as a sequence. The application's view: a normal HTTPS request/response to a hostname. The underlying reality: DNS override, Nitro encapsulation, Hyperplane DNAT to an opaque fleet backend, and SNAT on the return path — all transparent to the caller.</figcaption>
+      </figure>
+
       <h3>How PrivateLink traverses Hyperplane — no centralized proxy in the path</h3>
       <p>The endpoint ENI is not a standard Nitro-card-backed network interface on a specific physical host. It is an <strong>endpoint ENI</strong> — a logical handle backed by the Hyperplane fleet. When traffic from your EC2's Nitro hypervisor is destined for the ENI's private IP, the hypervisor recognizes the destination as a PrivateLink endpoint and intercepts the packet, injecting it directly into the Hyperplane inter-host fabric rather than routing it through the subnet's standard path. Hyperplane performs a <strong>distributed DNAT at the source host</strong>: the packet's destination is rewritten from the endpoint ENI IP to the actual NLB target IP in the provider VPC, and the packet is forwarded across the physical datacenter fabric. The source IP is simultaneously translated to a Hyperplane-managed address in the provider's range, so the NLB sees a routable source for responses.</p>
       <p>The consequence is that there is <strong>no single appliance or proxy in the PrivateLink path</strong> — no centralized "PrivateLink gateway" that all traffic must traverse. Each consumer EC2 host's Nitro hypervisor handles the translation independently. This is why PrivateLink has no per-endpoint throughput ceiling (it scales with the number of consumer hosts) and adds only microseconds of latency (one Hyperplane control-plane lookup, then direct physical-fabric forwarding). The availability of PrivateLink is identical to the availability of Hyperplane itself — the same fabric that powers NAT Gateway, Transit Gateway, and core VPC routing. If there is a Hyperplane event, PrivateLink, NAT GW, and TGW all degrade together.</p>
@@ -1740,6 +1973,80 @@
           </svg>
         </div>
         <figcaption><b>Figure A-6c.</b> PrivateLink end-to-end path. The consumer EC2's Nitro hypervisor intercepts the packet to the endpoint ENI IP and injects it into the Hyperplane fabric, which performs a distributed DNAT at the source host — rewriting the destination to the provider NLB's target IP and forwarding directly across the physical datacenter fabric. No centralized proxy exists in the path. Provider setup requires an NLB (not ALB), a VPC Endpoint Service, and an acceptance workflow. One ENI per AZ is needed to avoid cross-AZ charges; the VPC Resolver returns the same-AZ ENI IP for each caller.</figcaption>
+      </figure>
+
+      <h3>Why DNS alone cannot replace the ENI</h3>
+      <p>A natural question: why not skip the ENI entirely and have the private DNS record resolve directly to the actual SQS/KMS backend IP? Fewer moving parts, no ENI cost, no Hyperplane indirection. It breaks on one hard structural constraint.</p>
+      <p>The SQS fleet, KMS nodes, and every other AWS managed service run on <strong>AWS's internal service network</strong> — a routing domain that is completely separate from your VPC. Your VPC has a CIDR (<code>10.0.0.0/16</code>) and a route table with entries for your VPC CIDR, peered VPCs, and attached gateways. It has <em>no route</em> to AWS's internal service network. Even if Route 53 handed your EC2 the actual IP of an SQS server, the packet would hit your VPC router, find no matching route, and get dropped. Knowing the destination IP is useless without a routable path.</p>
+      <p>The ENI solves exactly this: it lives in <em>your subnet's CIDR</em> — a VPC-routable address. Your router knows how to reach <code>10.0.3.47</code>. From there, Hyperplane bridges the gap into the internal service network. Two additional reasons DNS-direct fails even if you punched a route through: (1) <strong>fleet churn</strong> — service backends appear and disappear on timescales of minutes; DNS TTLs of even 5s produce stale IPs and connection errors, while Hyperplane health-checks in real time; (2) <strong>security context lost</strong> — the <code>aws:SourceVpce</code> condition key is set by Hyperplane as it processes the request; bypassing Hyperplane means no endpoint identity tag is attached, so any resource policy gating on it silently denies.</p>
+
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 820 320" xmlns="http://www.w3.org/2000/svg"
+               font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
+               role="img" aria-label="Two separate routing domains: VPC (left) and AWS internal service network (right), bridged by ENI and Hyperplane">
+            <defs>
+              <marker id="ep3-arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+            </defs>
+            <!-- Left: VPC -->
+            <rect x="10" y="10" width="310" height="300" rx="10" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.8"/>
+            <text x="165" y="36" text-anchor="middle" font-size="13" font-weight="700" fill="#0C4A43">Your VPC (10.0.0.0/16)</text>
+            <rect x="30" y="52" width="140" height="44" rx="7" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.6"/>
+            <text x="100" y="70" text-anchor="middle" font-size="12" font-weight="600" fill="#0C4A43">EC2  10.0.1.5</text>
+            <text x="100" y="86" text-anchor="middle" font-size="10" fill="#0C4A43">wants SQS</text>
+            <!-- ENI -->
+            <rect x="180" y="52" width="120" height="44" rx="7" fill="#F5F6F8" stroke="#111418" stroke-width="2.5"/>
+            <text x="240" y="70" text-anchor="middle" font-size="12" font-weight="700" fill="#111418">ENI</text>
+            <text x="240" y="86" text-anchor="middle" font-size="10.5" fill="#3A4252">10.0.3.47  ✓ routable</text>
+            <circle cx="300" cy="52" r="5" fill="#111418"/>
+            <!-- Route table -->
+            <rect x="30" y="114" width="270" height="80" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4"/>
+            <text x="165" y="134" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1E3A6B">VPC Route Table</text>
+            <text x="165" y="152" text-anchor="middle" font-size="10.5" fill="#1E3A6B">10.0.0.0/16  →  local      ✓</text>
+            <text x="165" y="168" text-anchor="middle" font-size="10.5" fill="#1E3A6B">10.0.3.47    →  ENI        ✓ routable</text>
+            <text x="165" y="184" text-anchor="middle" font-size="10" fill="#C8425A">172.x.x.x  (SQS fleet)  → ??? ✗ no route</text>
+            <!-- Why DNS fails box -->
+            <rect x="30" y="212" width="270" height="80" rx="7" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.4"/>
+            <text x="165" y="232" text-anchor="middle" font-size="11" font-weight="700" fill="#C8425A">"DNS direct to backend" fails</text>
+            <text x="165" y="250" text-anchor="middle" font-size="10.5" fill="#6E1626">DNS gives EC2 a SQS fleet IP</text>
+            <text x="165" y="267" text-anchor="middle" font-size="10.5" fill="#6E1626">VPC router: no route → drops packet</text>
+            <text x="165" y="284" text-anchor="middle" font-size="10" font-weight="700" fill="#C8425A">+ DNS TTLs lag fleet churn + no SourceVpce tag</text>
+            <!-- Bridge: Hyperplane -->
+            <rect x="328" y="120" width="164" height="72" rx="8" fill="#FCE4D4" stroke="#D9772E" stroke-width="2"/>
+            <text x="410" y="146" text-anchor="middle" font-size="12" font-weight="700" fill="#7A3D0E">Hyperplane</text>
+            <text x="410" y="163" text-anchor="middle" font-size="10.5" fill="#7A3D0E">bridges the two</text>
+            <text x="410" y="179" text-anchor="middle" font-size="10.5" fill="#7A3D0E">routing domains</text>
+            <!-- Arrows -->
+            <line x1="300" y1="74" x2="328" y2="148" stroke="#5A6273" stroke-width="1.5" marker-end="url(#ep3-arr5)"/>
+            <line x1="492" y1="156" x2="520" y2="156" stroke="#5A6273" stroke-width="1.5" marker-end="url(#ep3-arr5)"/>
+            <!-- Right: AWS Internal -->
+            <rect x="500" y="10" width="310" height="300" rx="10" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.8"/>
+            <text x="655" y="36" text-anchor="middle" font-size="13" font-weight="700" fill="#432068">AWS Internal Service Network</text>
+            <text x="655" y="52" text-anchor="middle" font-size="11" fill="#432068">Opaque addressing · not routable from VPC</text>
+            <rect x="520" y="60" width="270" height="44" rx="7" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.6"/>
+            <text x="655" y="80" text-anchor="middle" font-size="12" font-weight="600" fill="#432068">SQS / KMS / Secrets Manager fleet</text>
+            <text x="655" y="96" text-anchor="middle" font-size="10.5" fill="#432068">Dynamic IPs · opaque · scale freely</text>
+            <rect x="520" y="120" width="270" height="80" rx="7" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.4"/>
+            <text x="655" y="140" text-anchor="middle" font-size="11" font-weight="700" fill="#234D1A">Hyperplane bridges the gap</text>
+            <text x="655" y="158" text-anchor="middle" font-size="10.5" fill="#234D1A">Encapsulated packet arrives via ENI</text>
+            <text x="655" y="175" text-anchor="middle" font-size="10.5" fill="#234D1A">DNAT → picks healthy fleet member</text>
+            <text x="655" y="191" text-anchor="middle" font-size="10" fill="#234D1A">Customer never sees backend IPs</text>
+            <rect x="520" y="216" width="270" height="80" rx="7" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.4"/>
+            <text x="655" y="236" text-anchor="middle" font-size="11" font-weight="700" fill="#6B4E06">Why DNS+TTL also can't work</text>
+            <text x="655" y="254" text-anchor="middle" font-size="10.5" fill="#6B4E06">Fleet scales every few minutes</text>
+            <text x="655" y="271" text-anchor="middle" font-size="10.5" fill="#6B4E06">Even 5s TTL → stale IP → connection error</text>
+            <text x="655" y="288" text-anchor="middle" font-size="10" fill="#6B4E06">Hyperplane health-checks in real time</text>
+          </svg>
+          <div class="legend">
+            <span><i style="background:#D6F0EE;border-color:#1F9E8F"></i>VPC routing domain</span>
+            <span><i style="background:#F5F6F8;border-color:#111418"></i>ENI (bridge entry point)</span>
+            <span><i style="background:#FCE4D4;border-color:#D9772E"></i>Hyperplane (bridge)</span>
+            <span><i style="background:#EADDF7;border-color:#7E4FB5"></i>AWS internal service network</span>
+          </div>
+        </div>
+        <figcaption><b>Figure A-6h.</b> Two separate routing domains. Your VPC route table can reach <code>10.0.3.47</code> (the ENI) but has no route to AWS internal fleet IPs. DNS could give EC2 a SQS fleet IP, but the VPC router would drop the packet — no route exists. DNS TTL lag and the loss of the <code>aws:SourceVpce</code> tag are secondary problems on top of this fundamental routing-domain gap. The ENI + Hyperplane is the only bridge.</figcaption>
       </figure>
 
       <h3>Why Interface Endpoint failures look like DNS problems — debug order</h3>
@@ -2466,6 +2773,16 @@ sequenceDiagram
         <dd>Traffic flowing A→B→C through a network hub. VPC Peering explicitly prohibits it; Transit Gateway enables it by design.</dd>
         <dt>VPC Endpoint Service</dt>
         <dd>The provider-side construct for AWS PrivateLink. Backed by a Network Load Balancer; assigned a service name (com.amazonaws.vpce.region.vpce-svc-xxx). Consumers reference this name when creating Interface Endpoints.</dd>
+        <dt>Managed Prefix List (<code>pl-xxxx</code>)</dt>
+        <dd>An AWS-owned named container of IP CIDRs usable as a route-table destination or security group source. The VPC router expands it to constituent CIDRs at the data plane and performs normal longest-prefix-match. AWS updates the entries when service IP ranges change; references to the list require no maintenance.</dd>
+        <dt>Gateway Endpoint / <code>vpce-xxx</code> as a route target</dt>
+        <dd>A VPC endpoint type that injects a managed-prefix-list route into one or more route tables. The next-hop token (<code>vpce-xxx</code>) is a Nitro hypervisor–level forwarding instruction — not an IP address, not an ENI. Supported only for S3 and DynamoDB; free; no ENI, no per-AZ cost, no DNS override required.</dd>
+        <dt>Hyperplane</dt>
+        <dd>AWS's internal distributed NLB / network overlay, running on the same bare-metal substrate as Nitro cards. It implements Interface Endpoint ENIs as virtual entry points, performs health-checked distributed DNAT to service fleet backends, and bridges VPC routing domains into AWS's internal service network. Powers NAT Gateway, Transit Gateway, and PrivateLink — a regional Hyperplane event degrades all three simultaneously.</dd>
+        <dt>Nitro Hypervisor / Nitro Card</dt>
+        <dd>AWS's hardware-offload substrate on every EC2 host. For Gateway Endpoints: intercepts packets whose destination matches the prefix list CIDRs and routes them to the internal fabric, tagging the request with <code>aws:SourceVpce</code>. For Interface Endpoints: recognises ENI IPs as Hyperplane endpoints and encapsulates the packet into the substrate tunnel rather than routing it normally.</dd>
+        <dt><code>aws:SourceVpce</code></dt>
+        <dd>An IAM condition key set by the AWS fabric (Nitro for Gateway Endpoints, Hyperplane for Interface Endpoints) on requests arriving through a VPC endpoint. Used in S3 bucket policies, KMS key policies, SQS queue policies, etc., to restrict access to requests from a specific endpoint ID. Requires private DNS enabled on Interface Endpoints; absent if the endpoint's DNS override is disabled.</dd>
         <dt>Andromeda (GCP)</dt>
         <dd>Google Cloud's software-defined networking fabric, implementing Virtual Private Cloud networking and Private Service Connect. Fully distributed; no centralized network appliances in the data path.</dd>
         <dt>Delta Sharing Network Gateway</dt>
