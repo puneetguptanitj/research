@@ -259,6 +259,38 @@
     public ConnectorPageSourceProvider getPageSourceProvider()  { return new MyPageSourceProvider(pool); }
 }</code></pre>
 
+      <table style="width:100%;border-collapse:collapse;font-size:13.5px;margin:24px 0;">
+        <thead>
+          <tr style="background:var(--surface,#f6f8fa);">
+            <th style="text-align:left;padding:10px 14px;font-weight:700;color:#3A4252;border:1px solid var(--border,#d8dde8);"></th>
+            <th style="text-align:left;padding:10px 14px;font-weight:700;color:#3A4252;border:1px solid var(--border,#d8dde8);"><code>ConnectorSplitManager</code></th>
+            <th style="text-align:left;padding:10px 14px;font-weight:700;color:#3A4252;border:1px solid var(--border,#d8dde8);"><code>ConnectorPageSource</code></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:10px 14px;font-weight:600;border:1px solid var(--border,#d8dde8);">Runs on</td>
+            <td style="padding:10px 14px;border:1px solid var(--border,#d8dde8);">Coordinator</td>
+            <td style="padding:10px 14px;border:1px solid var(--border,#d8dde8);">Workers</td>
+          </tr>
+          <tr style="background:var(--surface,#f6f8fa);">
+            <td style="padding:10px 14px;font-weight:600;border:1px solid var(--border,#d8dde8);">Produces</td>
+            <td style="padding:10px 14px;border:1px solid var(--border,#d8dde8);">Lightweight serializable descriptors</td>
+            <td style="padding:10px 14px;border:1px solid var(--border,#d8dde8);">Actual columnar data (Pages)</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 14px;font-weight:600;border:1px solid var(--border,#d8dde8);">Example output</td>
+            <td style="padding:10px 14px;font-family:monospace;font-size:12px;border:1px solid var(--border,#d8dde8);">{ path: "s3://bucket/file.parquet", offset: 0, length: 128MB }</td>
+            <td style="padding:10px 14px;border:1px solid var(--border,#d8dde8);">Blocks of typed columnar data</td>
+          </tr>
+          <tr style="background:var(--surface,#f6f8fa);">
+            <td style="padding:10px 14px;font-weight:600;border:1px solid var(--border,#d8dde8);">Touches data?</td>
+            <td style="padding:10px 14px;border:1px solid var(--border,#d8dde8);">No — pure metadata / pointers</td>
+            <td style="padding:10px 14px;border:1px solid var(--border,#d8dde8);">Yes — opens connections, reads bytes</td>
+          </tr>
+        </tbody>
+      </table>
+
       <figure style="margin:28px 0;">
         <div class="mermaid" style="background:transparent;">
 sequenceDiagram
