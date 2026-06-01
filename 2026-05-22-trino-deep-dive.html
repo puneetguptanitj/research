@@ -171,6 +171,77 @@
     .doc{padding:32px 22px 44px; margin:14px 0 40px;}
     h1{font-size:26px;}
   }
+
+
+  .print-fab{
+    position:fixed; bottom:70px; right:22px; z-index:999;
+    display:inline-flex; align-items:center; gap:6px;
+    background:#2f6fb8; color:#fff;
+    border:none; border-radius:99px;
+    padding:8px 18px;
+    font-size:12px; font-weight:700; font-family:inherit; letter-spacing:0.04em;
+    cursor:pointer; box-shadow:0 4px 18px rgba(0,0,0,0.28);
+    transition:background 0.15s;
+  }
+  .print-fab:hover{background:#1a4d8f;}
+  /* ── PRINT ── */
+  @media print {
+    @page { size: legal portrait; margin: 0.45in 0.5in; }
+    *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+    .wc, .print-fab, .toc, .toc-toggle { display: none !important; visibility: hidden !important; }
+
+    body { background: #fff !important; font-size: 9.5pt; line-height: 1.42; }
+    .wrap { display: block !important; padding: 0 !important; }
+    .doc {
+      border: none !important; box-shadow: none !important; border-radius: 0 !important;
+      margin: 0 !important; padding: 0 !important; background: #fff !important;
+      font-size: 9.5pt;
+    }
+
+    h1 { font-size: 18pt; margin: 0 0 4pt; line-height: 1.2; }
+    .definition { font-size: 10.5pt; margin-bottom: 6pt; max-width: none; }
+    .eyebrow { font-size: 7.5pt; }
+    .meta { padding: 5pt 0; margin-bottom: 12pt; font-size: 8pt; gap: 4pt 12pt; }
+
+    h2 { font-size: 11.5pt; margin: 10pt 0 3pt; padding-bottom: 2pt; page-break-after: avoid; break-after: avoid; }
+    h3 { font-size: 10pt; margin: 7pt 0 2pt; page-break-after: avoid; break-after: avoid; }
+    h4 { font-size: 9.5pt; margin: 5pt 0 2pt; }
+
+    p { margin: 0 0 4.5pt; }
+    ul, ol { margin: 0 0 4.5pt; padding-left: 14pt; }
+    li { margin: 1pt 0; }
+    section { margin: 0; padding-top: 4pt; }
+
+    .tldr { padding: 7pt 11pt; margin: 3pt 0 7pt; border-radius: 3pt; }
+    .tldr h2 { font-size: 8.5pt; margin: 0 0 3pt; border: none; padding: 0; }
+    .tldr p { margin: 0 0 4pt; }
+    .tldr .takeaways { padding-left: 14pt; }
+
+    .callout { padding: 6pt 10pt; margin: 6pt 0; border-radius: 3pt; font-size: 8.5pt; }
+    .callout .tag { font-size: 7pt; margin-bottom: 1.5pt; }
+    .callout p:last-child { margin-bottom: 0; }
+
+    figure { margin: 8pt 0; page-break-inside: avoid; break-inside: avoid; }
+    .diagram { padding: 7pt 5pt 3pt; border-radius: 3pt; }
+    .diagram svg { max-width: 100% !important; height: auto !important; }
+    figcaption { font-size: 7.5pt; margin-top: 3pt; padding: 0 4pt 3pt; }
+    .legend { font-size: 8pt; margin-top: 6pt; gap: 4pt 10pt; }
+    .legend i { width: 10px; height: 10px; }
+
+    .tbl-wrap { margin: 7pt 0; }
+    table { font-size: 8pt; page-break-inside: avoid; break-inside: avoid; }
+    th, td { padding: 3.5pt 6pt; }
+    thead th { font-size: 7pt; padding: 3pt 6pt; }
+
+    code { font-size: 7.5pt; padding: 0.05em 0.22em; }
+
+    .sources { font-size: 8pt; }
+    .sources li { margin: 3pt 0; }
+
+    a[href]::after { content: none !important; }
+    h2, h3 { orphans: 3; widows: 3; }
+  }
 </style>
 </head>
 <body>
@@ -1619,7 +1690,12 @@ flowchart LR
   <button data-w="1180">Default</button>
   <button data-w="1440">Wide</button>
   <button data-w="0">Full</button>
+
 </div>
+<button class="print-fab" onclick="window.print()" title="Print on legal paper (8.5 × 14 in)">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+  Print
+</button>
 <script>
 (function(){
   var KEY='dp-wrap-w';

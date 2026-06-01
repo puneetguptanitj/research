@@ -98,9 +98,46 @@
       display: flex;
       justify-content: center;
     }
+
+    /* ── print button ── */
+    .print-btn {
+      position: fixed; bottom: 22px; right: 22px; z-index: 999;
+      display: inline-flex; align-items: center; gap: 5px;
+      background: #1a1d24; color: #9ca3af;
+      border: none; border-radius: 99px; padding: 7px 14px;
+      font-size: 11.5px; font-weight: 600; font-family: inherit;
+      cursor: pointer; box-shadow: 0 4px 18px rgba(0,0,0,0.28);
+      transition: background 0.13s, color 0.13s;
+    }
+    .print-btn:hover { background: #2d3240; color: #e5e7eb; }
+
+    /* ── PRINT ── */
+    @media print {
+      @page { size: legal portrait; margin: 0.45in 0.5in; }
+      *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+      .print-btn { display: none !important; }
+
+      body { background: #fff !important; font-size: 9.5pt; }
+      .dd-header { border-bottom: 1px solid #e3e6eb; padding: 8pt 0 6pt; }
+      .page-body { padding: 12pt 0 20pt; }
+
+      .diagram-block { border: 1px solid #e3e6eb; border-radius: 4pt; padding: 10pt 12pt; margin-bottom: 10pt; page-break-inside: avoid; break-inside: avoid; }
+      .diagram-block h2 { font-size: 10pt; margin: 0 0 3pt; }
+      .diagram-block p { font-size: 8pt; margin: 0 0 8pt; }
+
+      .mermaid svg { max-width: 100% !important; height: auto !important; }
+
+      a[href]::after { content: none !important; }
+    }
   </style>
 </head>
 <body>
+
+  <button class="print-btn" onclick="window.print()" title="Print on legal paper">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+    Print
+  </button>
 
   <header class="dd-header">
     <div class="dd-header-inner">
