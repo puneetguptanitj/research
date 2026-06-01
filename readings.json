@@ -1,0 +1,40 @@
+{
+  "weeks": [
+    {
+      "id": "2026-W23",
+      "label": "Week of Jun 2, 2026",
+      "articles": [
+        {
+          "id": 1,
+          "title": "Apache Iceberg: Table Format Internals",
+          "url": "https://iceberg.apache.org/spec/",
+          "tags": ["data", "iceberg"],
+          "estimatedMinutes": 20,
+          "status": "todo",
+          "notes": "",
+          "completedAt": null
+        },
+        {
+          "id": 2,
+          "title": "Trino Query Execution Deep Dive",
+          "url": "https://trino.io/docs/current/develop/query-flow.html",
+          "tags": ["data", "trino"],
+          "estimatedMinutes": 25,
+          "status": "todo",
+          "notes": "",
+          "completedAt": null
+        },
+        {
+          "id": 3,
+          "title": "Kubernetes Scheduler Internals",
+          "url": "https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/",
+          "tags": ["systems", "kubernetes"],
+          "estimatedMinutes": 30,
+          "status": "todo",
+          "notes": "",
+          "completedAt": null
+        }
+      ]
+    }
+  ]
+}

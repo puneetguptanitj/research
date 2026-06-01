@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reading Tracker</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f9f9f8;
+    --surface: #ffffff;
+    --surface2: #f1f0eb;
+    --border: rgba(0,0,0,0.1);
+    --border-strong: rgba(0,0,0,0.18);
+    --text: #1a1a18;
+    --text2: #6b6b67;
+    --text3: #9b9b96;
+    --green: #0f6e56;
+    --green-bg: #e1f5ee;
+    --orange: #993c1d;
+    --orange-bg: #faece7;
+    --blue: #185fa5;
+    --blue-bg: #e6f1fb;
+    --purple: #3c3489;
+    --purple-bg: #eeedfe;
+    --amber: #633806;
+    --amber-bg: #faeeda;
+    --accent: #1d9e75;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a18;
+      --surface: #242422;
+      --surface2: #2e2e2b;
+      --border: rgba(255,255,255,0.08);
+      --border-strong: rgba(255,255,255,0.15);
+      --text: #f0efea;
+      --text2: #a0a09b;
+      --text3: #6b6b67;
+      --green: #5dcaa5;
+      --green-bg: #085041;
+      --orange: #f0997b;
+      --orange-bg: #4a1b0c;
+      --blue: #85b7eb;
+      --blue-bg: #042c53;
+      --purple: #afa9ec;
+      --purple-bg: #26215c;
+      --amber: #fac775;
+      --amber-bg: #412402;
+      --accent: #1d9e75;
+    }
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  .app { max-width: 760px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+
+  .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 10px; }
+  .header-left h1 { font-size: 22px; font-weight: 500; letter-spacing: -0.3px; }
+  .header-left .sub { font-size: 13px; color: var(--text2); margin-top: 2px; }
+  .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  .btn {
+    font-size: 13px; padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    border: 0.5px solid var(--border-strong);
+    background: var(--surface); color: var(--text);
+    cursor: pointer; font-family: inherit;
+    transition: background 0.12s; white-space: nowrap;
+  }
+  .btn:hover { background: var(--surface2); }
+  .btn-primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .btn-primary:hover { background: #0f6e56; }
+  .btn-danger { color: var(--orange); }
+
+  .progress-wrap { margin-bottom: 1.5rem; }
+  .progress-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .progress-pct { font-size: 13px; font-weight: 500; }
+  .progress-detail { font-size: 12px; color: var(--text2); }
+  .progress-bar { height: 5px; border-radius: 99px; background: var(--surface2); overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.4s ease; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 1.75rem; }
+  .stat { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; }
+  .stat-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
+  .stat-val { font-size: 22px; font-weight: 500; }
+  .stat-val.green { color: var(--green); }
+  .stat-val.orange { color: var(--orange); }
+
+  .week-nav { display: flex; align-items: center; gap: 6px; margin-bottom: 1.25rem; overflow-x: auto; padding-bottom: 2px; }
+  .week-tab {
+    font-size: 12px; padding: 4px 12px; border-radius: 99px;
+    border: 0.5px solid var(--border); background: transparent;
+    color: var(--text2); cursor: pointer; font-family: inherit;
+    white-space: nowrap; transition: all 0.12s;
+  }
+  .week-tab:hover { border-color: var(--border-strong); color: var(--text); }
+  .week-tab.active { background: var(--text); color: var(--bg); border-color: transparent; }
+
+  .section-label { font-size: 11px; font-weight: 500; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+
+  .reading-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .reading-item {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 12px;
+    transition: opacity 0.2s;
+  }
+  .reading-item.done { opacity: 0.5; }
+
+  .toggle-wrap { padding-top: 2px; }
+  .status-btn {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 1.5px solid var(--border-strong);
+    background: transparent; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; flex-shrink: 0; padding: 0;
+  }
+  .status-btn:hover { border-color: var(--accent); }
+  .status-btn.reading { border-color: var(--orange); background: var(--orange-bg); }
+  .status-btn.done { border-color: var(--accent); background: var(--accent); }
+  .status-btn svg { width: 12px; height: 12px; display: block; }
+
+  .item-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .item-title a { color: var(--text); text-decoration: none; }
+  .item-title a:hover { color: var(--accent); }
+
+  .item-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 99px; font-weight: 500; white-space: nowrap; }
+  .tag-data { background: var(--green-bg); color: var(--green); }
+  .tag-systems { background: var(--purple-bg); color: var(--purple); }
+  .tag-networking { background: var(--amber-bg); color: var(--amber); }
+  .tag-auth { background: var(--blue-bg); color: var(--blue); }
+  .tag-default { background: var(--blue-bg); color: var(--blue); }
+
+  .status-pill { font-size: 11px; padding: 2px 8px; border-radius: 99px; }
+  .pill-todo { background: var(--surface2); color: var(--text2); }
+  .pill-reading { background: var(--orange-bg); color: var(--orange); }
+  .pill-done { background: var(--green-bg); color: var(--green); }
+
+  .est { font-size: 12px; color: var(--text3); }
+
+  .note-field {
+    width: 100%; font-size: 13px; font-family: inherit;
+    color: var(--text2); background: var(--surface2);
+    border: 0.5px solid var(--border); border-radius: var(--radius-sm);
+    padding: 7px 10px; resize: none; outline: none;
+    transition: border-color 0.12s; line-height: 1.5;
+  }
+  .note-field:focus { border-color: var(--accent); color: var(--text); }
+  .note-field::placeholder { color: var(--text3); }
+
+  .add-form {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px; margin-bottom: 1rem; display: none;
+  }
+  .add-form.open { display: block; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .form-row.full { grid-template-columns: 1fr; }
+  .form-group { display: flex; flex-direction: column; gap: 4px; }
+  .form-label { font-size: 12px; color: var(--text2); }
+  .form-input {
+    font-size: 13px; font-family: inherit;
+    padding: 7px 10px; border-radius: var(--radius-sm);
+    border: 0.5px solid var(--border-strong);
+    background: var(--surface2); color: var(--text); outline: none;
+  }
+  .form-input:focus { border-color: var(--accent); }
+  .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+
+  .save-hint {
+    font-size: 12px; color: var(--text3);
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 1.5rem; padding-top: 1rem;
+    border-top: 0.5px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .save-hint code {
+    font-family: monospace; font-size: 11px;
+    background: var(--surface2); padding: 2px 6px;
+    border-radius: 4px; border: 0.5px solid var(--border);
+  }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--text); color: var(--bg);
+    font-size: 13px; padding: 8px 18px; border-radius: 99px;
+    opacity: 0; transition: all 0.2s; pointer-events: none; white-space: nowrap; z-index: 100;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .empty { text-align: center; padding: 3rem 0; color: var(--text2); font-size: 14px; }
+
+  .library-panel {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 1rem; display: none; overflow: hidden;
+  }
+  .library-panel.open { display: block; }
+  .library-search-wrap { padding: 12px 14px; border-bottom: 0.5px solid var(--border); display: flex; gap: 8px; align-items: center; }
+  .library-search { flex: 1; font-size: 13px; font-family: inherit; padding: 6px 10px; border-radius: var(--radius-sm); border: 0.5px solid var(--border-strong); background: var(--surface2); color: var(--text); outline: none; }
+  .library-search:focus { border-color: var(--accent); }
+  .library-items { max-height: 340px; overflow-y: auto; }
+  .lib-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; border-bottom: 0.5px solid var(--border);
+    cursor: pointer; transition: background 0.1s;
+  }
+  .lib-item:last-child { border-bottom: none; }
+  .lib-item:hover:not(.lib-item-added) { background: var(--surface2); }
+  .lib-item-added { opacity: 0.38; cursor: default; }
+  .lib-item input[type=checkbox] { flex-shrink: 0; width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+  .lib-item-body { flex: 1; min-width: 0; }
+  .lib-item-title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lib-item-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; flex-wrap: wrap; }
+  .lib-item-date { font-size: 11px; color: var(--text3); }
+  .lib-item-added-badge { font-size: 11px; color: var(--green); }
+  .library-footer { padding: 10px 14px; border-top: 0.5px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .library-footer-left { font-size: 12px; color: var(--text2); }
+
+  @media (max-width: 600px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .form-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="header">
+    <div class="header-left">
+      <h1>Reading tracker</h1>
+      <p class="sub" id="week-sub">Loading…</p>
+    </div>
+    <div class="header-right">
+      <button class="btn" onclick="toggleLibrary()" id="lib-btn">📂 From library</button>
+      <button class="btn" onclick="toggleAddForm()">+ Add manually</button>
+      <button class="btn" onclick="newWeek()">New week</button>
+      <button class="btn btn-primary" onclick="saveData()">↓ Save JSON</button>
+    </div>
+  </div>
+
+  <div class="week-nav" id="week-nav"></div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total</div><div class="stat-val" id="s-total">—</div></div>
+    <div class="stat"><div class="stat-label">Done</div><div class="stat-val green" id="s-done">—</div></div>
+    <div class="stat"><div class="stat-label">Reading</div><div class="stat-val orange" id="s-reading">—</div></div>
+    <div class="stat"><div class="stat-label">Est. left</div><div class="stat-val" id="s-left">—</div></div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-top">
+      <span class="progress-pct" id="prog-pct">0%</span>
+      <span class="progress-detail" id="prog-detail"></span>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="prog-fill" style="width:0%"></div></div>
+  </div>
+
+  <!-- Library picker -->
+  <div class="library-panel" id="library-panel">
+    <div class="library-search-wrap">
+      <input class="library-search" id="lib-search" type="text" placeholder="Filter articles…" oninput="renderLibrary()">
+      <button class="btn" onclick="toggleSelectAll()" id="lib-selall" style="font-size:12px;padding:5px 10px;">Select all</button>
+    </div>
+    <div class="library-items" id="lib-items"></div>
+    <div class="library-footer">
+      <span class="library-footer-left" id="lib-sel-count">0 selected</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" onclick="toggleLibrary()">Cancel</button>
+        <button class="btn btn-primary" onclick="addFromLibrary()" id="lib-add-btn">Add to week</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="add-form" id="add-form">
+    <div class="form-row full">
+      <div class="form-group">
+        <label class="form-label">Title</label>
+        <input class="form-input" id="f-title" type="text" placeholder="Article title…">
+      </div>
+    </div>
+    <div class="form-row full">
+      <div class="form-group">
+        <label class="form-label">URL</label>
+        <input class="form-input" id="f-url" type="url" placeholder="https://…">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Tags (comma separated)</label>
+        <input class="form-input" id="f-tags" type="text" placeholder="data, iceberg">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Estimated minutes</label>
+        <input class="form-input" id="f-mins" type="number" placeholder="20" min="1">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" onclick="toggleAddForm()">Cancel</button>
+      <button class="btn btn-primary" onclick="addArticle()">Add</button>
+    </div>
+  </div>
+
+  <div class="section-label" id="list-label">This week's targets</div>
+  <div class="reading-list" id="reading-list"></div>
+
+  <div class="save-hint">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+    Workflow: toggle status → <code>↓ Save JSON</code> → replace <code>readings.json</code> → <code>git add -A && git commit -m "wk: progress" && git push</code>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let data = { weeks: [] };
+let manifest = { articles: [] };
+let currentWeekIdx = 0;
+let libSelected = new Set();
+
+const TAG_CLASSES = { data: 'tag-data', systems: 'tag-systems', networking: 'tag-networking', auth: 'tag-auth' };
+function tagClass(t) { return TAG_CLASSES[t] || 'tag-default'; }
+
+function getISOWeek() {
+  const d = new Date();
+  const jan4 = new Date(d.getFullYear(), 0, 4);
+  const week = Math.ceil(((d - jan4) / 86400000 + jan4.getDay() + 1) / 7);
+  return `${d.getFullYear()}-W${String(week).padStart(2,'0')}`;
+}
+
+function weekLabel() {
+  const d = new Date();
+  const day = d.getDay();
+  const mon = new Date(d);
+  mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  return 'Week of ' + mon.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+async function loadData() {
+  try {
+    const r = await fetch('readings.json?v=' + Date.now());
+    if (!r.ok) throw new Error('not found');
+    data = await r.json();
+    if (!data.weeks) data.weeks = [];
+  } catch(e) {
+    const raw = localStorage.getItem('rt_data');
+    if (raw) { try { data = JSON.parse(raw); } catch(_) {} }
+  }
+  if (!data.weeks || data.weeks.length === 0) {
+    data.weeks = [{ id: getISOWeek(), label: weekLabel(), articles: [] }];
+  }
+  currentWeekIdx = data.weeks.length - 1;
+  // Load manifest: inline block works with file://, fetch wins when served over HTTP
+  const inlineEl = document.getElementById('manifest-data');
+  if (inlineEl) { try { manifest = JSON.parse(inlineEl.textContent); } catch(_) {} }
+  try {
+    const mr = await fetch('manifest.json?v=' + Date.now());
+    if (mr.ok) manifest = await mr.json();
+  } catch(_) {}
+  render();
+}
+
+function toggleLibrary() {
+  const panel = document.getElementById('library-panel');
+  panel.classList.toggle('open');
+  if (panel.classList.contains('open')) {
+    libSelected.clear();
+    document.getElementById('lib-search').value = '';
+    renderLibrary();
+    document.getElementById('lib-search').focus();
+  }
+}
+
+function alreadyAdded(file) {
+  return currentWeek().articles.some(a => a.url === file || a.url.endsWith('/' + file));
+}
+
+function renderLibrary() {
+  const q = document.getElementById('lib-search').value.toLowerCase();
+  const items = manifest.articles.filter(a =>
+    !q || a.title.toLowerCase().includes(q) || a.tags.some(t => t.includes(q))
+  );
+
+  const container = document.getElementById('lib-items');
+  if (items.length === 0) {
+    container.innerHTML = '<div class="empty" style="padding:2rem 0;">No matches</div>';
+    updateLibFooter();
+    return;
+  }
+
+  container.innerHTML = items.map(a => {
+    const added = alreadyAdded(a.file);
+    const checked = libSelected.has(a.file) && !added;
+    const tags = a.tags.map(t => `<span class="tag ${tagClass(t)}" style="font-size:10px;padding:1px 6px;">${t}</span>`).join('');
+    const dateLbl = a.date ? `<span class="lib-item-date">${a.date}</span>` : '';
+    const addedBadge = added ? `<span class="lib-item-added-badge">✓ in this week</span>` : '';
+    return `
+      <label class="lib-item ${added ? 'lib-item-added' : ''}">
+        <input type="checkbox" ${checked ? 'checked' : ''} ${added ? 'disabled' : ''}
+          onchange="libToggle('${a.file}', this.checked)" onclick="${added ? 'return false' : ''}">
+        <div class="lib-item-body">
+          <div class="lib-item-title">${a.title}</div>
+          <div class="lib-item-meta">${tags}${dateLbl}${addedBadge}</div>
+        </div>
+      </label>`;
+  }).join('');
+  updateLibFooter();
+}
+
+function libToggle(file, checked) {
+  if (checked) libSelected.add(file);
+  else libSelected.delete(file);
+  updateLibFooter();
+}
+
+function updateLibFooter() {
+  const n = libSelected.size;
+  document.getElementById('lib-sel-count').textContent = n === 0 ? 'None selected' : `${n} selected`;
+  document.getElementById('lib-add-btn').textContent = n > 0 ? `Add ${n} to week` : 'Add to week';
+}
+
+function toggleSelectAll() {
+  const visible = manifest.articles.filter(a => {
+    const q = document.getElementById('lib-search').value.toLowerCase();
+    return !alreadyAdded(a.file) && (!q || a.title.toLowerCase().includes(q) || a.tags.some(t => t.includes(q)));
+  });
+  const allChecked = visible.every(a => libSelected.has(a.file));
+  if (allChecked) visible.forEach(a => libSelected.delete(a.file));
+  else visible.forEach(a => libSelected.add(a.file));
+  renderLibrary();
+}
+
+function addFromLibrary() {
+  if (libSelected.size === 0) { toast('Nothing selected'); return; }
+  const toAdd = manifest.articles.filter(a => libSelected.has(a.file) && !alreadyAdded(a.file));
+  toAdd.forEach(a => {
+    currentWeek().articles.push({
+      id: nextId(),
+      title: a.title,
+      url: a.file,
+      tags: a.tags,
+      estimatedMinutes: 20,
+      status: 'todo',
+      notes: '',
+      completedAt: null
+    });
+  });
+  libSelected.clear();
+  toggleLibrary();
+  autosaveLocal();
+  render();
+  toast(`Added ${toAdd.length} article${toAdd.length > 1 ? 's' : ''} to this week`);
+}
+
+function saveData() {
+  autosaveLocal();
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'readings.json'; a.click();
+  URL.revokeObjectURL(url);
+  toast('Saved — replace readings.json then git push');
+}
+
+function autosaveLocal() {
+  try { localStorage.setItem('rt_data', JSON.stringify(data)); } catch(e) {}
+}
+
+function currentWeek() { return data.weeks[currentWeekIdx]; }
+
+function nextId() {
+  let max = 0;
+  data.weeks.forEach(w => w.articles.forEach(a => { if (a.id > max) max = a.id; }));
+  return max + 1;
+}
+
+function cycleStatus(id) {
+  const a = currentWeek().articles.find(x => x.id === id);
+  if (!a) return;
+  a.status = { todo: 'reading', reading: 'done', done: 'todo' }[a.status] || 'todo';
+  a.completedAt = a.status === 'done' ? new Date().toISOString() : null;
+  autosaveLocal();
+  render();
+}
+
+function updateNote(id, val) {
+  const a = currentWeek().articles.find(x => x.id === id);
+  if (a) { a.notes = val; autosaveLocal(); }
+}
+
+function toggleAddForm() {
+  const f = document.getElementById('add-form');
+  f.classList.toggle('open');
+  if (f.classList.contains('open')) document.getElementById('f-title').focus();
+}
+
+function addArticle() {
+  const title = document.getElementById('f-title').value.trim();
+  const url   = document.getElementById('f-url').value.trim();
+  const tags  = document.getElementById('f-tags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  const mins  = parseInt(document.getElementById('f-mins').value) || 15;
+  if (!title) { toast('Title required'); return; }
+  currentWeek().articles.push({ id: nextId(), title, url: url || '#', tags, estimatedMinutes: mins, status: 'todo', notes: '', completedAt: null });
+  ['f-title','f-url','f-tags','f-mins'].forEach(id => document.getElementById(id).value = '');
+  toggleAddForm();
+  autosaveLocal();
+  render();
+  toast('Article added');
+}
+
+function newWeek() {
+  const id = getISOWeek();
+  const exists = data.weeks.findIndex(w => w.id === id);
+  if (exists >= 0) { currentWeekIdx = exists; render(); toast('Switched to current week'); return; }
+  data.weeks.push({ id, label: weekLabel(), articles: [] });
+  currentWeekIdx = data.weeks.length - 1;
+  autosaveLocal();
+  render();
+  toast('New week started');
+}
+
+function switchWeek(idx) { currentWeekIdx = idx; render(); }
+
+function checkIcon(s) {
+  if (s === 'done') return `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+  if (s === 'reading') return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/></svg>`;
+  return '';
+}
+
+function render() {
+  const w = currentWeek();
+  if (!w) return;
+
+  document.getElementById('week-sub').textContent = w.label;
+
+  document.getElementById('week-nav').innerHTML = data.weeks.map((wk, i) => {
+    const done = wk.articles.filter(a => a.status === 'done').length;
+    const total = wk.articles.length;
+    const lbl = wk.label.replace('Week of ', '');
+    return `<button class="week-tab ${i===currentWeekIdx?'active':''}" onclick="switchWeek(${i})">${lbl}${total ? ` · ${done}/${total}` : ''}</button>`;
+  }).join('');
+
+  const arts = w.articles;
+  const done = arts.filter(a => a.status === 'done').length;
+  const reading = arts.filter(a => a.status === 'reading').length;
+  const leftMins = arts.filter(a => a.status !== 'done').reduce((s, a) => s + a.estimatedMinutes, 0);
+  const pct = arts.length ? Math.round(done / arts.length * 100) : 0;
+
+  document.getElementById('s-total').textContent = arts.length;
+  document.getElementById('s-done').textContent = done;
+  document.getElementById('s-reading').textContent = reading;
+  document.getElementById('s-left').textContent = leftMins > 0 ? leftMins + 'm' : '—';
+  document.getElementById('prog-pct').textContent = pct + '%';
+  document.getElementById('prog-detail').textContent = `${done} of ${arts.length} completed`;
+  document.getElementById('prog-fill').style.width = pct + '%';
+
+  const list = document.getElementById('reading-list');
+  if (arts.length === 0) {
+    list.innerHTML = '<div class="empty">No articles yet — click "+ Add article" above.</div>';
+    return;
+  }
+
+  const order = { reading: 0, todo: 1, done: 2 };
+  const sorted = [...arts].sort((a, b) => (order[a.status] ?? 1) - (order[b.status] ?? 1));
+
+  list.innerHTML = sorted.map(a => {
+    const tags = a.tags.map(t => `<span class="tag ${tagClass(t)}">${t}</span>`).join('');
+    const pill = `<span class="status-pill pill-${a.status}">${a.status === 'todo' ? 'to read' : a.status}</span>`;
+    const noteField = a.status !== 'todo'
+      ? `<textarea class="note-field" rows="2" placeholder="Key takeaway, open question…" onchange="updateNote(${a.id}, this.value)">${a.notes || ''}</textarea>`
+      : '';
+    const titleInner = (a.url && a.url !== '#')
+      ? `<a href="${a.url}" target="_blank" rel="noopener">${a.title}</a>`
+      : a.title;
+    return `
+      <div class="reading-item ${a.status === 'done' ? 'done' : ''}" id="item-${a.id}">
+        <div class="toggle-wrap">
+          <button class="status-btn ${a.status}" onclick="cycleStatus(${a.id})" title="Cycle: todo → reading → done">${checkIcon(a.status)}</button>
+        </div>
+        <div>
+          <div class="item-title">${titleInner}${pill}</div>
+          <div class="item-meta">${tags}<span class="est">${a.estimatedMinutes} min</span></div>
+          ${noteField}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+loadData();
+</script>
+
+<!-- MANIFEST-INLINE-START -->
+<script type="application/json" id="manifest-data">
+{
+  "articles": [
+    {"file": "2026-05-21-iceberg-rest-catalog-deep-dive.html", "title": "Iceberg REST Catalog Deep Dive", "tags": ["data", "iceberg"], "date": "2026-05-21"},
+    {"file": "2026-05-22-oauth2-jwt-diagrams.html", "title": "OAuth2 & JWT Diagrams", "tags": ["auth", "systems"], "date": "2026-05-22"},
+    {"file": "2026-05-22-trino-deep-dive.html", "title": "Trino Deep Dive", "tags": ["data", "trino"], "date": "2026-05-22"},
+    {"file": "2026-05-23-apache-iceberg-deep-dive.html", "title": "Apache Iceberg Deep Dive", "tags": ["data", "iceberg"], "date": "2026-05-23"},
+    {"file": "2026-05-24-aws-vpc-networking-istio-ingress-deep-dive.html", "title": "AWS VPC Networking, Istio & Ingress Deep Dive", "tags": ["networking", "systems"], "date": "2026-05-24"},
+    {"file": "2026-05-24-cloud-networking-private-links-delta-sharing-deep-dive.html", "title": "Cloud Networking, Private Links & Delta Sharing", "tags": ["networking", "data"], "date": "2026-05-24"},
+    {"file": "2026-05-27-vpc-endpoints-deep-dive.html", "title": "VPC Endpoints Deep Dive", "tags": ["networking"], "date": "2026-05-27"},
+    {"file": "iceberg-operations.html", "title": "Iceberg Operations", "tags": ["data", "iceberg"], "date": null},
+    {"file": "iceberg-rest-catalogs.html", "title": "Iceberg REST Catalogs", "tags": ["data", "iceberg"], "date": null}
+  ]
+}
+</script>
+<!-- MANIFEST-INLINE-END -->
+</body>
+</html>

@@ -1,0 +1,84 @@
+{
+  "articles": [
+    {
+      "file": "2026-05-21-iceberg-rest-catalog-deep-dive.html",
+      "title": "Iceberg REST Catalog Deep Dive",
+      "tags": [
+        "data",
+        "iceberg"
+      ],
+      "date": "2026-05-21"
+    },
+    {
+      "file": "2026-05-22-oauth2-jwt-diagrams.html",
+      "title": "OAuth2 & JWT Diagrams",
+      "tags": [
+        "auth",
+        "systems"
+      ],
+      "date": "2026-05-22"
+    },
+    {
+      "file": "2026-05-22-trino-deep-dive.html",
+      "title": "Trino Deep Dive",
+      "tags": [
+        "data",
+        "trino"
+      ],
+      "date": "2026-05-22"
+    },
+    {
+      "file": "2026-05-23-apache-iceberg-deep-dive.html",
+      "title": "Apache Iceberg Deep Dive",
+      "tags": [
+        "data",
+        "iceberg"
+      ],
+      "date": "2026-05-23"
+    },
+    {
+      "file": "2026-05-24-aws-vpc-networking-istio-ingress-deep-dive.html",
+      "title": "AWS VPC Networking, Istio & Ingress Deep Dive",
+      "tags": [
+        "networking",
+        "systems"
+      ],
+      "date": "2026-05-24"
+    },
+    {
+      "file": "2026-05-24-cloud-networking-private-links-delta-sharing-deep-dive.html",
+      "title": "Cloud Networking, Private Links & Delta Sharing",
+      "tags": [
+        "networking",
+        "data"
+      ],
+      "date": "2026-05-24"
+    },
+    {
+      "file": "2026-05-27-vpc-endpoints-deep-dive.html",
+      "title": "VPC Endpoints Deep Dive",
+      "tags": [
+        "networking"
+      ],
+      "date": "2026-05-27"
+    },
+    {
+      "file": "iceberg-operations.html",
+      "title": "Iceberg Operations",
+      "tags": [
+        "data",
+        "iceberg"
+      ],
+      "date": null
+    },
+    {
+      "file": "iceberg-rest-catalogs.html",
+      "title": "Iceberg REST Catalogs",
+      "tags": [
+        "data",
+        "iceberg"
+      ],
+      "date": null
+    }
+  ]
+}
