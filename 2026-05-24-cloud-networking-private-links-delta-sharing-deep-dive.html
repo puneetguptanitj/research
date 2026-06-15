@@ -305,13 +305,21 @@
 
       <figure>
         <div class="diagram">
-          <svg viewBox="0 0 860 560" xmlns="http://www.w3.org/2000/svg"
+          <svg viewBox="0 0 860 580" xmlns="http://www.w3.org/2000/svg"
                font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
                role="img" aria-label="Cloud networking primitives taxonomy">
             <defs>
               <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
                       markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                 <path d="M0,0 L10,5 L0,10 z" fill="#5A6273"/>
+              </marker>
+              <marker id="arr-purple" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#7E4FB5"/>
+              </marker>
+              <marker id="arr-purple-rev" viewBox="0 0 10 10" refX="1" refY="5"
+                      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M10,0 L0,5 L10,10 z" fill="#7E4FB5"/>
               </marker>
             </defs>
 
@@ -338,72 +346,83 @@
             <text x="430" y="146" text-anchor="middle" font-size="10.5" fill="#7A3D0E">hub-and-spoke · transitive · inter-region</text>
             <text x="576" y="112" font-size="10" fill="#111418" font-weight="700">← focus</text>
 
-            <!-- ---- VPC BOUNDARY ---- -->
-            <rect x="16" y="176" width="828" height="250" rx="7" fill="#F5F6F8" stroke="#D5D9E0" stroke-width="1.3"/>
-            <text x="30" y="196" font-size="10" font-weight="700" fill="#5A6273" letter-spacing="0.4">WITHIN VPC</text>
+            <!-- ================================================================ -->
+            <!-- PRIVATELINK CROSS-VPC ROW: two separate VPCs + tunnel between   -->
+            <!-- ================================================================ -->
 
-            <!-- Public Subnet -->
-            <rect x="30" y="202" width="380" height="210" rx="6" fill="#E8F4FB" stroke="#3B73C4" stroke-dasharray="5,3" stroke-width="1.2"/>
-            <text x="44" y="220" font-size="10" font-weight="700" fill="#1E3A6B">PUBLIC SUBNET</text>
-            <rect x="50" y="228" width="150" height="38" rx="6" fill="#F5F6F8" stroke="#8A94A6" stroke-width="1.2"/>
-            <text x="125" y="248" text-anchor="middle" font-size="12" fill="#3A4252" font-weight="600">NAT Gateway</text>
-            <text x="125" y="260" text-anchor="middle" font-size="10" fill="#5A6273">(public, has EIP)</text>
-            <rect x="230" y="228" width="160" height="38" rx="6" fill="#F5F6F8" stroke="#8A94A6" stroke-width="1.2"/>
-            <text x="310" y="248" text-anchor="middle" font-size="12" fill="#3A4252" font-weight="600">NAT Gateway</text>
-            <text x="310" y="260" text-anchor="middle" font-size="10" fill="#5A6273">(private, VPC-to-VPC)</text>
-            <!-- Load Balancer row -->
-            <rect x="50" y="282" width="340" height="38" rx="6" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
-            <text x="220" y="302" text-anchor="middle" font-size="12" fill="#0C4A43" font-weight="600">Network Load Balancer</text>
-            <text x="220" y="315" text-anchor="middle" font-size="10" fill="#0C4A43">(required for PrivateLink endpoint service)</text>
-            <!-- PrivateLink service label -->
-            <rect x="50" y="336" width="340" height="60" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
-            <text x="220" y="358" text-anchor="middle" font-size="12" fill="#432068" font-weight="600">VPC Endpoint Service (PrivateLink provider)</text>
-            <text x="220" y="374" text-anchor="middle" font-size="10" fill="#432068">NLB-backed · acceptance required</text>
-            <text x="220" y="387" text-anchor="middle" font-size="10" fill="#432068">service name: com.amazonaws.vpce.region.vpce-svc-xxx</text>
+            <!-- ---- PROVIDER VPC (left) ---- -->
+            <rect x="16" y="176" width="358" height="254" rx="7" fill="#F0F4FB" stroke="#3B73C4" stroke-width="1.8"/>
+            <text x="30" y="196" font-size="10" font-weight="700" fill="#1E3A6B" letter-spacing="0.4">PROVIDER VPC  (separate account / org)</text>
+            <!-- NLB -->
+            <rect x="36" y="206" width="318" height="38" rx="6" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.2"/>
+            <text x="195" y="226" text-anchor="middle" font-size="12" fill="#0C4A43" font-weight="600">Network Load Balancer</text>
+            <text x="195" y="239" text-anchor="middle" font-size="10" fill="#0C4A43">(required for PrivateLink endpoint service)</text>
+            <!-- VPC Endpoint Service -->
+            <rect x="36" y="256" width="318" height="64" rx="6" fill="#EADDF7" stroke="#7E4FB5" stroke-width="1.2"/>
+            <text x="195" y="277" text-anchor="middle" font-size="12" fill="#432068" font-weight="600">VPC Endpoint Service (PrivateLink provider)</text>
+            <text x="195" y="292" text-anchor="middle" font-size="10" fill="#432068">NLB-backed · acceptance required</text>
+            <text x="195" y="307" text-anchor="middle" font-size="10" fill="#432068">com.amazonaws.vpce.region.vpce-svc-xxx</text>
+            <!-- NLB → Endpoint Service connector within provider VPC -->
+            <line x1="195" y1="244" x2="195" y2="256" stroke="#7E4FB5" stroke-width="1.3" marker-end="url(#arr-purple)"/>
 
-            <!-- Private Subnet -->
-            <rect x="430" y="202" width="400" height="210" rx="6" fill="#FEF9EC" stroke="#C99A1E" stroke-dasharray="5,3" stroke-width="1.2"/>
-            <text x="444" y="220" font-size="10" font-weight="700" fill="#6B4E06">PRIVATE SUBNET</text>
-            <!-- Gateway endpoint -->
-            <rect x="450" y="228" width="165" height="46" rx="6" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.2"/>
-            <text x="532" y="248" text-anchor="middle" font-size="12" fill="#234D1A" font-weight="600">Gateway Endpoint</text>
-            <text x="532" y="261" text-anchor="middle" font-size="10" fill="#234D1A">S3 + DynamoDB only</text>
-            <text x="532" y="273" text-anchor="middle" font-size="10" fill="#234D1A">free · route-table-based</text>
-            <!-- Interface endpoint -->
-            <rect x="640" y="228" width="175" height="46" rx="6" fill="#EADDF7" stroke="#111418" stroke-width="2.5"/>
-            <text x="727" y="248" text-anchor="middle" font-size="12" fill="#432068" font-weight="700">Interface Endpoint</text>
-            <text x="727" y="261" text-anchor="middle" font-size="10" fill="#432068">(PrivateLink consumer)</text>
-            <text x="727" y="273" text-anchor="middle" font-size="10" fill="#432068">ENI · private IP · DNS override</text>
-            <text x="818" y="228" font-size="10" fill="#111418" font-weight="700">← focus</text>
+            <!-- ---- PRIVATELINK CROSSING ZONE (middle, x=374–486) ---- -->
+            <!-- Subtle band to highlight the cross-VPC boundary -->
+            <rect x="374" y="176" width="112" height="254" rx="0" fill="#F5EEFF" stroke="none"/>
+            <!-- VPC boundary dashed verticals -->
+            <line x1="374" y1="176" x2="374" y2="430" stroke="#7E4FB5" stroke-width="1.2" stroke-dasharray="5,3"/>
+            <line x1="486" y1="176" x2="486" y2="430" stroke="#7E4FB5" stroke-width="1.2" stroke-dasharray="5,3"/>
+            <!-- Bidirectional horizontal arrow at y=288 (center of Endpoint Service box) -->
+            <line x1="354" y1="288" x2="486" y2="288" stroke="#7E4FB5" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arr-purple)" marker-start="url(#arr-purple-rev)"/>
+            <!-- Zone label -->
+            <text x="430" y="220" text-anchor="middle" font-size="9" font-weight="700" fill="#6B2BA0">VPC</text>
+            <text x="430" y="232" text-anchor="middle" font-size="9" font-weight="700" fill="#6B2BA0">boundary</text>
+            <text x="430" y="270" text-anchor="middle" font-size="8.5" fill="#7E4FB5">PrivateLink tunnel</text>
+            <text x="430" y="282" text-anchor="middle" font-size="8" fill="#7E4FB5">(AWS Hyperplane,</text>
+            <text x="430" y="293" text-anchor="middle" font-size="8" fill="#7E4FB5">not public internet)</text>
+
+            <!-- ---- CONSUMER VPC (right) ---- -->
+            <rect x="486" y="176" width="358" height="254" rx="7" fill="#FEFAF0" stroke="#C99A1E" stroke-width="1.8"/>
+            <text x="500" y="196" font-size="10" font-weight="700" fill="#6B4E06" letter-spacing="0.4">CONSUMER VPC  (your VPC)</text>
+            <!-- NAT Gateway -->
+            <rect x="506" y="206" width="148" height="38" rx="6" fill="#F5F6F8" stroke="#8A94A6" stroke-width="1.2"/>
+            <text x="580" y="226" text-anchor="middle" font-size="12" fill="#3A4252" font-weight="600">NAT Gateway</text>
+            <text x="580" y="239" text-anchor="middle" font-size="10" fill="#5A6273">(public EIP or private)</text>
+            <!-- Interface Endpoint (focus box) -->
+            <rect x="668" y="206" width="162" height="52" rx="6" fill="#EADDF7" stroke="#111418" stroke-width="2.5"/>
+            <text x="749" y="226" text-anchor="middle" font-size="12" fill="#432068" font-weight="700">Interface Endpoint</text>
+            <text x="749" y="239" text-anchor="middle" font-size="10" fill="#432068">(PrivateLink consumer)</text>
+            <text x="749" y="252" text-anchor="middle" font-size="10" fill="#432068">ENI · private IP · DNS override</text>
+            <text x="832" y="206" font-size="10" fill="#111418" font-weight="700">← focus</text>
+            <!-- Gateway Endpoint -->
+            <rect x="506" y="258" width="148" height="48" rx="6" fill="#DEEFD9" stroke="#4A9A3C" stroke-width="1.2"/>
+            <text x="580" y="277" text-anchor="middle" font-size="12" fill="#234D1A" font-weight="600">Gateway Endpoint</text>
+            <text x="580" y="290" text-anchor="middle" font-size="10" fill="#234D1A">S3 + DynamoDB only</text>
+            <text x="580" y="302" text-anchor="middle" font-size="10" fill="#234D1A">free · route-table-based</text>
             <!-- VPC Peering -->
-            <rect x="450" y="290" width="165" height="46" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.2"/>
-            <text x="532" y="310" text-anchor="middle" font-size="12" fill="#7A3D0E" font-weight="600">VPC Peering</text>
-            <text x="532" y="323" text-anchor="middle" font-size="10" fill="#7A3D0E">bidirectional · no transitive</text>
-            <text x="532" y="336" text-anchor="middle" font-size="10" fill="#7A3D0E">max 125 connections</text>
+            <rect x="668" y="268" width="162" height="42" rx="6" fill="#FCE4D4" stroke="#D9772E" stroke-width="1.2"/>
+            <text x="749" y="287" text-anchor="middle" font-size="12" fill="#7A3D0E" font-weight="600">VPC Peering</text>
+            <text x="749" y="300" text-anchor="middle" font-size="10" fill="#7A3D0E">bilateral · no transitive · max 125</text>
             <!-- Security controls -->
-            <rect x="450" y="352" width="360" height="46" rx="6" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.2"/>
-            <text x="630" y="372" text-anchor="middle" font-size="12" fill="#6E1626" font-weight="600">Security Groups (stateful L4) + NACLs (stateless L3/L4)</text>
-            <text x="630" y="386" text-anchor="middle" font-size="10" fill="#6E1626">per-ENI SGs · per-subnet NACLs · both evaluated</text>
+            <rect x="506" y="320" width="324" height="38" rx="6" fill="#FAD9DC" stroke="#C8425A" stroke-width="1.2"/>
+            <text x="668" y="340" text-anchor="middle" font-size="11" fill="#6E1626" font-weight="600">Security Groups (stateful L4) + NACLs (stateless L3/L4)</text>
+            <text x="668" y="353" text-anchor="middle" font-size="10" fill="#6E1626">per-ENI SGs · per-subnet NACLs · both evaluated</text>
+            <!-- Connector: Interface Endpoint → PrivateLink crossing zone -->
+            <line x1="668" y1="232" x2="486" y2="288" stroke="#7E4FB5" stroke-width="1" stroke-dasharray="3,2"/>
 
             <!-- ---- SERVICE MESH / DELTA SHARING ---- -->
-            <rect x="16" y="440" width="828" height="64" rx="7" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.3"/>
-            <text x="30" y="458" font-size="10" font-weight="700" fill="#23266E" letter-spacing="0.4">APPLICATION-LAYER SHARING (NO VPC WIRING)</text>
-            <rect x="240" y="450" width="380" height="42" rx="7"
+            <rect x="16" y="444" width="828" height="64" rx="7" fill="#DEE0FA" stroke="#5256C8" stroke-width="1.3"/>
+            <text x="30" y="462" font-size="10" font-weight="700" fill="#23266E" letter-spacing="0.4">APPLICATION-LAYER SHARING (NO VPC WIRING)</text>
+            <rect x="240" y="454" width="380" height="42" rx="7"
                   fill="#DEE0FA" stroke="#111418" stroke-width="2.5"/>
-            <text x="430" y="470" text-anchor="middle" font-size="13.5" font-weight="700" fill="#23266E">Delta Sharing Protocol (HTTPS + vended credentials)</text>
-            <text x="430" y="485" text-anchor="middle" font-size="10.5" fill="#23266E">provider stores data · recipient queries via REST + pre-signed URLs</text>
-            <text x="623" y="450" font-size="10" fill="#111418" font-weight="700">← focus</text>
+            <text x="430" y="474" text-anchor="middle" font-size="13.5" font-weight="700" fill="#23266E">Delta Sharing Protocol (HTTPS + vended credentials)</text>
+            <text x="430" y="489" text-anchor="middle" font-size="10.5" fill="#23266E">provider stores data · recipient queries via REST + pre-signed URLs</text>
+            <text x="623" y="454" font-size="10" fill="#111418" font-weight="700">← focus</text>
 
             <!-- Connectors -->
-            <!-- IGW ↔ NAT Gateway -->
+            <!-- IGW ↔ NAT Gateway (TGW band) -->
             <line x1="277" y1="88" x2="190" y2="112" stroke="#5A6273" stroke-width="1.4" marker-end="url(#arr)"/>
-            <!-- TGW ↔ VPC attachment -->
+            <!-- TGW ↔ VPC rows -->
             <line x1="430" y1="162" x2="430" y2="176" stroke="#5A6273" stroke-width="1.4" marker-end="url(#arr)"/>
-            <!-- Interface endpoint ↔ service -->
-            <line x1="640" y1="250" x2="395" y2="365" stroke="#7E4FB5" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arr)"/>
-            <!-- label for that line -->
-            <rect x="476" y="295" width="86" height="16" rx="8" fill="#FFFFFF" stroke="#D5D9E0" stroke-width="0.8"/>
-            <text x="519" y="307" text-anchor="middle" font-size="10" fill="#432068">PrivateLink tunnel</text>
 
           </svg>
           <div class="legend">
@@ -415,7 +434,7 @@
             <span><i style="background:#DEE0FA"></i>App-layer sharing</span>
           </div>
         </div>
-        <figcaption><b>Figure 1.</b> The full taxonomy of cloud networking primitives, from edge gateways to in-VPC controls to application-layer sharing. Focus boxes (dark border): Transit Gateway, Interface VPC Endpoint (PrivateLink consumer), and Delta Sharing — the three most architecturally significant for data platform design.</figcaption>
+        <figcaption><b>Figure 1.</b> The full taxonomy of cloud networking primitives. PrivateLink is correctly shown as a <em>cross-VPC</em> construct: the provider VPC (left, separate account/org) hosts the NLB and VPC Endpoint Service; the consumer VPC (right, your VPC) hosts the Interface Endpoint ENI. The PrivateLink tunnel (purple dashed, AWS Hyperplane) crosses the VPC boundary — it never traverses the public internet. The two VPCs can have overlapping CIDRs because there is no routing relationship between them, only service-level connectivity. Focus boxes (dark border): Transit Gateway, Interface VPC Endpoint (PrivateLink consumer), and Delta Sharing.</figcaption>
       </figure>
 
       <h3>The six families — detailed</h3>
