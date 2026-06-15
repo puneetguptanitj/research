@@ -1321,6 +1321,41 @@ sequenceDiagram
         <p>Trino has no awareness of business-level tags like PII. It only enforces what Ranger/OPA tells it. The governance catalog is where human judgment lives; Ranger/OPA translates that judgment into an access decision; Trino is the enforcement point. Each layer does one thing.</p>
       </div>
 
+      <h3>OpenLineage vs Ranger/OPA — observability vs prevention</h3>
+      <p>OpenLineage is <strong>observability infrastructure</strong> — it tells you what happened, not what is allowed to happen. Prevention is entirely Ranger/OPA's job. The two are often conflated because both deal with sensitive columns, but they operate at completely different points in the query lifecycle.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin:16px 0;">
+        <thead>
+          <tr style="background:#f0f4fb;">
+            <th style="padding:10px 14px;text-align:left;border:1px solid #d8dde8;color:#2f6fb8;"></th>
+            <th style="padding:10px 14px;text-align:left;border:1px solid #d8dde8;color:#2f6fb8;">OpenLineage</th>
+            <th style="padding:10px 14px;text-align:left;border:1px solid #d8dde8;color:#2f6fb8;">Ranger / OPA</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;font-weight:600;">When</td>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;">After query completes</td>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;">Before result leaves Trino</td>
+          </tr>
+          <tr style="background:#fafbfc;">
+            <td style="padding:10px 14px;border:1px solid #d8dde8;font-weight:600;">Purpose</td>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;">Record what was touched</td>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;">Decide what is allowed</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;font-weight:600;">Action</td>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;">Emit event to DataHub</td>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;">Mask / deny in-flight</td>
+          </tr>
+          <tr style="background:#fafbfc;">
+            <td style="padding:10px 14px;border:1px solid #d8dde8;font-weight:600;">Failure mode</td>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;">Miss a derived column</td>
+            <td style="padding:10px 14px;border:1px solid #d8dde8;">Block a legitimate query</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>OpenLineage is the <strong>camera watching the door</strong>; Ranger/OPA is the <strong>lock on the door</strong>. The camera helps improve the lock over time (tag propagation, gap detection) but stops nobody on its own. If Ranger/OPA is not configured, OpenLineage data sitting in DataHub does nothing to protect PII at query time.</p>
+
       <h3>Lineage harvest flow</h3>
       <figure style="margin:28px 0;">
         <div class="mermaid" style="background:transparent;">
@@ -1366,38 +1401,55 @@ sequenceDiagram
       <h3>The closed governance loop</h3>
       <figure style="margin:28px 0;">
         <div class="mermaid" style="background:transparent;">
-flowchart LR
-    subgraph TRINO ["Trino (L4)"]
-        T1["Execute query"]
-        T2["Enforce policy\n(mask / deny)"]
+flowchart TB
+    S1["👤 Data Steward\n(one-time: tags columns\nPII · SENSITIVE · RESTRICTED)"]
+
+    S1 -->|"writes tag once\ninto catalog"| G2
+
+    subgraph SETUP ["One-time setup — human"]
+        G2["Governance Catalog\nDataHub · Atlan · Purview\nColumn classifications"]
+        G2 -->|"background policy sync"| P1["Policy Engine\nRanger · OPA\nMasking &amp; access rules"]
     end
 
-    subgraph GOV ["Governance Catalog (L7)\nDataHub · Atlan · Purview"]
-        G1["Lineage graph"]
-        G2["Column classifications\nPII · SENSITIVE · RESTRICTED"]
+    subgraph QUERY ["Per-query path — fully automated"]
+        T1["Trino: Execute query"]
+        T1 -->|"OpenLineage event\n(inputs, outputs, columns)"| G1["Lineage graph\n(audit trail)"]
+        T1 -->|"access check on\nevery query"| P1
+        P1 -->|"mask / deny decision"| T2["Trino: Enforce policy\n(mask / deny result)"]
     end
 
-    subgraph POLICY ["Policy Engine (L8)\nRanger · OPA"]
-        P1["Masking &amp; access rules"]
-    end
-
-    subgraph STEWARD ["Data Steward"]
-        S1["Reviews lineage\nApplies tags"]
-    end
-
-    T1 -->|"OpenLineage event\n(inputs, outputs, columns)"| G1
-    G1 --> S1
-    S1 -->|"Tags column"| G2
-    G2 -->|"Sync policies"| P1
-    P1 -->|"mask / deny decision\nper access check"| T2
-
-    style TRINO fill:#DCE8FB,stroke:#3B73C4,color:#1E3A6B
-    style GOV fill:#DEEFD9,stroke:#4A9A3C,color:#234D1A
-    style POLICY fill:#FAD9DC,stroke:#C8425A,color:#6E1626
-    style STEWARD fill:#FBF0CF,stroke:#C99A1E,color:#6B4E06
+    style SETUP fill:#DEEFD9,stroke:#4A9A3C,color:#234D1A
+    style QUERY fill:#DCE8FB,stroke:#3B73C4,color:#1E3A6B
+    style S1 fill:#FBF0CF,stroke:#C99A1E,color:#6B4E06
+    style P1 fill:#FAD9DC,stroke:#C8425A,color:#6E1626
         </div>
-        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure L3.</b> The closed governance loop. Trino emits lineage outward; a steward applies classifications in the governance catalog; those classifications flow into Ranger/OPA as masking rules; Trino enforces them on the next query. Each component does one job.</figcaption>
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure L3.</b> The steward tags columns <em>once</em> (top); those tags sync into Ranger/OPA in the background. Every subsequent query is governed automatically — Trino checks the policy engine and enforces masking/denial with no human in the per-query path.</figcaption>
       </figure>
+
+      <h3>How stewards actually tag — and keep tags current</h3>
+      <p>Tags are not authored by hand from scratch, and they are not applied via regex on column names alone. Modern catalogs use a layered classification pipeline that runs on a schedule and surfaces proposals for the steward to approve or reject.</p>
+
+      <p><strong>Layer 1 — regex on sampled data values.</strong> The catalog periodically scans a sample of actual cell content (not column names). A pattern like <code>\d{3}-\d{2}-\d{4}</code> fires on the data regardless of whether the column is called <code>ssn</code>, <code>tax_ref</code>, or <code>emp_identifier</code>. Purview ships hundreds of built-in patterns covering SSN, credit card numbers, passport numbers, IBANs, and so on across regions.</p>
+
+      <p><strong>Layer 2 — column name heuristics.</strong> Regex on names (<code>.*ssn.*</code>, <code>.*social.*sec.*</code>, <code>.*national.*id.*</code>) is a weak signal used in combination, not alone. It boosts confidence when it agrees with Layer 1, but a name match without a data match (or vice versa) is flagged as low-confidence.</p>
+
+      <p><strong>Layer 3 — ML classifiers.</strong> Trained models combine column name, data type, sample value distribution, and neighbouring column context (a column sitting next to <code>first_name</code> and <code>dob</code> scores higher for PII). DataHub and Purview both expose trainable classifiers so orgs can teach the model their own naming conventions.</p>
+
+      <p><strong>Layer 4 — LLM semantic tagging (newer catalogs).</strong> Atlan and newer DataHub versions embed column metadata and match against a glossary using vector similarity. <code>govt_issued_id</code>, <code>national_identifier</code>, and <code>tax_ref</code> all resolve to the same concept even with zero regex overlap.</p>
+
+      <p><strong>The steward's actual job.</strong> The catalog runs all four layers on a schedule (nightly or on schema change events) and produces a list of <em>proposed</em> tags with a confidence score. The steward reviews and approves or rejects — they do not author tags from scratch. High-confidence proposals (e.g. data matches SSN regex + column is named <code>ssn</code>) can be auto-applied without review if the org opts in.</p>
+
+      <p><strong>Keeping tags current as schema evolves.</strong> Schema drift is the hard part. Three mechanisms handle it:</p>
+      <ul style="margin:10px 0 10px 24px;line-height:1.8;">
+        <li><strong>CDC / schema-change hooks.</strong> Catalogs like DataHub subscribe to Kafka schema-change events or poll the metastore. A new column triggers an immediate classification run against that column only — the steward gets a notification rather than a full re-scan.</li>
+        <li><strong>Lineage propagation.</strong> If a tagged column (<code>orders.cust_email → PII</code>) is selected into a derived table (<code>SELECT cust_email AS contact …</code>), lineage lets the catalog propose the same tag on the derived column automatically. The steward approves propagation, not reclassification.</li>
+        <li><strong>Periodic full re-scan.</strong> Fallback for catalogs without event hooks. Runs weekly or monthly; catches renames, type changes, and new tables added outside the normal pipeline.</li>
+      </ul>
+
+      <div class="callout note">
+        <span class="tag">Key insight</span>
+        <p>The steward is a <em>reviewer</em>, not an author. The classification pipeline does the discovery; the steward provides the human sign-off that makes a proposed tag legally binding. In mature orgs, 80–90% of tags are auto-applied at high confidence; steward time is concentrated on the ambiguous 10–20%.</p>
+      </div>
 
       <h3>Next-generation L7: GCP Knowledge Catalog</h3>
       <p><em>A semantic index of your entire data estate — tables, columns, relationships, and business meaning — built so AI agents can find the right data and generate accurate queries without hallucinating. Think of it as the enterprise's long-term memory that agents consult before they write a single line of SQL.</em></p>
@@ -1415,40 +1467,45 @@ flowchart LR
 
       <figure style="margin:28px 0;">
         <div class="mermaid" style="background:transparent;">
-flowchart TD
+flowchart TB
+    P["👤 User / Orchestrator\nsends prompt:\n'Show me order totals by region'"]
+
+    P -->|"1 · semantic search:\nwhat table has order totals?"| KC1
+
     subgraph KC ["GCP Knowledge Catalog (L7+)"]
         KC1["Semantic search\n(hybrid: BM25 + vector)"]
         KC2["Business glossary\n& verified SQL patterns"]
         KC3["Aggregated metadata\n(BigQuery, DataHub, Atlan…)"]
-        KC1 --- KC2 --- KC3
+        KC1 -->|"resolves to"| KC2
     end
 
+    KC2 -->|"2 · verified context\n+ SQL guardrails"| A2
+
     subgraph AGENT ["AI Agent"]
-        A1["Receives prompt:\n'Show me order totals by region'"]
         A2["Generates grounded SQL"]
     end
+
+    A2 -->|"3 · grounded SQL"| T1
 
     subgraph TRINO ["Trino (L4)"]
         T1["Executes SQL\nacross catalogs"]
     end
 
-    subgraph LINEAGE ["Lineage path (indirect)"]
-        OL["OpenLineage → DataHub"]
-    end
+    T1 -->|"4 · result set"| P
+    T1 -->|"5 · OpenLineage event\n(async, after query)"| OL
 
-    A1 -->|"semantic search:\n'what table has order totals?'"| KC1
-    KC2 -->|"verified context\n+ SQL guardrails"| A2
-    A2 -->|"grounded SQL"| T1
-    T1 -->|"result set"| AGENT
-    T1 -->|"OpenLineage event"| OL
-    OL -->|"DataHub feeds\nKC aggregation"| KC3
+    subgraph LINEAGE ["Lineage path (background)"]
+        OL["DataHub ingests lineage"]
+        OL -->|"DataHub feeds\nKC aggregation"| KC3
+    end
 
     style KC fill:#DEEFD9,stroke:#4A9A3C,color:#234D1A
     style AGENT fill:#FBF0CF,stroke:#C99A1E,color:#6B4E06
     style TRINO fill:#DCE8FB,stroke:#3B73C4,color:#1E3A6B
     style LINEAGE fill:#E8EBF0,stroke:#8A94A6,color:#3A4252
+    style P fill:#F3E8FF,stroke:#9333EA,color:#4B0082
         </div>
-        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure L4.</b> GCP Knowledge Catalog in the agentic query path. It sits upstream of Trino — grounding the agent before a query is written — rather than wrapping around Trino as a policy enforcer. Lineage flows back into it indirectly via DataHub/Atlan federation.</figcaption>
+        <figcaption style="margin-top:10px;font-size:13px;color:var(--muted,#5a6273);"><b>Figure L4.</b> Chronological flow top-to-bottom: (1) agent searches KC for context, (2) KC returns grounded context, (3) agent sends SQL to Trino, (4) Trino returns results, (5) OpenLineage event flows back asynchronously into DataHub → KC. KC sits upstream of Trino — grounding the agent before a query is written — not enforcing policy after it runs.</figcaption>
       </figure>
 
       <h3>Traditional catalog vs Knowledge Catalog — what changes for Trino</h3>
