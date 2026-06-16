@@ -297,7 +297,13 @@
         <p style="margin-top:0.6rem;">Mixed formats are transparent to readers but mildly inefficient in steady state — Parquet's column pushdown and row-group statistics don't apply to Avro files in the same scan. Treat coexistence as a transient condition; converge via compaction.</p>
       </div>
 
-      <p><strong>Delete files</strong> record which rows have been logically removed without rewriting the data file they belong to — this is the merge-on-read (MOR) strategy. The Iceberg v2 spec defines two kinds. <em>Positional delete files</em> identify a deleted row by <code>(file_path, row_position)</code> — a fast lookup but tightly coupled to the physical file. <em>Equality delete files</em> identify rows by the values of one or more columns (e.g., <code>order_id = 1234</code>) — more flexible, but at read time the engine must join every data file with every relevant equality delete file, causing scan amplification that grows with write frequency. <strong>Sequence numbers</strong> (a monotonically increasing counter per snapshot) prevent equality delete files from accidentally deleting a row added after the delete was written: an equality delete with sequence number <em>N</em> only applies to data files with sequence number < <em>N</em>.</p>
+      <p><strong>Delete files</strong> are the mechanism behind the merge-on-read (MOR) strategy for both deletes and updates. A delete removes a row; an update is a delete + insert — the old row is suppressed via a delete file and the full new row is written as a new data file (Iceberg has no partial-row / delta format). The engine reconciles the two at read time rather than rewriting the original data file. Iceberg has evolved how it represents this suppression across spec versions.</p>
+
+      <p><strong>v2 — two delete file kinds:</strong></p>
+      <p><em>a. Positional delete files</em> identify a row by <code>(file_path, row_position)</code>. Fast lookup, but tightly coupled to the physical file — if the data file is compacted or rewritten, the positional delete file becomes stale and must be cleaned up.</p>
+      <p><em>b. Equality delete files</em> identify rows by column values (e.g., <code>order_id = 1234</code>). More flexible — the delete survives data file rewrites — but at read time the engine must join every data file with every relevant equality delete file, causing scan amplification that grows with write frequency. <strong>Sequence numbers</strong> (a monotonically increasing counter per snapshot) prevent an equality delete from accidentally suppressing a row written after it: an equality delete with sequence number <em>N</em> only applies to data files with sequence number &lt; <em>N</em>.</p>
+
+      <p><strong>v3 — deletion vectors</strong> replace both v2 types. See the v3 section below.</p>
 
       <div class="callout note">
         <span class="tag">Sequence number — per snapshot, not per file</span>
