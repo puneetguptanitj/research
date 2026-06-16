@@ -297,96 +297,6 @@
         <p style="margin-top:0.6rem;">Mixed formats are transparent to readers but mildly inefficient in steady state — Parquet's column pushdown and row-group statistics don't apply to Avro files in the same scan. Treat coexistence as a transient condition; converge via compaction.</p>
       </div>
 
-      <figure style="margin:2rem 0;background:#f8f9fb;border:1px solid var(--rule-strong);border-radius:10px;padding:1.5rem 1rem 1rem;">
-        <figcaption style="font-size:0.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1rem;text-align:center;">Iceberg → Parquet three-stage pruning chain</figcaption>
-        <svg viewBox="0 0 780 600" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:780px;display:block;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-          <defs>
-            <marker id="arr" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
-              <polygon points="0 0,9 3.5,0 7" fill="#6b7280"/>
-            </marker>
-            <marker id="arr-skip" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
-              <polygon points="0 0,9 3.5,0 7" fill="#C8425A"/>
-            </marker>
-            <marker id="arr-pass" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
-              <polygon points="0 0,9 3.5,0 7" fill="#1F9E8F"/>
-            </marker>
-          </defs>
-
-          <!-- ── Query input ── -->
-          <rect x="215" y="14" width="350" height="52" rx="8" fill="#2f6fb8" />
-          <text x="390" y="35" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Query predicate</text>
-          <text x="390" y="54" text-anchor="middle" fill="#c9ddf7" font-size="11.5">e.g.  date &gt; '2025-01-01'  AND  region = 'us-east'</text>
-
-          <!-- down arrow → stage 1 -->
-          <line x1="390" y1="66" x2="390" y2="96" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr)"/>
-
-          <!-- ── STAGE 1 : Manifest statistics ── -->
-          <rect x="155" y="96" width="470" height="70" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.5"/>
-          <text x="175" y="118" fill="#1a1d24" font-size="12" font-weight="700">① Manifest file — column statistics</text>
-          <text x="175" y="136" fill="#444b59" font-size="11">Per-column: lower_bound, upper_bound, null_count, nan_count</text>
-          <text x="175" y="152" fill="#444b59" font-size="11">Cost: read only the Avro manifest — no data file I/O</text>
-
-          <!-- down arrow → decision 1 -->
-          <line x1="390" y1="166" x2="390" y2="194" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr)"/>
-
-          <!-- diamond 1 -->
-          <polygon points="390,194 500,222 390,250 280,222" fill="#fff" stroke="#6b7280" stroke-width="1.5"/>
-          <text x="390" y="218" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">Predicate overlaps</text>
-          <text x="390" y="234" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">manifest stats?</text>
-
-          <!-- NO → skip right -->
-          <line x1="500" y1="222" x2="610" y2="222" stroke="#C8425A" stroke-width="1.8" marker-end="url(#arr-skip)"/>
-          <text x="549" y="214" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">NO</text>
-          <rect x="610" y="196" width="160" height="52" rx="6" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.2"/>
-          <text x="690" y="217" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">SKIP manifest</text>
-          <text x="690" y="234" text-anchor="middle" fill="#8B2035" font-size="10.5">All data files within</text>
-          <text x="690" y="248" text-anchor="middle" fill="#8B2035" font-size="10.5">this manifest pruned</text>
-
-          <!-- YES → down -->
-          <line x1="390" y1="250" x2="390" y2="280" stroke="#1F9E8F" stroke-width="1.8" marker-end="url(#arr-pass)"/>
-          <text x="402" y="269" fill="#1F9E8F" font-size="11" font-weight="700">YES</text>
-
-          <!-- ── STAGE 2 : Parquet footer ── -->
-          <rect x="155" y="280" width="470" height="70" rx="8" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
-          <text x="175" y="302" fill="#1a1d24" font-size="12" font-weight="700">② Parquet footer — row-group statistics</text>
-          <text x="175" y="320" fill="#444b59" font-size="11">Per column per row-group: min, max, null_count (ColumnChunkMetaData)</text>
-          <text x="175" y="336" fill="#444b59" font-size="11">Cost: read only the Parquet footer (last few KB of the file)</text>
-
-          <!-- down arrow → decision 2 -->
-          <line x1="390" y1="350" x2="390" y2="378" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr)"/>
-
-          <!-- diamond 2 -->
-          <polygon points="390,378 500,406 390,434 280,406" fill="#fff" stroke="#6b7280" stroke-width="1.5"/>
-          <text x="390" y="402" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">Predicate overlaps</text>
-          <text x="390" y="418" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">row-group ranges?</text>
-
-          <!-- NO → skip right -->
-          <line x1="500" y1="406" x2="610" y2="406" stroke="#C8425A" stroke-width="1.8" marker-end="url(#arr-skip)"/>
-          <text x="549" y="398" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">NO</text>
-          <rect x="610" y="380" width="160" height="52" rx="6" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.2"/>
-          <text x="690" y="401" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">SKIP row group(s)</text>
-          <text x="690" y="418" text-anchor="middle" fill="#8B2035" font-size="10.5">Seek to next row group;</text>
-          <text x="690" y="432" text-anchor="middle" fill="#8B2035" font-size="10.5">no data bytes read</text>
-
-          <!-- YES → down -->
-          <line x1="390" y1="434" x2="390" y2="464" stroke="#1F9E8F" stroke-width="1.8" marker-end="url(#arr-pass)"/>
-          <text x="402" y="453" fill="#1F9E8F" font-size="11" font-weight="700">YES</text>
-
-          <!-- ── STAGE 3 : read row-group bytes ── -->
-          <rect x="155" y="464" width="470" height="70" rx="8" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.5"/>
-          <text x="175" y="486" fill="#1a1d24" font-size="12" font-weight="700">③ Read row-group data bytes</text>
-          <text x="175" y="504" fill="#444b59" font-size="11">Decompress column chunks, apply late-materialisation (vector filter)</text>
-          <text x="175" y="520" fill="#444b59" font-size="11">First actual data I/O — only after passing both prior stages</text>
-
-          <!-- down arrow → result -->
-          <line x1="390" y1="534" x2="390" y2="562" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr)"/>
-
-          <!-- result -->
-          <rect x="250" y="562" width="280" height="34" rx="8" fill="#2f6fb8"/>
-          <text x="390" y="584" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="700">Return matching rows to engine</text>
-        </svg>
-      </figure>
-
       <p><strong>Delete files</strong> record which rows have been logically removed without rewriting the data file they belong to — this is the merge-on-read (MOR) strategy. The Iceberg v2 spec defines two kinds. <em>Positional delete files</em> identify a deleted row by <code>(file_path, row_position)</code> — a fast lookup but tightly coupled to the physical file. <em>Equality delete files</em> identify rows by the values of one or more columns (e.g., <code>order_id = 1234</code>) — more flexible, but at read time the engine must join every data file with every relevant equality delete file, causing scan amplification that grows with write frequency. <strong>Sequence numbers</strong> (a monotonically increasing counter per snapshot) prevent equality delete files from accidentally deleting a row added after the delete was written: an equality delete with sequence number <em>N</em> only applies to data files with sequence number < <em>N</em>.</p>
 
       <div class="callout note">
@@ -1019,6 +929,96 @@ sequenceDiagram
           </div>
         </div>
         <figcaption><b>Figure 3.</b> Write path (steps 1–7): the engine writes files bottom-up, then commits with a single CAS on the catalog pointer. OCC retry discards only the new metadata, not the data files. Read path (steps 8–14): three pruning stages (partition → file → row-group) before data bytes move; delete/DV application last.</figcaption>
+      </figure>
+
+      <figure style="margin:2rem 0;background:#f8f9fb;border:1px solid var(--rule-strong);border-radius:10px;padding:1.5rem 1rem 1rem;">
+        <figcaption style="font-size:0.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1rem;text-align:center;">Iceberg → Parquet three-stage pruning chain</figcaption>
+        <svg viewBox="0 0 780 600" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:780px;display:block;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <defs>
+            <marker id="arr-pruning" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0,9 3.5,0 7" fill="#6b7280"/>
+            </marker>
+            <marker id="arr-skip-pruning" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0,9 3.5,0 7" fill="#C8425A"/>
+            </marker>
+            <marker id="arr-pass-pruning" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0,9 3.5,0 7" fill="#1F9E8F"/>
+            </marker>
+          </defs>
+
+          <!-- ── Query input ── -->
+          <rect x="215" y="14" width="350" height="52" rx="8" fill="#2f6fb8" />
+          <text x="390" y="35" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Query predicate</text>
+          <text x="390" y="54" text-anchor="middle" fill="#c9ddf7" font-size="11.5">e.g.  date &gt; '2025-01-01'  AND  region = 'us-east'</text>
+
+          <!-- down arrow → stage 1 -->
+          <line x1="390" y1="66" x2="390" y2="96" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr-pruning)"/>
+
+          <!-- ── STAGE 1 : Manifest statistics ── -->
+          <rect x="155" y="96" width="470" height="70" rx="8" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.5"/>
+          <text x="175" y="118" fill="#1a1d24" font-size="12" font-weight="700">① Manifest file — column statistics</text>
+          <text x="175" y="136" fill="#444b59" font-size="11">Per-column: lower_bound, upper_bound, null_count, nan_count</text>
+          <text x="175" y="152" fill="#444b59" font-size="11">Cost: read only the Avro manifest — no data file I/O</text>
+
+          <!-- down arrow → decision 1 -->
+          <line x1="390" y1="166" x2="390" y2="194" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr-pruning)"/>
+
+          <!-- diamond 1 -->
+          <polygon points="390,194 500,222 390,250 280,222" fill="#fff" stroke="#6b7280" stroke-width="1.5"/>
+          <text x="390" y="218" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">Predicate overlaps</text>
+          <text x="390" y="234" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">manifest stats?</text>
+
+          <!-- NO → skip right -->
+          <line x1="500" y1="222" x2="610" y2="222" stroke="#C8425A" stroke-width="1.8" marker-end="url(#arr-skip-pruning)"/>
+          <text x="549" y="214" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">NO</text>
+          <rect x="610" y="196" width="160" height="52" rx="6" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.2"/>
+          <text x="690" y="217" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">SKIP manifest</text>
+          <text x="690" y="234" text-anchor="middle" fill="#8B2035" font-size="10.5">All data files within</text>
+          <text x="690" y="248" text-anchor="middle" fill="#8B2035" font-size="10.5">this manifest pruned</text>
+
+          <!-- YES → down -->
+          <line x1="390" y1="250" x2="390" y2="280" stroke="#1F9E8F" stroke-width="1.8" marker-end="url(#arr-pass-pruning)"/>
+          <text x="402" y="269" fill="#1F9E8F" font-size="11" font-weight="700">YES</text>
+
+          <!-- ── STAGE 2 : Parquet footer ── -->
+          <rect x="155" y="280" width="470" height="70" rx="8" fill="#D6F0EE" stroke="#1F9E8F" stroke-width="1.5"/>
+          <text x="175" y="302" fill="#1a1d24" font-size="12" font-weight="700">② Parquet footer — row-group statistics</text>
+          <text x="175" y="320" fill="#444b59" font-size="11">Per column per row-group: min, max, null_count (ColumnChunkMetaData)</text>
+          <text x="175" y="336" fill="#444b59" font-size="11">Cost: read only the Parquet footer (last few KB of the file)</text>
+
+          <!-- down arrow → decision 2 -->
+          <line x1="390" y1="350" x2="390" y2="378" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr-pruning)"/>
+
+          <!-- diamond 2 -->
+          <polygon points="390,378 500,406 390,434 280,406" fill="#fff" stroke="#6b7280" stroke-width="1.5"/>
+          <text x="390" y="402" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">Predicate overlaps</text>
+          <text x="390" y="418" text-anchor="middle" fill="#1a1d24" font-size="11.5" font-weight="600">row-group ranges?</text>
+
+          <!-- NO → skip right -->
+          <line x1="500" y1="406" x2="610" y2="406" stroke="#C8425A" stroke-width="1.8" marker-end="url(#arr-skip-pruning)"/>
+          <text x="549" y="398" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">NO</text>
+          <rect x="610" y="380" width="160" height="52" rx="6" fill="#FBE9EC" stroke="#C8425A" stroke-width="1.2"/>
+          <text x="690" y="401" text-anchor="middle" fill="#C8425A" font-size="11" font-weight="700">SKIP row group(s)</text>
+          <text x="690" y="418" text-anchor="middle" fill="#8B2035" font-size="10.5">Seek to next row group;</text>
+          <text x="690" y="432" text-anchor="middle" fill="#8B2035" font-size="10.5">no data bytes read</text>
+
+          <!-- YES → down -->
+          <line x1="390" y1="434" x2="390" y2="464" stroke="#1F9E8F" stroke-width="1.8" marker-end="url(#arr-pass-pruning)"/>
+          <text x="402" y="453" fill="#1F9E8F" font-size="11" font-weight="700">YES</text>
+
+          <!-- ── STAGE 3 : read row-group bytes ── -->
+          <rect x="155" y="464" width="470" height="70" rx="8" fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.5"/>
+          <text x="175" y="486" fill="#1a1d24" font-size="12" font-weight="700">③ Read row-group data bytes</text>
+          <text x="175" y="504" fill="#444b59" font-size="11">Decompress column chunks, apply late-materialisation (vector filter)</text>
+          <text x="175" y="520" fill="#444b59" font-size="11">First actual data I/O — only after passing both prior stages</text>
+
+          <!-- down arrow → result -->
+          <line x1="390" y1="534" x2="390" y2="562" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr-pruning)"/>
+
+          <!-- result -->
+          <rect x="250" y="562" width="280" height="34" rx="8" fill="#2f6fb8"/>
+          <text x="390" y="584" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="700">Return matching rows to engine</text>
+        </svg>
       </figure>
 
       <h3>Schema and partition evolution</h3>
