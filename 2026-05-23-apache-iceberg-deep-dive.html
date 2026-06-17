@@ -992,7 +992,7 @@
 
       <figure>
         <div class="diagram">
-          <svg viewBox="0 0 920 502" xmlns="http://www.w3.org/2000/svg"
+          <svg viewBox="0 0 920 518" xmlns="http://www.w3.org/2000/svg"
                font-family="-apple-system,'Segoe UI',Roboto,sans-serif"
                role="img" aria-label="Apache Iceberg three-layer metadata tree structure">
             <defs>
@@ -1026,16 +1026,16 @@
             <rect x="690" y="103" width="30" height="16" rx="4" fill="#111418"/>
             <text x="705" y="114.5" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">FOCUS</text>
 
-            <!-- Puffin box (side, dashed) -->
-            <rect x="750" y="98" width="155" height="56" rx="7"
+            <!-- Puffin box (side, dashed) — STATISTICS only -->
+            <rect x="750" y="98" width="162" height="56" rx="7"
                   fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4" stroke-dasharray="5,3"/>
-            <text x="827" y="120" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">Puffin Files</text>
-            <text x="827" y="136" text-anchor="middle" font-size="10" fill="#5A6273">Theta sketches (NDV)</text>
-            <text x="827" y="149" text-anchor="middle" font-size="10" fill="#5A6273">+ deletion vectors (v3)</text>
+            <text x="831" y="118" text-anchor="middle" font-size="11.5" font-weight="600" fill="#3A4252">Puffin (Statistics)</text>
+            <text x="831" y="133" text-anchor="middle" font-size="10" fill="#5A6273">Theta sketches · NDV estimates</text>
+            <text x="831" y="146" text-anchor="middle" font-size="9.5" fill="#8A94A6" font-style="italic">referenced by Metadata File only</text>
             <line x1="725" y1="126" x2="750" y2="126" stroke="#8A94A6" stroke-width="1.4"
                   stroke-dasharray="4,3" marker-end="url(#arr-dash)"/>
-            <rect x="719" y="118" width="54" height="15" rx="7" fill="#fff" stroke="#D5D9E0" stroke-width="0.7"/>
-            <text x="746" y="128.5" text-anchor="middle" font-size="9" fill="#5A6273">stats refs</text>
+            <rect x="712" y="118" width="62" height="15" rx="7" fill="#fff" stroke="#D5D9E0" stroke-width="0.7"/>
+            <text x="743" y="128.5" text-anchor="middle" font-size="9" fill="#5A6273">statistics refs</text>
 
             <!-- Arrow: Metadata → Manifest List -->
             <line x1="460" y1="154" x2="460" y2="195" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
@@ -1081,6 +1081,8 @@
             <line x1="178" y1="354" x2="310" y2="398" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
             <line x1="415" y1="354" x2="340" y2="398" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
             <line x1="505" y1="354" x2="570" y2="398" stroke="#5A6273" stroke-width="1.5" marker-end="url(#arr)"/>
+            <rect x="510" y="366" width="108" height="14" rx="6" fill="#fff" stroke="#D5D9E0" stroke-width="0.7"/>
+            <text x="564" y="376.5" text-anchor="middle" font-size="8.5" fill="#5A6273">content_offset + size</text>
 
             <!-- Row 4: Data / Delete / Deletion Vector files -->
             <!-- Data Files -->
@@ -1091,35 +1093,167 @@
             <text x="102" y="444" text-anchor="middle" font-size="9.5" fill="#5A6273">row groups · col stats</text>
 
             <!-- Delete Files v2 -->
-            <rect x="213" y="398" width="215" height="48" rx="7"
+            <rect x="213" y="398" width="215" height="56" rx="7"
                   fill="#E8EBF0" stroke="#8A94A6" stroke-width="1.4"/>
-            <text x="320" y="419" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">Delete Files (v2)</text>
-            <text x="320" y="434" text-anchor="middle" font-size="10" fill="#5A6273">positional: (path, row_pos)</text>
-            <text x="320" y="444" text-anchor="middle" font-size="9.5" fill="#5A6273">equality: key column values</text>
+            <text x="320" y="416" text-anchor="middle" font-size="12" font-weight="600" fill="#3A4252">Delete Files (v2)</text>
+            <text x="320" y="430" text-anchor="middle" font-size="10" fill="#5A6273">positional: <tspan font-family="monospace" font-size="9.5">content=1</tspan> · avro · (path, pos)</text>
+            <text x="320" y="443" text-anchor="middle" font-size="10" fill="#5A6273">equality: <tspan font-family="monospace" font-size="9.5">content=2</tspan> · key values</text>
+            <text x="320" y="453" text-anchor="middle" font-size="9" fill="#9ca3af" font-style="italic">file_format=avro or parquet</text>
 
-            <!-- Deletion Vectors v3 -->
-            <rect x="446" y="398" width="230" height="48" rx="7"
+            <!-- Deletion Vectors v3 — Puffin file at storage level -->
+            <rect x="446" y="398" width="240" height="56" rx="7"
                   fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.4" stroke-dasharray="6,3"/>
-            <text x="561" y="419" text-anchor="middle" font-size="12" font-weight="600" fill="#1E3A6B">Deletion Vectors (v3)</text>
-            <text x="561" y="434" text-anchor="middle" font-size="10" fill="#1E3A6B">per-file bitmap in Puffin blob</text>
-            <text x="561" y="444" text-anchor="middle" font-size="9.5" fill="#1E3A6B">no join needed at read time</text>
+            <text x="566" y="414" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1E3A6B">Puffin File — Deletion Vectors (v3)</text>
+            <text x="566" y="428" text-anchor="middle" font-size="10" fill="#1E3A6B"><tspan font-family="monospace" font-size="9.5">content=1</tspan> · <tspan font-family="monospace" font-size="9.5">file_format=puffin</tspan></text>
+            <text x="566" y="441" text-anchor="middle" font-size="9.5" fill="#1E3A6B">per-data-file RoaringBitmap blob</text>
+            <text x="566" y="453" text-anchor="middle" font-size="9" fill="#9ca3af" font-style="italic">same content type as v2 positional — format field distinguishes</text>
 
             <!-- Legend -->
-            <rect x="10" y="460" width="900" height="36" rx="6" fill="#F5F6F8" stroke="#D5D9E0"/>
-            <text x="30" y="482" font-size="10.5" fill="#5A6273">Legend:</text>
-            <rect x="78" y="471" width="12" height="12" rx="2" fill="#EADDF7" stroke="#7E4FB5"/>
-            <text x="94" y="482" font-size="10" fill="#5A6273">Catalog (L3)</text>
-            <rect x="175" y="471" width="12" height="12" rx="2" fill="#DCE8FB" stroke="#3B73C4"/>
-            <text x="191" y="482" font-size="10" fill="#5A6273">Table Format / Iceberg metadata (L2)</text>
-            <rect x="388" y="471" width="12" height="12" rx="2" fill="#E8EBF0" stroke="#8A94A6"/>
-            <text x="404" y="482" font-size="10" fill="#5A6273">Storage / file format (L0–L1)</text>
-            <rect x="568" y="471" width="12" height="12" rx="2" fill="#DCE8FB" stroke="#3B73C4" stroke-dasharray="4,2"/>
-            <text x="584" y="482" font-size="10" fill="#5A6273">v3-only (dashed border)</text>
-            <rect x="718" y="471" width="12" height="12" rx="2" fill="#E8EBF0" stroke="#8A94A6" stroke-dasharray="4,2"/>
-            <text x="734" y="482" font-size="10" fill="#5A6273">Optional / indirect ref</text>
+            <rect x="10" y="476" width="900" height="36" rx="6" fill="#F5F6F8" stroke="#D5D9E0"/>
+            <text x="30" y="498" font-size="10.5" fill="#5A6273">Legend:</text>
+            <rect x="78" y="487" width="12" height="12" rx="2" fill="#EADDF7" stroke="#7E4FB5"/>
+            <text x="94" y="498" font-size="10" fill="#5A6273">Catalog (L3)</text>
+            <rect x="175" y="487" width="12" height="12" rx="2" fill="#DCE8FB" stroke="#3B73C4"/>
+            <text x="191" y="498" font-size="10" fill="#5A6273">Table Format / Iceberg metadata (L2)</text>
+            <rect x="388" y="487" width="12" height="12" rx="2" fill="#E8EBF0" stroke="#8A94A6"/>
+            <text x="404" y="498" font-size="10" fill="#5A6273">Storage / file format (L0–L1)</text>
+            <rect x="568" y="487" width="12" height="12" rx="2" fill="#DCE8FB" stroke="#3B73C4" stroke-dasharray="4,2"/>
+            <text x="584" y="498" font-size="10" fill="#5A6273">v3-only (dashed border)</text>
+            <rect x="718" y="487" width="12" height="12" rx="2" fill="#E8EBF0" stroke="#8A94A6" stroke-dasharray="4,2"/>
+            <text x="734" y="498" font-size="10" fill="#5A6273">Optional / indirect ref</text>
           </svg>
         </div>
-        <figcaption><b>Figure 1.</b> The Iceberg metadata tree. A catalog holds a single pointer to the current Metadata File; all guarantees flow from that atomic swap. Manifest Files carry per-file statistics that allow three levels of pruning before a byte of data is read. Deletion Vectors (v3, dashed) replace both positional and equality delete files with a compact per-file bitmap, eliminating the read-time join penalty of v2 MOR tables.</figcaption>
+        <figcaption><b>Figure 1.</b> The Iceberg metadata tree. A catalog holds a single pointer to the current Metadata File; all guarantees flow from that atomic swap. Manifest Files carry per-file statistics that allow three levels of pruning before a byte of data is read. Puffin files appear at two distinct levels: the Metadata File references a Puffin file for table statistics (Theta sketches, NDV); Delete Manifest entries reference a separate Puffin file per data file for Deletion Vectors (v3, dashed), located at the storage layer alongside data files — not at the metadata level.</figcaption>
+      </figure>
+
+      <h3>How the Engine Correlates Delete Files to Data Files</h3>
+      <p>Figure 1 shows the structural layout but doesn't answer a key operational question: when reading a data manifest, how does the engine know which delete files apply to it? The answer is that this correlation happens at the <strong>Manifest List level</strong>, before any manifest file is opened.</p>
+
+      <p>The manifest list contains one row per manifest — both data and delete manifests. Each row carries the manifest's partition column ranges and its <code>content</code> type. The engine scans all rows in the manifest list first and groups them by type. It then uses partition range overlap to filter: if a delete manifest's partition range doesn't intersect the query's partition predicate, that entire manifest is skipped without opening it. Only overlapping delete manifests are opened.</p>
+
+      <p>Once the engine has opened the relevant delete manifests, it builds an in-memory map — keyed by data file path — using the <code>referenced_data_file</code> field on each deletion vector entry (or <code>file_path</code> for v2 positional deletes). Then when it opens each data file from the data manifest, it does a direct lookup in that map to find the applicable deletion vector or delete file. The entire correlation is resolved in memory; no manifest is re-read during the scan.</p>
+
+      <p>The data manifest itself is intentionally ignorant of deletes. This separation allows Iceberg to prune delete manifests independently using partition statistics, and means a data manifest never needs to be rewritten simply because new deletes arrived against its data files.</p>
+
+      <figure style="margin:2rem 0;background:#f8f9fb;border:1px solid var(--rule-strong);border-radius:10px;padding:1.5rem 1rem 1rem;">
+        <figcaption style="font-size:0.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1rem;text-align:center;">Scan planning — how the engine correlates delete files to data files at the manifest list level</figcaption>
+        <svg viewBox="0 0 860 530" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:860px;display:block;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <defs>
+            <marker id="sp-arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#6b7280"/></marker>
+            <marker id="sp-arr-b" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#3B73C4"/></marker>
+            <marker id="sp-arr-t" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#1F9E8F"/></marker>
+            <marker id="sp-arr-r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#e05252"/></marker>
+            <marker id="sp-arr-a" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#C99A1E"/></marker>
+          </defs>
+
+          <!-- ── STEP 1: Manifest List scan ── -->
+          <rect x="30" y="12" width="56" height="22" rx="11" fill="#3B73C4"/>
+          <text x="58" y="28" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">STEP 1</text>
+          <rect x="94" y="8" width="736" height="30" rx="7" fill="#DCE8FB" stroke="#3B73C4" stroke-width="1.3"/>
+          <text x="462" y="28" text-anchor="middle" fill="#1a3a6b" font-size="12" font-weight="700">Scan Manifest List — group all rows by content type, filter by partition overlap</text>
+
+          <!-- Manifest list table -->
+          <rect x="30" y="50" width="800" height="102" rx="8" fill="#EBF2FD" stroke="#3B73C4" stroke-width="1.2"/>
+          <!-- header -->
+          <rect x="30" y="50" width="800" height="22" rx="8" fill="#3B73C4"/>
+          <text x="160" y="65" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">manifest_path</text>
+          <text x="400" y="65" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">content</text>
+          <text x="570" y="65" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">partition range</text>
+          <text x="760" y="65" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">action</text>
+          <!-- row 1 data -->
+          <text x="160" y="84" text-anchor="middle" font-family="monospace" font-size="9.5" fill="#1a3a6b">snap-N-0-data.avro</text>
+          <text x="400" y="84" text-anchor="middle" fill="#3B73C4" font-size="10" font-weight="700">DATA (0)</text>
+          <text x="570" y="84" text-anchor="middle" fill="#444b59" font-size="10">2024-01 → 2024-03</text>
+          <text x="760" y="84" text-anchor="middle" fill="#1F9E8F" font-size="10" font-weight="700">→ collect data files</text>
+          <!-- divider -->
+          <line x1="46" y1="92" x2="814" y2="92" stroke="#c7d8f5" stroke-width="0.8"/>
+          <!-- row 2 deletes overlapping -->
+          <text x="160" y="107" text-anchor="middle" font-family="monospace" font-size="9.5" fill="#1a3a6b">snap-N-1-deletes.avro</text>
+          <text x="400" y="107" text-anchor="middle" fill="#e05252" font-size="10" font-weight="700">DELETES (1)</text>
+          <text x="570" y="107" text-anchor="middle" fill="#444b59" font-size="10">2024-01 → 2024-02  ✓ overlaps</text>
+          <text x="760" y="107" text-anchor="middle" fill="#1F9E8F" font-size="10" font-weight="700">→ open — apply deletes</text>
+          <!-- divider -->
+          <line x1="46" y1="115" x2="814" y2="115" stroke="#c7d8f5" stroke-width="0.8"/>
+          <!-- row 3 deletes no overlap -->
+          <rect x="31" y="117" width="798" height="28" rx="0" fill="#f9f9f9"/>
+          <text x="160" y="130" text-anchor="middle" font-family="monospace" font-size="9.5" fill="#9ca3af">snap-M-2-deletes.avro</text>
+          <text x="400" y="130" text-anchor="middle" fill="#9ca3af" font-size="10" font-weight="700">DELETES (1)</text>
+          <text x="570" y="130" text-anchor="middle" fill="#9ca3af" font-size="10">2023-10 → 2023-12  ✗ no overlap</text>
+          <text x="760" y="130" text-anchor="middle" fill="#9ca3af" font-size="10" font-style="italic">→ skip entirely (0 I/Os)</text>
+          <rect x="31" y="143" width="798" height="8" rx="0" fill="#EBF2FD"/>
+
+          <line x1="430" y1="152" x2="430" y2="174" stroke="#6b7280" stroke-width="1.5" marker-end="url(#sp-arr)"/>
+
+          <!-- ── STEP 2: open delete manifest, build map ── -->
+          <rect x="30" y="174" width="56" height="22" rx="11" fill="#C99A1E"/>
+          <text x="58" y="190" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">STEP 2</text>
+          <rect x="94" y="170" width="736" height="30" rx="7" fill="#FBF0CF" stroke="#C99A1E" stroke-width="1.3"/>
+          <text x="462" y="190" text-anchor="middle" fill="#5a3e00" font-size="12" font-weight="700">Open overlapping Delete Manifest — build in-memory per-data-file map</text>
+
+          <!-- delete manifest entries -->
+          <rect x="30" y="212" width="440" height="80" rx="8" fill="#FDFAF0" stroke="#C99A1E" stroke-width="1.2"/>
+          <text x="250" y="230" text-anchor="middle" fill="#5a3e00" font-size="11" font-weight="700">snap-N-1-deletes.avro entries</text>
+          <rect x="46" y="237" width="408" height="22" rx="4" fill="#fff" stroke="#C99A1E" stroke-width="0.9"/>
+          <text x="140" y="252" text-anchor="start" font-family="monospace" font-size="9.5" fill="#1a3a6b">content=1 · file_format=puffin</text>
+          <text x="380" y="252" text-anchor="start" font-size="9.5" fill="#444b59">ref → data_1.parquet  @offset=120</text>
+          <rect x="46" y="263" width="408" height="22" rx="4" fill="#fff" stroke="#C99A1E" stroke-width="0.9"/>
+          <text x="140" y="278" text-anchor="start" font-family="monospace" font-size="9.5" fill="#1a3a6b">content=1 · file_format=puffin</text>
+          <text x="380" y="278" text-anchor="start" font-size="9.5" fill="#444b59">ref → data_2.parquet  @offset=220</text>
+
+          <!-- arrow to map -->
+          <line x1="470" y1="252" x2="508" y2="252" stroke="#C99A1E" stroke-width="1.4" marker-end="url(#sp-arr-a)"/>
+
+          <!-- in-memory map -->
+          <rect x="508" y="212" width="322" height="80" rx="8" fill="#fff" stroke="#C99A1E" stroke-width="1.2"/>
+          <text x="669" y="230" text-anchor="middle" fill="#5a3e00" font-size="11" font-weight="700">In-memory lookup map</text>
+          <text x="530" y="248" text-anchor="start" font-family="monospace" font-size="10" fill="#3B73C4">data_1.parquet</text>
+          <text x="530" y="262" text-anchor="start" fill="#6b7280" font-size="9.5">  → shared.puffin · offset=120 · size=44</text>
+          <text x="530" y="276" text-anchor="start" font-family="monospace" font-size="10" fill="#3B73C4">data_2.parquet</text>
+          <text x="530" y="290" text-anchor="start" fill="#6b7280" font-size="9.5">  → shared.puffin · offset=220 · size=38</text>
+
+          <line x1="430" y1="292" x2="430" y2="314" stroke="#6b7280" stroke-width="1.5" marker-end="url(#sp-arr)"/>
+
+          <!-- ── STEP 3: open data manifest ── -->
+          <rect x="30" y="314" width="56" height="22" rx="11" fill="#1F9E8F"/>
+          <text x="58" y="330" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">STEP 3</text>
+          <rect x="94" y="310" width="736" height="30" rx="7" fill="#DFF3F1" stroke="#1F9E8F" stroke-width="1.3"/>
+          <text x="462" y="330" text-anchor="middle" fill="#0e4a43" font-size="12" font-weight="700">Open Data Manifest — for each data file, map-lookup to find its DV</text>
+
+          <!-- data manifest entries + lookup -->
+          <rect x="30" y="352" width="800" height="96" rx="8" fill="#F2FDFB" stroke="#1F9E8F" stroke-width="1.2"/>
+
+          <!-- data file 1 row -->
+          <rect x="46" y="362" width="340" height="28" rx="5" fill="#EBF2FD" stroke="#3B73C4" stroke-width="1"/>
+          <text x="216" y="375" text-anchor="middle" fill="#1a3a6b" font-size="10.5" font-weight="600">data_1.parquet  (content=0)</text>
+          <text x="216" y="387" text-anchor="middle" fill="#6b7280" font-size="9.5">partition: 2024-01 · rows: 50 000</text>
+          <!-- lookup arrow -->
+          <line x1="386" y1="376" x2="426" y2="376" stroke="#1F9E8F" stroke-width="1.3" marker-end="url(#sp-arr-t)"/>
+          <text x="406" y="370" text-anchor="middle" fill="#1F9E8F" font-size="8.5">map</text>
+          <text x="406" y="380" text-anchor="middle" fill="#1F9E8F" font-size="8.5">lookup</text>
+          <!-- result -->
+          <rect x="426" y="362" width="388" height="28" rx="5" fill="#DFF3F1" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="620" y="375" text-anchor="middle" font-family="monospace" font-size="9.5" fill="#0e4a43">→ shared.puffin  offset=120  size=44</text>
+          <text x="620" y="387" text-anchor="middle" fill="#6b7280" font-size="9">ranged GET → decode RoaringBitmap → AND-filter rows</text>
+
+          <!-- data file 2 row -->
+          <rect x="46" y="396" width="340" height="28" rx="5" fill="#EBF2FD" stroke="#3B73C4" stroke-width="1"/>
+          <text x="216" y="409" text-anchor="middle" fill="#1a3a6b" font-size="10.5" font-weight="600">data_2.parquet  (content=0)</text>
+          <text x="216" y="421" text-anchor="middle" fill="#6b7280" font-size="9.5">partition: 2024-02 · rows: 42 000</text>
+          <line x1="386" y1="410" x2="426" y2="410" stroke="#1F9E8F" stroke-width="1.3" marker-end="url(#sp-arr-t)"/>
+          <text x="406" y="404" text-anchor="middle" fill="#1F9E8F" font-size="8.5">map</text>
+          <text x="406" y="414" text-anchor="middle" fill="#1F9E8F" font-size="8.5">lookup</text>
+          <rect x="426" y="396" width="388" height="28" rx="5" fill="#DFF3F1" stroke="#1F9E8F" stroke-width="1"/>
+          <text x="620" y="409" text-anchor="middle" font-family="monospace" font-size="9.5" fill="#0e4a43">→ shared.puffin  offset=220  size=38</text>
+          <text x="620" y="421" text-anchor="middle" fill="#6b7280" font-size="9">ranged GET → decode RoaringBitmap → AND-filter rows</text>
+
+          <!-- skipped delete manifest callout -->
+          <rect x="30" y="462" width="800" height="28" rx="6" fill="#f9fafb" stroke="#d1d5db" stroke-width="1"/>
+          <text x="430" y="481" text-anchor="middle" fill="#6b7280" font-size="10.5">Data Manifest is intentionally ignorant of deletes — the data manifest is never rewritten when new deletes arrive against its files</text>
+
+          <!-- skipped manifest callout -->
+          <rect x="30" y="498" width="800" height="28" rx="6" fill="#fef2f2" stroke="#e05252" stroke-width="1"/>
+          <text x="430" y="517" text-anchor="middle" fill="#b91c1c" font-size="10.5">snap-M-2-deletes.avro (2023-10→12) — skipped at Step 1; zero file opens, zero I/O</text>
+        </svg>
       </figure>
 
       <h3>Copy-on-Write vs Merge-on-Read</h3>
